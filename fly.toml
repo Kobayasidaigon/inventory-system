@@ -1,7 +1,7 @@
 # fly.toml app configuration file generated for inventory-system
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 
-app = "inventory-system"
+app = "inventory-system-aburiva"
 primary_region = "nrt" # Tokyo region
 
 [build]
@@ -22,6 +22,7 @@ primary_region = "nrt" # Tokyo region
 [mounts]
   source = "inventory_data"
   destination = "/data"
+  processes = ["app"]
 
 [[services]]
   protocol = "tcp"

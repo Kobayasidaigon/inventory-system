@@ -48,9 +48,22 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
-// 初期セットアップ画面
-app.get('/setup.html', (req, res) => {
-    res.sendFile(path.join(__dirname, '../public/setup.html'));
+// 初期セットアップ画面（管理者が存在しない場合のみアクセス可能）
+app.get('/setup.html', async (req, res) => {
+    try {
+        const { mainDb } = require('./db/database-admin');
+        const existingAdmin = await mainDb.get('SELECT * FROM users WHERE is_admin = 1');
+
+        if (existingAdmin) {
+            // 管理者が既に存在する場合はアクセス拒否
+            return res.status(403).send('管理者アカウントは既に作成されています');
+        }
+
+        res.sendFile(path.join(__dirname, '../public/setup.html'));
+    } catch (err) {
+        console.error('Setup page access error:', err);
+        res.status(500).send('サーバーエラー');
+    }
 });
 
 // 管理画面

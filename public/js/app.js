@@ -50,9 +50,9 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
 function setupEventListeners() {
     // ナビゲーションボタン
     document.querySelectorAll('.nav-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', async () => {
             const page = btn.dataset.page;
-            showPage(page);
+            await showPage(page);
 
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
@@ -66,30 +66,26 @@ function setupEventListeners() {
     document.getElementById('add-product-btn').addEventListener('click', showAddProductForm);
     document.getElementById('export-current').addEventListener('click', exportCurrentStock);
     document.getElementById('export-history').addEventListener('click', exportHistory);
-    document.getElementById('load-products-btn').addEventListener('click', loadWeeklyProducts);
     document.getElementById('refresh-history').addEventListener('click', loadHistory);
-    document.getElementById('clear-all-btn')?.addEventListener('click', clearAllInputs);
     document.getElementById('load-chart-btn').addEventListener('click', loadStockChart);
 
-    // 週次入力の日付変更イベント
-    document.getElementById('week-start').addEventListener('change', onWeekStartChange);
-    document.getElementById('week-end').addEventListener('change', onWeekEndChange);
-
     // カテゴリフィルター変更イベント
+    document.getElementById('out-category-filter').addEventListener('change', loadOutStockProducts);
     document.getElementById('in-category-filter').addEventListener('change', loadInStockProducts);
     document.getElementById('chart-category-filter').addEventListener('change', onChartCategoryChange);
     document.getElementById('history-category-filter').addEventListener('change', onHistoryCategoryChange);
 
-    // 入庫商品選択時の画像表示
+    // 商品選択時の画像表示
+    document.getElementById('out-product').addEventListener('change', showOutStockProductImage);
     document.getElementById('in-product').addEventListener('change', showInStockProductImage);
 
     // フォーム送信
-    document.getElementById('weekly-form').addEventListener('submit', submitWeeklyInput);
+    document.getElementById('out-stock-form').addEventListener('submit', submitOutStock);
     document.getElementById('in-stock-form').addEventListener('submit', submitInStock);
 }
 
 // ページ表示
-function showPage(pageName) {
+async function showPage(pageName) {
     document.querySelectorAll('.page').forEach(page => {
         page.classList.remove('active');
     });
@@ -98,25 +94,30 @@ function showPage(pageName) {
     // ページごとの初期化
     switch(pageName) {
         case 'dashboard':
-            showDashboard();
+            await showDashboard();
             break;
         case 'products':
-            showProducts();
+            await showProducts();
             break;
         case 'weekly-input':
-            setDefaultWeekRange();
-            loadWeeklyCategoryFilter();
+            await loadProducts();
+            setDefaultOutDate();
+            loadOutStockCategoryFilter();
+            loadOutStockProducts();
             break;
         case 'in-stock':
+            await loadProducts();
             loadInStockCategoryFilter();
             loadInStockProducts();
             break;
         case 'history':
+            await loadProducts();
             loadHistoryCategoryFilter();
             loadHistoryProductFilter();
             loadHistory();
             break;
         case 'chart':
+            await loadProducts();
             loadChartCategoryFilter();
             loadChartProductList();
             break;
@@ -939,6 +940,101 @@ async function submitInStock(e) {
         if (response.ok) {
             alert('入庫を登録しました');
             document.getElementById('in-stock-form').reset();
+            await loadProducts();
+        }
+    } catch (error) {
+        alert('登録に失敗しました');
+    }
+}
+
+// 出庫日のデフォルト設定（今日の日付）
+function setDefaultOutDate() {
+    const today = new Date();
+    const dateStr = today.toISOString().split('T')[0];
+    document.getElementById('out-date').value = dateStr;
+}
+
+// 出庫用カテゴリフィルター読み込み
+function loadOutStockCategoryFilter() {
+    const categoryFilter = document.getElementById('out-category-filter');
+    const categories = [...new Set(products.map(p => p.category).filter(c => c))];
+
+    categoryFilter.innerHTML = '<option value="">すべてのカテゴリ</option>';
+    categories.forEach(category => {
+        categoryFilter.innerHTML += `<option value="${category}">${category}</option>`;
+    });
+}
+
+// 出庫商品選択肢読み込み（カテゴリフィルター対応）
+function loadOutStockProducts() {
+    const select = document.getElementById('out-product');
+    const selectedCategory = document.getElementById('out-category-filter').value;
+
+    // カテゴリフィルターで商品を絞り込み
+    const filteredProducts = selectedCategory
+        ? products.filter(p => p.category === selectedCategory)
+        : products;
+
+    select.innerHTML = '<option value="">商品を選択してください</option>';
+
+    if (filteredProducts.length === 0) {
+        select.innerHTML += '<option value="">該当する商品がありません</option>';
+        return;
+    }
+
+    filteredProducts.forEach(product => {
+        select.innerHTML += `<option value="${product.id}">${product.name}${product.category ? ` (${product.category})` : ''}</option>`;
+    });
+
+    // 画像コンテナを非表示にする
+    document.getElementById('out-product-image-container').style.display = 'none';
+}
+
+// 出庫商品選択時に画像を表示
+function showOutStockProductImage() {
+    const productId = document.getElementById('out-product').value;
+    const imageContainer = document.getElementById('out-product-image-container');
+    const imageElement = document.getElementById('out-product-image');
+
+    if (!productId) {
+        imageContainer.style.display = 'none';
+        return;
+    }
+
+    const product = products.find(p => p.id === parseInt(productId));
+
+    if (product && product.image_url) {
+        imageElement.src = product.image_url;
+        imageElement.alt = product.name;
+        imageContainer.style.display = 'block';
+    } else {
+        imageContainer.style.display = 'none';
+    }
+}
+
+// 出庫処理送信
+async function submitOutStock(e) {
+    e.preventDefault();
+
+    const outDate = document.getElementById('out-date').value;
+    const data = {
+        productId: parseInt(document.getElementById('out-product').value),
+        quantity: parseInt(document.getElementById('out-quantity').value),
+        date: outDate,
+        note: document.getElementById('out-note').value
+    };
+
+    try {
+        const response = await fetch('/api/inventory/out', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+
+        if (response.ok) {
+            alert('出庫を登録しました');
+            document.getElementById('out-stock-form').reset();
+            setDefaultOutDate(); // 日付を再設定
             await loadProducts();
         }
     } catch (error) {

@@ -163,6 +163,70 @@ router.get('/admin/locations', async (req, res) => {
     }
 });
 
+// 拠点編集（管理者のみ）
+router.put('/admin/locations/:id', async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.status(403).json({ error: '管理者権限が必要です' });
+        }
+
+        const { id } = req.params;
+        const { locationName } = req.body;
+
+        if (!locationName) {
+            return res.status(400).json({ error: '拠点名を入力してください' });
+        }
+
+        await mainDb.run(
+            'UPDATE locations SET location_name = ? WHERE id = ?',
+            [locationName, id]
+        );
+
+        res.json({ success: true, message: '拠点を更新しました' });
+    } catch (err) {
+        console.error('Location update error:', err);
+        res.status(500).json({ error: '拠点の更新に失敗しました' });
+    }
+});
+
+// 拠点削除（管理者のみ）
+router.delete('/admin/locations/:id', async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.status(403).json({ error: '管理者権限が必要です' });
+        }
+
+        const { id } = req.params;
+
+        console.log('Attempting to delete location with id:', id);
+
+        // 拠点に紐づくユーザーが存在するか確認
+        const users = await mainDb.all(
+            'SELECT id FROM users WHERE location_id = ?',
+            [id]
+        );
+
+        if (users.length > 0) {
+            return res.status(400).json({
+                error: 'この拠点にはユーザーが登録されています。先にユーザーを削除してください。'
+            });
+        }
+
+        const result = await mainDb.run('DELETE FROM locations WHERE id = ?', [id]);
+
+        console.log('Delete location result:', result);
+
+        if (result.changes === 0) {
+            return res.status(404).json({ error: '拠点が見つかりませんでした' });
+        }
+
+        res.json({ success: true, message: '拠点を削除しました' });
+    } catch (err) {
+        console.error('Location delete error:', err);
+        res.status(500).json({ error: '拠点の削除に失敗しました: ' + err.message });
+    }
+});
+
 // ユーザー登録（管理者のみ）
 router.post('/admin/users', async (req, res) => {
     try {
@@ -211,6 +275,67 @@ router.get('/admin/locations/:locationId/users', async (req, res) => {
     } catch (err) {
         console.error('Get users error:', err);
         res.status(500).json({ error: 'データ取得エラー' });
+    }
+});
+
+// ユーザー編集（管理者のみ）
+router.put('/admin/users/:id', async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.status(403).json({ error: '管理者権限が必要です' });
+        }
+
+        const { id } = req.params;
+        const { userName, password } = req.body;
+
+        if (!userName) {
+            return res.status(400).json({ error: 'ユーザー名を入力してください' });
+        }
+
+        // パスワードが指定されている場合のみ更新
+        if (password) {
+            const hashedPassword = bcrypt.hashSync(password, 10);
+            await mainDb.run(
+                'UPDATE users SET user_name = ?, password = ? WHERE id = ?',
+                [userName, hashedPassword, id]
+            );
+        } else {
+            await mainDb.run(
+                'UPDATE users SET user_name = ? WHERE id = ?',
+                [userName, id]
+            );
+        }
+
+        res.json({ success: true, message: 'ユーザーを更新しました' });
+    } catch (err) {
+        console.error('User update error:', err);
+        res.status(500).json({ error: 'ユーザーの更新に失敗しました' });
+    }
+});
+
+// ユーザー削除（管理者のみ）
+router.delete('/admin/users/:id', async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.status(403).json({ error: '管理者権限が必要です' });
+        }
+
+        const { id } = req.params;
+
+        console.log('Attempting to delete user with id:', id);
+
+        const result = await mainDb.run('DELETE FROM users WHERE id = ? AND is_admin = 0', [id]);
+
+        console.log('Delete result:', result);
+
+        if (result.changes === 0) {
+            return res.status(404).json({ error: 'ユーザーが見つかりませんでした' });
+        }
+
+        res.json({ success: true, message: 'ユーザーを削除しました' });
+    } catch (err) {
+        console.error('User delete error:', err);
+        res.status(500).json({ error: 'ユーザーの削除に失敗しました: ' + err.message });
     }
 });
 

@@ -31,6 +31,32 @@ router.post('/in', requireAuth, async (req, res) => {
     }
 });
 
+// 在庫出力（出庫）- 日付指定対応
+router.post('/out', requireAuth, async (req, res) => {
+    const db = getLocationDatabase(req.session.locationCode);
+    const { productId, quantity, date, note } = req.body;
+
+    try {
+        // 在庫履歴に記録（日付を指定）
+        await db.run(
+            `INSERT INTO inventory_history (product_id, type, quantity, date, note, user_id)
+             VALUES (?, 'out', ?, ?, ?, ?)`,
+            [productId, quantity, date, note || '', req.session.userId]
+        );
+
+        // 現在庫を更新
+        await db.run(
+            'UPDATE products SET current_stock = current_stock - ? WHERE id = ?',
+            [quantity, productId]
+        );
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('出庫処理エラー:', err);
+        res.status(500).json({ error: '出庫処理に失敗しました' });
+    }
+});
+
 // 週次在庫入力（出庫）- 日付別対応
 router.post('/weekly', requireAuth, async (req, res) => {
     const db = getLocationDatabase(req.session.locationCode);

@@ -34,6 +34,12 @@
             margin-bottom: 10px;
             cursor: pointer;
             transition: all 0.3s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .location-info {
+            flex: 1;
         }
         .location-item:hover {
             background: #f5f5f5;
@@ -42,6 +48,33 @@
         .location-item.selected {
             background: #e8eaf6;
             border-color: #667eea;
+        }
+        .action-buttons {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 13px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-edit {
+            background: #5c9ead;
+            color: white;
+        }
+        .btn-edit:hover {
+            background: #4a8a98;
+        }
+        .btn-delete {
+            background: #d87c7c;
+            color: white;
+        }
+        .btn-delete:hover {
+            background: #c66a6a;
         }
         table {
             width: 100%;
@@ -60,11 +93,15 @@
         .form-inline {
             display: flex;
             gap: 10px;
-            align-items: flex-end;
+            align-items: center;
             margin-bottom: 20px;
         }
         .form-inline .form-group {
             flex: 1;
+        }
+        .form-inline .btn {
+            margin-top: 0;
+            flex-shrink: 0;
         }
     </style>
 </head>
@@ -122,6 +159,7 @@
                         <th>ユーザーID</th>
                         <th>ユーザー名</th>
                         <th>登録日</th>
+                        <th style="width: 150px;">操作</th>
                     </tr>
                 </thead>
                 <tbody id="users-list"></tbody>

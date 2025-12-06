@@ -18,7 +18,7 @@
     <nav>
         <button class="nav-btn active" data-page="dashboard">ダッシュボード</button>
         <button class="nav-btn" data-page="products">商品管理</button>
-        <button class="nav-btn" data-page="weekly-input">週次入力</button>
+        <button class="nav-btn" data-page="weekly-input">出庫処理</button>
         <button class="nav-btn" data-page="in-stock">入庫処理</button>
         <button class="nav-btn" data-page="history">履歴確認</button>
         <button class="nav-btn" data-page="chart">在庫推移グラフ</button>
@@ -100,33 +100,42 @@
             </table>
         </div>
 
-        <!-- 週次入力 -->
+        <!-- 出庫処理 -->
         <div id="weekly-input" class="page">
-            <h2>週次在庫入力（出庫）</h2>
-            <div class="form-group">
-                <label>対象期間</label>
-                <input type="date" id="week-start"> ～ <input type="date" id="week-end">
-            </div>
-            <div class="form-group">
-                <label>カテゴリフィルター</label>
-                <select id="weekly-category-filter">
-                    <option value="">すべてのカテゴリ</option>
-                </select>
-            </div>
-            <button id="load-products-btn" class="btn btn-primary">入力表を生成</button>
-
-            <div id="daily-input-container" style="display: none;">
-                <div class="tab-container">
-                    <div id="date-tabs" class="date-tabs"></div>
+            <h2>出庫処理</h2>
+            <form id="out-stock-form">
+                <div class="form-group">
+                    <label for="out-date">出庫日</label>
+                    <input type="date" id="out-date" required>
                 </div>
-                <form id="weekly-form">
-                    <div id="daily-tables-container"></div>
-                    <div class="form-actions">
-                        <button type="submit" class="btn btn-primary">一括登録</button>
-                        <button type="button" id="clear-all-btn" class="btn btn-secondary">すべてクリア</button>
+                <div class="form-group">
+                    <label for="out-category-filter">カテゴリ</label>
+                    <select id="out-category-filter">
+                        <option value="">すべてのカテゴリ</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="out-product">商品</label>
+                    <select id="out-product" required></select>
+                </div>
+                <div id="out-product-image-container" style="display: none; margin-bottom: 20px;">
+                    <label>商品画像</label>
+                    <div style="text-align: center;">
+                        <img id="out-product-image" src="" alt="商品画像"
+                             style="max-width: 200px; max-height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor: pointer;"
+                             onclick="openImagePopup(this.src)">
                     </div>
-                </form>
-            </div>
+                </div>
+                <div class="form-group">
+                    <label for="out-quantity">出庫数</label>
+                    <input type="number" id="out-quantity" min="1" required>
+                </div>
+                <div class="form-group">
+                    <label for="out-note">備考</label>
+                    <input type="text" id="out-note">
+                </div>
+                <button type="submit" class="btn btn-primary">出庫登録</button>
+            </form>
         </div>
 
         <!-- 入庫処理 -->

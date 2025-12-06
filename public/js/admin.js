@@ -52,13 +52,38 @@ async function loadLocations() {
             const div = document.createElement('div');
             div.className = 'location-item';
             div.innerHTML = `
-                <strong>${location.location_name}</strong>
-                <span style="color: #666; margin-left: 10px;">(${location.location_code})</span>
-                <div style="font-size: 12px; color: #999; margin-top: 5px;">
-                    登録日: ${new Date(location.created_at).toLocaleDateString('ja-JP')}
+                <div class="location-info">
+                    <strong>${location.location_name}</strong>
+                    <span style="color: #666; margin-left: 10px;">(${location.location_code})</span>
+                    <div style="font-size: 12px; color: #999; margin-top: 5px;">
+                        登録日: ${new Date(location.created_at).toLocaleDateString('ja-JP')}
+                    </div>
+                </div>
+                <div class="action-buttons">
+                    <button class="btn-small btn-edit">編集</button>
+                    <button class="btn-small btn-delete">削除</button>
                 </div>
             `;
-            div.addEventListener('click', () => selectLocation(location));
+
+            // イベントリスナーを追加
+            const locationInfo = div.querySelector('.location-info');
+            const editBtn = div.querySelector('.btn-edit');
+            const deleteBtn = div.querySelector('.btn-delete');
+
+            locationInfo.addEventListener('click', () => {
+                selectLocation(location.id, location.location_name, location.location_code);
+            });
+
+            editBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                editLocation(location.id, location.location_name);
+            });
+
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                deleteLocation(location.id, location.location_name);
+            });
+
             locationList.appendChild(div);
         });
     } catch (error) {
@@ -68,8 +93,8 @@ async function loadLocations() {
 }
 
 // 拠点選択
-async function selectLocation(location) {
-    selectedLocationId = location.id;
+async function selectLocation(locationId, locationName, locationCode) {
+    selectedLocationId = locationId;
 
     // 選択状態の表示更新
     document.querySelectorAll('.location-item').forEach(item => {
@@ -79,14 +104,14 @@ async function selectLocation(location) {
 
     // 選択された拠点情報を表示
     document.getElementById('selected-location-info').textContent =
-        `選択中: ${location.location_name} (${location.location_code})`;
+        `選択中: ${locationName} (${locationCode})`;
 
     // ユーザーフォームとテーブルを表示
     document.getElementById('user-form').style.display = 'flex';
     document.getElementById('users-table').style.display = 'table';
 
     // ユーザー一覧を読み込み
-    await loadUsers(location.id);
+    await loadUsers(locationId);
 }
 
 // ユーザー一覧読み込み
@@ -99,7 +124,7 @@ async function loadUsers(locationId) {
         usersList.innerHTML = '';
 
         if (users.length === 0) {
-            usersList.innerHTML = '<tr><td colspan="3" style="text-align: center; color: #666;">登録されているユーザーがいません</td></tr>';
+            usersList.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #666;">登録されているユーザーがいません</td></tr>';
             return;
         }
 
@@ -109,7 +134,24 @@ async function loadUsers(locationId) {
                 <td>${user.user_id}</td>
                 <td>${user.user_name}</td>
                 <td>${new Date(user.created_at).toLocaleDateString('ja-JP')}</td>
+                <td>
+                    <button class="btn btn-small btn-edit" data-user-id="${user.id}" data-user-login-id="${user.user_id}" data-user-name="${user.user_name}">編集</button>
+                    <button class="btn btn-small btn-delete" data-user-id="${user.id}" data-user-login-id="${user.user_id}">削除</button>
+                </td>
             `;
+
+            // イベントリスナーを追加
+            const editBtn = tr.querySelector('.btn-edit');
+            const deleteBtn = tr.querySelector('.btn-delete');
+
+            editBtn.addEventListener('click', () => {
+                editUser(user.id, user.user_id, user.user_name);
+            });
+
+            deleteBtn.addEventListener('click', () => {
+                deleteUser(user.id, user.user_id);
+            });
+
             usersList.appendChild(tr);
         });
     } catch (error) {
@@ -195,3 +237,127 @@ document.getElementById('add-user-btn').addEventListener('click', async () => {
         alert('ユーザーの追加に失敗しました');
     }
 });
+
+// 拠点編集
+async function editLocation(locationId, currentName) {
+    const newName = prompt('新しい拠点名を入力してください:', currentName);
+
+    if (!newName || newName === currentName) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/auth/admin/locations/${locationId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ locationName: newName })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            alert('拠点を更新しました');
+            await loadLocations();
+        } else {
+            alert(data.error || '拠点の更新に失敗しました');
+        }
+    } catch (error) {
+        console.error('拠点編集エラー:', error);
+        alert('拠点の更新に失敗しました');
+    }
+}
+
+// 拠点削除
+async function deleteLocation(locationId, locationName) {
+    if (!confirm(`拠点「${locationName}」を削除してもよろしいですか？\n\n※この拠点に登録されているユーザーがいる場合は削除できません。`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/auth/admin/locations/${locationId}`, {
+            method: 'DELETE'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            alert('拠点を削除しました');
+
+            // 削除した拠点が選択中の場合、選択をクリア
+            if (selectedLocationId === locationId) {
+                selectedLocationId = null;
+                document.getElementById('selected-location-info').textContent = '※ 左側の拠点リストから拠点を選択してください';
+                document.getElementById('user-form').style.display = 'none';
+                document.getElementById('users-table').style.display = 'none';
+            }
+
+            await loadLocations();
+        } else {
+            alert(data.error || '拠点の削除に失敗しました');
+        }
+    } catch (error) {
+        console.error('拠点削除エラー:', error);
+        alert('拠点の削除に失敗しました');
+    }
+}
+
+// ユーザー編集
+async function editUser(userId, currentUserId, currentUserName) {
+    const newUserName = prompt('新しいユーザー名を入力してください:', currentUserName);
+
+    if (!newUserName) {
+        return;
+    }
+
+    const newPassword = prompt('新しいパスワードを入力してください（変更しない場合は空欄）:', '');
+
+    try {
+        const body = { userName: newUserName };
+        if (newPassword) {
+            body.password = newPassword;
+        }
+
+        const response = await fetch(`/api/auth/admin/users/${userId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            alert('ユーザーを更新しました');
+            await loadUsers(selectedLocationId);
+        } else {
+            alert(data.error || 'ユーザーの更新に失敗しました');
+        }
+    } catch (error) {
+        console.error('ユーザー編集エラー:', error);
+        alert('ユーザーの更新に失敗しました');
+    }
+}
+
+// ユーザー削除
+async function deleteUser(userId, userIdName) {
+    if (!confirm(`ユーザー「${userIdName}」を削除してもよろしいですか？`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/auth/admin/users/${userId}`, {
+            method: 'DELETE'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            alert('ユーザーを削除しました');
+            await loadUsers(selectedLocationId);
+        } else {
+            alert(data.error || 'ユーザーの削除に失敗しました');
+        }
+    } catch (error) {
+        console.error('ユーザー削除エラー:', error);
+        alert('ユーザーの削除に失敗しました');
+    }
+}

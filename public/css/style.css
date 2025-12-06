@@ -1,0 +1,943 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: #f5f5f5;
+    color: #333;
+}
+
+/* ログイン画面 */
+.login-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.login-box {
+    background: white;
+    padding: 40px;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    width: 100%;
+    max-width: 400px;
+}
+
+.login-box h1 {
+    text-align: center;
+    margin-bottom: 30px;
+    color: #667eea;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+}
+
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    font-size: 14px;
+}
+
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.3s;
+}
+
+.btn-primary {
+    background: #667eea;
+    color: white;
+}
+
+.btn-primary:hover {
+    background: #5a67d8;
+}
+
+.btn-secondary {
+    background: #6c757d;
+    color: white;
+}
+
+.btn-secondary:hover {
+    background: #5a6268;
+}
+
+.btn-danger {
+    background: #dc3545;
+    color: white;
+}
+
+.error-message {
+    color: #dc3545;
+    margin-bottom: 15px;
+    padding: 10px;
+    background: #f8d7da;
+    border-radius: 5px;
+    display: none;
+}
+
+.error-message.show {
+    display: block;
+}
+
+/* ログインタブ */
+.login-tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 10px;
+    background: #f0f0f0;
+    border: 2px solid #ddd;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.3s;
+}
+
+.tab-btn:hover {
+    background: #e0e0e0;
+}
+
+.tab-btn.active {
+    background: #667eea;
+    color: white;
+    border-color: #667eea;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.login-info {
+    text-align: center;
+    margin-top: 20px;
+    color: #666;
+    font-size: 14px;
+}
+
+/* ヘッダー */
+header {
+    background: white;
+    padding: 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+header h1 {
+    color: #667eea;
+    font-size: 24px;
+}
+
+.user-info {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+/* ナビゲーション */
+nav {
+    background: white;
+    padding: 0 20px;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    gap: 5px;
+}
+
+.nav-btn {
+    padding: 15px 20px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    color: #666;
+    border-bottom: 3px solid transparent;
+    transition: all 0.3s;
+}
+
+.nav-btn:hover {
+    color: #667eea;
+}
+
+.nav-btn.active {
+    color: #667eea;
+    border-bottom-color: #667eea;
+}
+
+/* メインコンテンツ */
+main {
+    padding: 20px;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.page {
+    display: none;
+    background: white;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.page.active {
+    display: block;
+}
+
+.page h2 {
+    margin-bottom: 20px;
+    color: #333;
+}
+
+/* テーブル */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+}
+
+table thead {
+    background: #f8f9fa;
+}
+
+table th,
+table td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid #ddd;
+}
+
+table th {
+    font-weight: 600;
+    color: #666;
+}
+
+table tbody tr:hover {
+    background: #f8f9fa;
+}
+
+/* ダッシュボードセクション */
+.dashboard-section {
+    margin-bottom: 30px;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.dashboard-section h3 {
+    margin: 0;
+    padding: 15px 20px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.dashboard-section .badge {
+    background: rgba(255, 255, 255, 0.3);
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: normal;
+}
+
+.table-container {
+    max-height: 400px;
+    overflow-y: auto;
+    overflow-x: auto;
+}
+
+.table-container table {
+    margin-top: 0;
+}
+
+.table-container::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.table-container::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+.table-container::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+}
+
+.table-container::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+/* アクション */
+.actions {
+    margin-bottom: 20px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.actions .btn {
+    padding: 8px 12px;
+    font-size: 13px;
+}
+
+/* アラート */
+.alert-box {
+    margin-bottom: 20px;
+    padding: 15px;
+    border-radius: 5px;
+    display: none;
+}
+
+.alert-box.warning {
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    color: #856404;
+    display: block;
+}
+
+.stock-low {
+    color: #dc3545;
+    font-weight: bold;
+}
+
+.stock-ok {
+    color: #28a745;
+}
+
+/* モーダル */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+}
+
+.modal.show {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.modal-content {
+    background: white;
+    padding: 30px;
+    border-radius: 10px;
+    max-width: 500px;
+    width: 90%;
+    max-height: 80vh;
+    overflow-y: auto;
+    position: relative;
+}
+
+.close {
+    position: absolute;
+    right: 15px;
+    top: 15px;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    color: #999;
+}
+
+.close:hover {
+    color: #333;
+}
+
+/* フィルター */
+.filter-group {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.filter-group select {
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    font-size: 14px;
+    transition: border-color 0.3s;
+}
+
+.filter-group select:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.filter-group input[type="date"] {
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    font-size: 14px;
+    transition: border-color 0.3s;
+    color: #333;
+}
+
+.filter-group input[type="date"]:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.filter-group label {
+    font-weight: 500;
+    color: #666;
+    font-size: 14px;
+}
+
+.filter-group span {
+    color: #999;
+    font-size: 14px;
+}
+
+/* 週次入力テーブル */
+.daily-table input[type="number"] {
+    width: 80px;
+    padding: 5px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+}
+
+.weekly-thumbnail {
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.weekly-thumbnail:hover {
+    transform: scale(1.1);
+    box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
+}
+
+/* 日付タブ */
+.date-tabs {
+    display: flex;
+    gap: 5px;
+    margin: 20px 0;
+    border-bottom: 2px solid #ddd;
+    overflow-x: auto;
+}
+
+.date-tab {
+    padding: 10px 20px;
+    background: #f8f9fa;
+    border: 1px solid #ddd;
+    border-bottom: none;
+    cursor: pointer;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: all 0.3s;
+}
+
+.date-tab:hover {
+    background: #e9ecef;
+}
+
+.date-tab.active {
+    background: white;
+    border-top: 3px solid #667eea;
+    color: #667eea;
+    margin-bottom: -2px;
+    padding-bottom: 12px;
+}
+
+.daily-content {
+    display: none;
+    padding: 20px 0;
+}
+
+.daily-content.active {
+    display: block;
+}
+
+.daily-content h3 {
+    color: #667eea;
+    margin-bottom: 15px;
+}
+
+.form-actions {
+    margin-top: 20px;
+    display: flex;
+    gap: 10px;
+}
+
+/* グラフページ */
+.chart-controls {
+    display: flex;
+    gap: 15px;
+    align-items: flex-end;
+    margin-bottom: 30px;
+    flex-wrap: wrap;
+}
+
+.chart-controls .form-group {
+    margin-bottom: 0;
+}
+
+#chart-container {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    max-width: 100%;
+    height: 500px;
+}
+
+#stock-chart {
+    max-height: 460px;
+}
+
+/* 画像ポップアップ */
+.image-popup-overlay {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.9);
+    cursor: pointer;
+}
+
+.image-popup-overlay.show {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    animation: fadeIn 0.2s;
+}
+
+.image-popup-content {
+    max-width: 90%;
+    max-height: 90vh;
+    object-fit: contain;
+    border-radius: 8px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+    animation: zoomIn 0.3s;
+}
+
+.image-popup-close {
+    position: absolute;
+    top: 20px;
+    right: 30px;
+    color: white;
+    font-size: 40px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.image-popup-close:hover {
+    transform: scale(1.2);
+    color: #667eea;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes zoomIn {
+    from { transform: scale(0.8); }
+    to { transform: scale(1); }
+}
+
+.product-thumbnail {
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.product-thumbnail:hover {
+    transform: scale(1.1);
+    box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
+}
+
+/* レスポンシブ */
+/* タブレット（768px以下） */
+@media (max-width: 768px) {
+    /* ヘッダー */
+    header {
+        padding: 15px;
+        flex-direction: column;
+        gap: 15px;
+    }
+
+    header h1 {
+        font-size: 20px;
+    }
+
+    /* ナビゲーション */
+    nav {
+        overflow-x: auto;
+        white-space: nowrap;
+        padding: 0 10px;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .nav-btn {
+        padding: 12px 15px;
+        font-size: 13px;
+    }
+
+    /* メインコンテンツ */
+    main {
+        padding: 15px;
+    }
+
+    .page {
+        padding: 15px;
+    }
+
+    .page h2 {
+        font-size: 20px;
+        margin-bottom: 15px;
+    }
+
+    /* アクション */
+    .actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .actions .form-group {
+        width: 100%;
+        margin-right: 0 !important;
+    }
+
+    .actions .btn {
+        width: 100%;
+    }
+
+    /* テーブル */
+    table {
+        font-size: 13px;
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    table thead,
+    table tbody,
+    table tr {
+        display: table;
+        width: 100%;
+        table-layout: fixed;
+    }
+
+    table th,
+    table td {
+        padding: 8px 6px;
+    }
+
+    /* フィルター */
+    .filter-group {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+
+    .filter-group > div {
+        width: 100%;
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 5px !important;
+        padding: 10px !important;
+    }
+
+    .filter-group select,
+    .filter-group input[type="date"] {
+        width: 100% !important;
+    }
+
+    .filter-group label {
+        width: 100%;
+    }
+
+    .filter-group span {
+        text-align: center;
+        margin: 5px 0;
+    }
+
+    .filter-group .btn {
+        width: 100%;
+    }
+
+    /* フォーム */
+    .form-group {
+        margin-bottom: 15px;
+    }
+
+    .form-group input,
+    .form-group select {
+        font-size: 16px; /* iOS対応：ズーム防止 */
+    }
+
+    /* モーダル */
+    .modal-content {
+        padding: 20px;
+        max-width: 95%;
+        max-height: 90vh;
+    }
+
+    /* 日付タブ */
+    .date-tabs {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .date-tab {
+        padding: 8px 15px;
+        font-size: 13px;
+    }
+
+    /* グラフ */
+    .chart-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .chart-controls .form-group {
+        width: 100%;
+    }
+
+    .chart-controls .btn {
+        width: 100%;
+    }
+
+    #chart-container {
+        height: 300px;
+        padding: 10px;
+    }
+
+    #stock-chart {
+        max-height: 280px;
+    }
+
+    /* フォームアクション */
+    .form-actions {
+        flex-direction: column;
+    }
+
+    .form-actions .btn {
+        width: 100%;
+    }
+}
+
+/* スマートフォン（480px以下） */
+@media (max-width: 480px) {
+    /* ヘッダー */
+    header {
+        padding: 10px;
+    }
+
+    header h1 {
+        font-size: 18px;
+    }
+
+    .user-info {
+        width: 100%;
+        justify-content: space-between;
+        font-size: 13px;
+    }
+
+    .user-info .btn {
+        padding: 6px 12px;
+        font-size: 12px;
+    }
+
+    /* ナビゲーション */
+    .nav-btn {
+        padding: 10px 12px;
+        font-size: 12px;
+    }
+
+    /* メインコンテンツ */
+    main {
+        padding: 10px;
+    }
+
+    .page {
+        padding: 10px;
+    }
+
+    .page h2 {
+        font-size: 18px;
+    }
+
+    .page h3 {
+        font-size: 16px;
+    }
+
+    /* ボタン */
+    .btn {
+        padding: 8px 15px;
+        font-size: 13px;
+    }
+
+    /* テーブル */
+    table {
+        font-size: 12px;
+    }
+
+    table th,
+    table td {
+        padding: 6px 4px;
+    }
+
+    /* テーブルを縦スクロール対応に */
+    .table-responsive {
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* フィルター（スマホ用） */
+    .filter-group {
+        gap: 8px;
+    }
+
+    .filter-group > div {
+        padding: 8px !important;
+    }
+
+    .filter-group label {
+        font-size: 13px;
+    }
+
+    .filter-group select,
+    .filter-group input[type="date"] {
+        font-size: 14px;
+        padding: 10px;
+    }
+
+    .filter-group span {
+        font-size: 13px;
+    }
+
+    /* 週次入力 */
+    .daily-table input[type="number"] {
+        width: 60px;
+        padding: 4px;
+        font-size: 12px;
+    }
+
+    .weekly-thumbnail {
+        width: 40px !important;
+        height: 40px !important;
+    }
+
+    /* モーダル */
+    .modal-content {
+        padding: 15px;
+    }
+
+    .close {
+        right: 10px;
+        top: 10px;
+        font-size: 24px;
+    }
+
+    /* アラート */
+    .alert-box {
+        padding: 10px;
+        font-size: 13px;
+    }
+
+    /* 画像ポップアップ */
+    .image-popup-close {
+        top: 10px;
+        right: 15px;
+        font-size: 30px;
+    }
+
+    /* ログイン画面 */
+    .login-box {
+        padding: 25px;
+        margin: 10px;
+    }
+
+    .login-box h1 {
+        font-size: 22px;
+    }
+
+    /* グラフ */
+    #chart-container {
+        height: 250px;
+        padding: 8px;
+    }
+
+    #stock-chart {
+        max-height: 230px;
+    }
+
+    /* 週次入力の日付範囲 */
+    #week-start,
+    #week-end {
+        width: 100%;
+        margin-bottom: 5px;
+    }
+
+    /* 発注依頼テーブル */
+    #pending-orders-section h3 {
+        font-size: 16px;
+    }
+}
+
+/* 横向きスマートフォン対応 */
+@media (max-width: 768px) and (orientation: landscape) {
+    header {
+        flex-direction: row;
+        justify-content: space-between;
+    }
+
+    .user-info {
+        width: auto;
+    }
+
+    #chart-container {
+        height: 350px;
+    }
+
+    #stock-chart {
+        max-height: 330px;
+    }
+}

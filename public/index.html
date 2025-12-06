@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>在庫管理システム</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <header>
+        <h1>在庫管理システム</h1>
+        <div class="user-info">
+            <span id="username-display"></span>
+            <button id="logout-btn" class="btn btn-secondary">ログアウト</button>
+        </div>
+    </header>
+
+    <nav>
+        <button class="nav-btn active" data-page="dashboard">ダッシュボード</button>
+        <button class="nav-btn" data-page="products">商品管理</button>
+        <button class="nav-btn" data-page="weekly-input">週次入力</button>
+        <button class="nav-btn" data-page="in-stock">入庫処理</button>
+        <button class="nav-btn" data-page="history">履歴確認</button>
+        <button class="nav-btn" data-page="chart">在庫推移グラフ</button>
+    </nav>
+
+    <main>
+        <!-- ダッシュボード -->
+        <div id="dashboard" class="page active">
+            <h2>在庫状況</h2>
+            <div class="actions">
+                <div class="form-group" style="display: inline-block; margin-right: 15px;">
+                    <label for="dashboard-category-filter">カテゴリフィルター</label>
+                    <select id="dashboard-category-filter">
+                        <option value="">すべてのカテゴリ</option>
+                    </select>
+                </div>
+                <button id="export-current" class="btn btn-primary">現在庫CSV出力</button>
+                <button id="export-history" class="btn btn-secondary">履歴CSV出力</button>
+            </div>
+            <div id="stock-alerts" class="alert-box"></div>
+
+            <!-- 発注依頼済み商品 -->
+            <div id="pending-orders-section" class="dashboard-section" style="display: none;">
+                <h3>発注依頼済み商品 <span id="pending-count" class="badge"></span></h3>
+                <div class="table-container">
+                    <table id="pending-orders-table">
+                        <thead>
+                            <tr>
+                                <th>商品名</th>
+                                <th>依頼者</th>
+                                <th>依頼日時</th>
+                                <th>備考</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 現在庫一覧 -->
+            <div class="dashboard-section">
+                <h3>現在庫一覧 <span id="stock-count" class="badge"></span></h3>
+                <div class="table-container">
+                    <table id="stock-table">
+                        <thead>
+                            <tr>
+                                <th>商品名</th>
+                                <th>カテゴリ</th>
+                                <th>現在庫</th>
+                                <th>発注点</th>
+                                <th>状態</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 商品管理 -->
+        <div id="products" class="page">
+            <h2>商品マスター</h2>
+            <button id="add-product-btn" class="btn btn-primary">新規商品登録</button>
+            <table id="products-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>画像</th>
+                        <th>商品名</th>
+                        <th>カテゴリ</th>
+                        <th>発注点</th>
+                        <th>現在庫</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <!-- 週次入力 -->
+        <div id="weekly-input" class="page">
+            <h2>週次在庫入力（出庫）</h2>
+            <div class="form-group">
+                <label>対象期間</label>
+                <input type="date" id="week-start"> ～ <input type="date" id="week-end">
+            </div>
+            <div class="form-group">
+                <label>カテゴリフィルター</label>
+                <select id="weekly-category-filter">
+                    <option value="">すべてのカテゴリ</option>
+                </select>
+            </div>
+            <button id="load-products-btn" class="btn btn-primary">入力表を生成</button>
+
+            <div id="daily-input-container" style="display: none;">
+                <div class="tab-container">
+                    <div id="date-tabs" class="date-tabs"></div>
+                </div>
+                <form id="weekly-form">
+                    <div id="daily-tables-container"></div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">一括登録</button>
+                        <button type="button" id="clear-all-btn" class="btn btn-secondary">すべてクリア</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 入庫処理 -->
+        <div id="in-stock" class="page">
+            <h2>入庫処理</h2>
+            <form id="in-stock-form">
+                <div class="form-group">
+                    <label for="in-category-filter">カテゴリ</label>
+                    <select id="in-category-filter">
+                        <option value="">すべてのカテゴリ</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="in-product">商品</label>
+                    <select id="in-product" required></select>
+                </div>
+                <div id="in-product-image-container" style="display: none; margin-bottom: 20px;">
+                    <label>商品画像</label>
+                    <div style="text-align: center;">
+                        <img id="in-product-image" src="" alt="商品画像"
+                             style="max-width: 200px; max-height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor: pointer;"
+                             onclick="openImagePopup(this.src)">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="in-quantity">入庫数</label>
+                    <input type="number" id="in-quantity" min="1" required>
+                </div>
+                <div class="form-group">
+                    <label for="in-note">備考</label>
+                    <input type="text" id="in-note">
+                </div>
+                <button type="submit" class="btn btn-primary">入庫登録</button>
+            </form>
+        </div>
+
+        <!-- 履歴確認 -->
+        <div id="history" class="page">
+            <h2>入出庫履歴</h2>
+            <div class="filter-group">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <label for="history-category-filter">カテゴリ:</label>
+                    <select id="history-category-filter">
+                        <option value="">全カテゴリ</option>
+                    </select>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <label for="history-filter">商品:</label>
+                    <select id="history-filter">
+                        <option value="">全商品</option>
+                    </select>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; background: #f8f9fa; padding: 8px 12px; border-radius: 5px;">
+                    <label for="history-start-date">📅 期間:</label>
+                    <input type="date" id="history-start-date">
+                    <span>～</span>
+                    <input type="date" id="history-end-date">
+                </div>
+                <button id="refresh-history" class="btn btn-secondary">🔄 更新</button>
+            </div>
+            <table id="history-table">
+                <thead>
+                    <tr>
+                        <th>日時</th>
+                        <th>商品名</th>
+                        <th>カテゴリ</th>
+                        <th>種別</th>
+                        <th>数量</th>
+                        <th>備考</th>
+                        <th>担当者</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <!-- 在庫推移グラフ -->
+        <div id="chart" class="page">
+            <h2>在庫推移グラフ</h2>
+            <div class="chart-controls">
+                <div class="form-group">
+                    <label>カテゴリ</label>
+                    <select id="chart-category-filter">
+                        <option value="">すべてのカテゴリ</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>商品選択</label>
+                    <select id="chart-product-filter">
+                        <option value="">商品を選択してください</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>期間</label>
+                    <select id="chart-period">
+                        <option value="7">過去7日間</option>
+                        <option value="14">過去14日間</option>
+                        <option value="30" selected>過去30日間</option>
+                        <option value="60">過去60日間</option>
+                        <option value="90">過去90日間</option>
+                    </select>
+                </div>
+                <button id="load-chart-btn" class="btn btn-primary">グラフを表示</button>
+            </div>
+            <div id="chart-container">
+                <canvas id="stock-chart"></canvas>
+            </div>
+        </div>
+    </main>
+
+    <!-- モーダル -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <div id="modal-body"></div>
+        </div>
+    </div>
+
+    <!-- 画像ポップアップ -->
+    <div id="image-popup" class="image-popup-overlay">
+        <span class="image-popup-close">&times;</span>
+        <img id="image-popup-img" class="image-popup-content" src="" alt="商品画像">
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="/js/app.js"></script>
+</body>
+</html>

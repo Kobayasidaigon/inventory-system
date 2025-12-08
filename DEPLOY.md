@@ -45,7 +45,7 @@ flyctl launch
 
 ## 3. ボリュームの作成（データ永続化）
 
-SQLiteデータベースを永続化するためのボリュームを作成：
+**重要**: データベースと画像ファイルを永続化するためのボリュームを作成します。
 
 ```bash
 flyctl volumes create inventory_data --region nrt --size 1
@@ -53,19 +53,32 @@ flyctl volumes create inventory_data --region nrt --size 1
 
 ## 4. 環境変数の設定
 
+**必須**: データベースの保存先を指定する環境変数を設定します。
+
 マルチテナントモードを有効にする場合：
 
 ```bash
 flyctl secrets set MULTI_TENANT=true
 flyctl secrets set DB_DIR=/data
-flyctl secrets set SESSION_SECRET=your-random-secret-key-here
+flyctl secrets set UPLOADS_DIR=/data/uploads
+flyctl secrets set SESSION_SECRET=$(openssl rand -base64 32)
 ```
 
 シングルテナント（既存の動作）の場合：
 
 ```bash
 flyctl secrets set MULTI_TENANT=false
-flyctl secrets set SESSION_SECRET=your-random-secret-key-here
+flyctl secrets set DB_DIR=/data
+flyctl secrets set UPLOADS_DIR=/data/uploads
+flyctl secrets set SESSION_SECRET=$(openssl rand -base64 32)
+```
+
+### 環境変数の確認
+
+設定した環境変数を確認：
+
+```bash
+flyctl secrets list
 ```
 
 ## 5. デプロイ
@@ -112,10 +125,50 @@ flyctl open
 
 ## トラブルシューティング
 
+### データが消える問題の解決
+
+データが2-3分で消える場合は、以下を確認してください：
+
+1. **ボリュームが作成されているか確認**
+   ```bash
+   flyctl volumes list
+   ```
+
+2. **環境変数が設定されているか確認**
+   ```bash
+   flyctl secrets list
+   ```
+
+   以下が設定されている必要があります：
+   - `DB_DIR=/data`
+   - `UPLOADS_DIR=/data/uploads`
+   - `SESSION_SECRET`
+
+3. **環境変数が未設定の場合**
+   ```bash
+   flyctl secrets set DB_DIR=/data
+   flyctl secrets set UPLOADS_DIR=/data/uploads
+   flyctl secrets set SESSION_SECRET=$(openssl rand -base64 32)
+   ```
+
+4. **アプリケーションを再デプロイ**
+   ```bash
+   flyctl deploy
+   ```
+
+5. **データの確認（SSHで接続）**
+   ```bash
+   flyctl ssh console
+   ls -la /data
+   ls -la /data/*.db
+   ```
+
 ### ログの確認
 ```bash
-flyctl logs --app inventory-system
+flyctl logs
 ```
+
+エラーがある場合は、ログで詳細を確認できます。
 
 ### SSHでコンテナに接続
 ```bash
@@ -127,9 +180,15 @@ flyctl ssh console
 flyctl volumes list
 ```
 
+出力例：
+```
+ID          NAME            SIZE    REGION  ATTACHED VM
+vol_xxx     inventory_data  1GB     nrt     xxxxx
+```
+
 ### アプリケーションの再起動
 ```bash
-flyctl apps restart inventory-system
+flyctl apps restart
 ```
 
 ## スケーリング

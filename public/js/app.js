@@ -2,6 +2,10 @@
 let currentUser = null;
 let products = [];
 let chartInstance = null;
+let productsSortColumn = 'category';
+let productsSortDirection = 'asc';
+let productsFilteredData = [];
+let pendingOrders = []; // 発注依頼済み商品のリスト
 
 // 初期化
 document.addEventListener('DOMContentLoaded', async () => {
@@ -171,8 +175,26 @@ function updateDashboardDisplay() {
         const row = tbody.insertRow();
         const isLow = product.current_stock <= product.reorder_point;
 
-        if (isLow) {
+        // この商品が発注依頼済みかチェック
+        const isPending = pendingOrders.some(order => order.product_id === product.id);
+
+        if (isLow && !isPending) {
             lowStockItems.push(product.name);
+        }
+
+        // 状態の判定
+        let statusText = '正常';
+        let statusClass = 'stock-ok';
+        let actionButton = '-';
+
+        if (isPending) {
+            statusText = '発注済';
+            statusClass = 'stock-pending';
+            actionButton = '-';
+        } else if (isLow) {
+            statusText = '要発注';
+            statusClass = 'stock-low';
+            actionButton = `<button class="btn btn-secondary" onclick="showOrderDialog(${product.id})">発注依頼</button>`;
         }
 
         row.innerHTML = `
@@ -180,11 +202,11 @@ function updateDashboardDisplay() {
             <td>${product.category || '-'}</td>
             <td>${product.current_stock}</td>
             <td>${product.reorder_point}</td>
-            <td class="${isLow ? 'stock-low' : 'stock-ok'}">
-                ${isLow ? '要発注' : '正常'}
+            <td class="${statusClass}">
+                ${statusText}
             </td>
             <td>
-                ${isLow ? `<button class="btn btn-secondary" onclick="showOrderDialog(${product.id})">発注依頼</button>` : '-'}
+                ${actionButton}
             </td>
         `;
     });
@@ -204,7 +226,8 @@ async function loadPendingOrders() {
         const response = await fetch('/api/orders');
         const orders = await response.json();
 
-        const pendingOrders = orders.filter(o => o.status === 'pending');
+        // グローバル変数に保存
+        pendingOrders = orders.filter(o => o.status === 'pending');
         const pendingSection = document.getElementById('pending-orders-section');
         const pendingCount = document.getElementById('pending-count');
 
@@ -395,18 +418,95 @@ async function updateOrderStatus(orderId, status) {
 // 商品一覧表示
 async function showProducts() {
     await loadProducts();
+    loadProductsCategoryFilter();
+    setupProductsTableSorting();
+    updateProductsDisplay();
+}
 
+// 商品マスター用カテゴリフィルター読み込み
+function loadProductsCategoryFilter() {
+    const categoryFilter = document.getElementById('products-category-filter');
+    const categories = [...new Set(products.map(p => p.category).filter(c => c))];
+
+    const currentValue = categoryFilter.value;
+    categoryFilter.innerHTML = '<option value="">すべてのカテゴリ</option>';
+    categories.forEach(category => {
+        categoryFilter.innerHTML += `<option value="${category}">${category}</option>`;
+    });
+    categoryFilter.value = currentValue;
+
+    // イベントリスナーを設定（重複を避けるため一度削除）
+    const newFilter = categoryFilter.cloneNode(true);
+    categoryFilter.parentNode.replaceChild(newFilter, categoryFilter);
+    newFilter.addEventListener('change', updateProductsDisplay);
+}
+
+// 商品マスターテーブルのソート機能設定
+function setupProductsTableSorting() {
+    const headers = document.querySelectorAll('#products-table th.sortable');
+    headers.forEach(header => {
+        // 既存のイベントリスナーを削除するため新しい要素で置き換え
+        const newHeader = header.cloneNode(true);
+        header.parentNode.replaceChild(newHeader, header);
+
+        newHeader.addEventListener('click', () => {
+            const column = newHeader.dataset.sort;
+            if (productsSortColumn === column) {
+                productsSortDirection = productsSortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                productsSortColumn = column;
+                productsSortDirection = 'asc';
+            }
+            updateProductsDisplay();
+        });
+    });
+}
+
+// 商品マスター表示更新
+function updateProductsDisplay() {
+    const categoryFilter = document.getElementById('products-category-filter');
+    const selectedCategory = categoryFilter ? categoryFilter.value : '';
+
+    // カテゴリフィルタリング
+    productsFilteredData = selectedCategory
+        ? products.filter(p => p.category === selectedCategory)
+        : [...products];
+
+    // ソート
+    productsFilteredData.sort((a, b) => {
+        let aVal = a[productsSortColumn];
+        let bVal = b[productsSortColumn];
+
+        // null/undefinedの処理
+        if (aVal == null) aVal = '';
+        if (bVal == null) bVal = '';
+
+        // 数値の場合は数値として比較
+        if (productsSortColumn === 'id' || productsSortColumn === 'reorder_point' || productsSortColumn === 'current_stock') {
+            aVal = Number(aVal);
+            bVal = Number(bVal);
+        } else {
+            // 文字列の場合は小文字に変換して比較
+            aVal = String(aVal).toLowerCase();
+            bVal = String(bVal).toLowerCase();
+        }
+
+        if (aVal < bVal) return productsSortDirection === 'asc' ? -1 : 1;
+        if (aVal > bVal) return productsSortDirection === 'asc' ? 1 : -1;
+        return 0;
+    });
+
+    // テーブル表示
     const tbody = document.querySelector('#products-table tbody');
     tbody.innerHTML = '';
 
-    products.forEach(product => {
+    productsFilteredData.forEach(product => {
         const row = tbody.insertRow();
         const imageHtml = product.image_url
-            ? `<img src="${product.image_url}" class="product-thumbnail" onclick="showImagePopup('${product.image_url}')" style="width: 50px; height: 50px; object-fit: cover; border-radius: 5px;">`
+            ? `<img src="${product.image_url}" class="product-thumbnail" onclick="showImagePopup('${product.image_url}')" style="width: 50px; height: 50px; object-fit: cover; border-radius: 5px; cursor: pointer;">`
             : '<span style="color: #999;">画像なし</span>';
 
         row.innerHTML = `
-            <td>${product.id}</td>
             <td>${imageHtml}</td>
             <td>${product.name}</td>
             <td>${product.category || '-'}</td>
@@ -417,6 +517,22 @@ async function showProducts() {
                 <button class="btn btn-secondary" onclick="setInitialStock(${product.id})">初期在庫</button>
             </td>
         `;
+    });
+
+    // ソート方向の矢印を更新
+    updateProductsSortArrows();
+}
+
+// ソート方向の矢印を更新
+function updateProductsSortArrows() {
+    const headers = document.querySelectorAll('#products-table th.sortable');
+    headers.forEach(header => {
+        const arrow = header.querySelector('.sort-arrow');
+        if (header.dataset.sort === productsSortColumn) {
+            arrow.textContent = productsSortDirection === 'asc' ? ' ▲' : ' ▼';
+        } else {
+            arrow.textContent = '';
+        }
     });
 }
 
@@ -509,7 +625,7 @@ function showAddProductForm() {
             if (response.ok) {
                 closeModal();
                 await loadProducts();
-                showProducts();
+                updateProductsDisplay();
                 alert('商品を登録しました');
             } else {
                 const errorData = await response.json();
@@ -599,7 +715,7 @@ async function editProduct(productId) {
             if (response.ok) {
                 closeModal();
                 await loadProducts();
-                showProducts();
+                updateProductsDisplay();
                 alert('商品を更新しました');
             } else {
                 const errorData = await response.json();
@@ -633,7 +749,7 @@ async function setInitialStock(productId) {
 
         if (response.ok) {
             await loadProducts();
-            showProducts();
+            updateProductsDisplay();
             alert('初期在庫を設定しました');
         }
     } catch (error) {

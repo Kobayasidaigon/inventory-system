@@ -6,13 +6,16 @@ const initDatabase = require('./db/init-db');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// アップロードディレクトリのパス（環境変数または既定値）
+const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, '../uploads');
+
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Session設定
 app.use(session({
-    secret: 'inventory-secret-key-2024',
+    secret: process.env.SESSION_SECRET || 'inventory-secret-key-2024',
     resave: false,
     saveUninitialized: false,
     cookie: { maxAge: 24 * 60 * 60 * 1000 } // 24時間
@@ -34,7 +37,7 @@ app.use('/api/orders', orderRoutes);
 // 静的ファイルの提供（CSS, JS, 画像）
 app.use('/css', express.static(path.join(__dirname, '../public/css')));
 app.use('/js', express.static(path.join(__dirname, '../public/js')));
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+app.use('/uploads', express.static(UPLOADS_DIR));
 
 // ルートパス
 app.get('/', (req, res) => {

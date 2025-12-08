@@ -245,6 +245,24 @@ table tbody tr:hover {
     background: #f8f9fa;
 }
 
+/* ソート可能なヘッダー */
+table th.sortable {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    transition: background-color 0.2s;
+}
+
+table th.sortable:hover {
+    background-color: #e9ecef;
+}
+
+table th.sortable .sort-arrow {
+    margin-left: 5px;
+    color: #667eea;
+    font-weight: bold;
+}
+
 /* ダッシュボードセクション */
 .dashboard-section {
     margin-bottom: 30px;
@@ -252,6 +270,30 @@ table tbody tr:hover {
     border: 1px solid #e0e0e0;
     border-radius: 8px;
     overflow: hidden;
+}
+
+/* スクロールヒント（モバイル用） */
+@media (max-width: 768px) {
+    .table-scroll-hint {
+        display: block;
+        text-align: center;
+        padding: 8px;
+        background: linear-gradient(90deg, transparent, rgba(102, 126, 234, 0.1), transparent);
+        color: #667eea;
+        font-size: 13px;
+        margin-top: 8px;
+        border-radius: 4px;
+        animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+        0%, 100% { opacity: 0.6; }
+        50% { opacity: 1; }
+    }
+}
+
+.table-scroll-hint {
+    display: none;
 }
 
 .dashboard-section h3 {
@@ -277,6 +319,8 @@ table tbody tr:hover {
     max-height: 400px;
     overflow-y: auto;
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    position: relative;
 }
 
 .table-container table {
@@ -299,6 +343,17 @@ table tbody tr:hover {
 
 .table-container::-webkit-scrollbar-thumb:hover {
     background: #555;
+}
+
+/* モバイルでのスクロールバー（より太く見やすく） */
+@media (max-width: 768px) {
+    .table-container::-webkit-scrollbar {
+        height: 6px;
+    }
+
+    .table-container::-webkit-scrollbar-thumb {
+        background: #667eea;
+    }
 }
 
 /* アクション */
@@ -336,6 +391,11 @@ table tbody tr:hover {
 
 .stock-ok {
     color: #28a745;
+}
+
+.stock-pending {
+    color: #667eea;
+    font-weight: bold;
 }
 
 /* モーダル */
@@ -593,6 +653,11 @@ table tbody tr:hover {
 /* レスポンシブ */
 /* タブレット（768px以下） */
 @media (max-width: 768px) {
+    /* 基本フォントサイズを拡大 */
+    body {
+        font-size: 15px;
+    }
+
     /* ヘッダー */
     header {
         padding: 15px;
@@ -601,7 +666,7 @@ table tbody tr:hover {
     }
 
     header h1 {
-        font-size: 20px;
+        font-size: 22px;
     }
 
     /* ナビゲーション */
@@ -613,8 +678,8 @@ table tbody tr:hover {
     }
 
     .nav-btn {
-        padding: 12px 15px;
-        font-size: 13px;
+        padding: 14px 18px;
+        font-size: 15px;
     }
 
     /* メインコンテンツ */
@@ -627,7 +692,7 @@ table tbody tr:hover {
     }
 
     .page h2 {
-        font-size: 20px;
+        font-size: 22px;
         margin-bottom: 15px;
     }
 
@@ -646,26 +711,80 @@ table tbody tr:hover {
         width: 100%;
     }
 
-    /* テーブル */
+    /* テーブル - 横スクロール対応 */
+    .page {
+        overflow-x: hidden; /* ページ全体はスクロールさせない */
+    }
+
+    /* テーブルコンテナ */
     table {
-        font-size: 13px;
-        display: block;
+        display: table; /* blockではなくtableに戻す */
+        width: auto; /* 自動幅 */
+        min-width: 100%; /* 最小幅は100% */
+        table-layout: auto; /* 自動レイアウト */
+        border-collapse: collapse;
+        font-size: 15px;
+    }
+
+    /* テーブルラッパーを追加してスクロール */
+    .table-wrapper {
+        width: 100%;
         overflow-x: auto;
-        white-space: nowrap;
         -webkit-overflow-scrolling: touch;
+        margin-top: 20px;
+        position: relative;
     }
 
     table thead,
     table tbody,
     table tr {
-        display: table;
-        width: 100%;
-        table-layout: fixed;
+        display: table-row;
     }
 
     table th,
     table td {
-        padding: 8px 6px;
+        padding: 12px 10px;
+        font-size: 15px;
+        white-space: nowrap; /* テキストを折り返さない */
+        min-width: 80px; /* 最小列幅 */
+    }
+
+    /* 商品マスターテーブルのレスポンシブ対応 */
+    #products-table {
+        min-width: 740px; /* テーブル全体の最小幅（ID列削除により調整） */
+    }
+
+    #products-table th,
+    #products-table td {
+        font-size: 15px;
+    }
+
+    /* 各列の最小幅を指定 */
+    #products-table th:nth-child(1),
+    #products-table td:nth-child(1) { min-width: 80px; } /* 画像 */
+    #products-table th:nth-child(2),
+    #products-table td:nth-child(2) { min-width: 150px; } /* 商品名 */
+    #products-table th:nth-child(3),
+    #products-table td:nth-child(3) { min-width: 100px; } /* カテゴリ */
+    #products-table th:nth-child(4),
+    #products-table td:nth-child(4) { min-width: 80px; } /* 発注点 */
+    #products-table th:nth-child(5),
+    #products-table td:nth-child(5) { min-width: 80px; } /* 現在庫 */
+    #products-table th:nth-child(6),
+    #products-table td:nth-child(6) { min-width: 180px; } /* 操作 */
+
+    /* ボタンのサイズを拡大 */
+    .btn {
+        padding: 12px 20px;
+        font-size: 15px;
+        min-height: 44px; /* iOSのタッチターゲット推奨サイズ */
+    }
+
+    table .btn {
+        padding: 10px 16px;
+        font-size: 14px;
+        min-height: 40px;
+        white-space: nowrap;
     }
 
     /* フィルター */
@@ -706,9 +825,16 @@ table tbody tr:hover {
         margin-bottom: 15px;
     }
 
+    .form-group label {
+        font-size: 15px;
+        font-weight: 600;
+    }
+
     .form-group input,
     .form-group select {
         font-size: 16px; /* iOS対応：ズーム防止 */
+        padding: 12px;
+        min-height: 44px;
     }
 
     /* モーダル */
@@ -764,122 +890,260 @@ table tbody tr:hover {
 
 /* スマートフォン（480px以下） */
 @media (max-width: 480px) {
+    /* 基本フォントサイズを拡大 */
+    body {
+        font-size: 16px;
+    }
+
     /* ヘッダー */
     header {
-        padding: 10px;
+        padding: 12px;
     }
 
     header h1 {
-        font-size: 18px;
+        font-size: 20px;
     }
 
     .user-info {
         width: 100%;
         justify-content: space-between;
-        font-size: 13px;
+        font-size: 15px;
     }
 
     .user-info .btn {
-        padding: 6px 12px;
-        font-size: 12px;
+        padding: 10px 16px;
+        font-size: 14px;
+        min-height: 44px;
     }
 
     /* ナビゲーション */
     .nav-btn {
-        padding: 10px 12px;
-        font-size: 12px;
+        padding: 14px 16px;
+        font-size: 15px;
+        min-height: 44px;
     }
 
     /* メインコンテンツ */
     main {
-        padding: 10px;
+        padding: 12px;
     }
 
     .page {
-        padding: 10px;
+        padding: 12px;
     }
 
     .page h2 {
-        font-size: 18px;
+        font-size: 20px;
+        margin-bottom: 16px;
     }
 
     .page h3 {
-        font-size: 16px;
+        font-size: 18px;
     }
 
     /* ボタン */
     .btn {
-        padding: 8px 15px;
-        font-size: 13px;
+        padding: 12px 20px;
+        font-size: 16px;
+        min-height: 48px;
     }
 
-    /* テーブル */
+    /* テーブル - 横スクロール対応 */
     table {
-        font-size: 12px;
+        display: table;
+        width: auto;
+        min-width: 100%;
+        table-layout: auto;
+        font-size: 15px;
+    }
+
+    table thead,
+    table tbody,
+    table tr {
+        display: table-row;
     }
 
     table th,
     table td {
-        padding: 6px 4px;
+        padding: 12px 10px;
+        font-size: 15px;
+        white-space: nowrap;
+        min-width: 80px;
     }
 
-    /* テーブルを縦スクロール対応に */
-    .table-responsive {
-        width: 100%;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
+    /* 商品マスターテーブル専用の調整 */
+    #products-table {
+        min-width: 840px; /* スマホではより広く（ID列削除により調整） */
+    }
+
+    #products-table th,
+    #products-table td {
+        font-size: 16px;
+        padding: 14px 10px;
+    }
+
+    /* 各列の最小幅を指定 */
+    #products-table th:nth-child(1),
+    #products-table td:nth-child(1) { min-width: 80px; } /* 画像 */
+    #products-table th:nth-child(2),
+    #products-table td:nth-child(2) { min-width: 180px; } /* 商品名 */
+    #products-table th:nth-child(3),
+    #products-table td:nth-child(3) { min-width: 120px; } /* カテゴリ */
+    #products-table th:nth-child(4),
+    #products-table td:nth-child(4) { min-width: 90px; } /* 発注点 */
+    #products-table th:nth-child(5),
+    #products-table td:nth-child(5) { min-width: 90px; } /* 現在庫 */
+    #products-table th:nth-child(6),
+    #products-table td:nth-child(6) { min-width: 200px; } /* 操作 */
+
+    #products-table .btn {
+        padding: 10px 14px;
+        font-size: 15px;
+        margin: 3px;
+        display: inline-block;
+        min-height: 44px;
+        white-space: nowrap;
+    }
+
+    /* ダッシュボードテーブルも読みやすく */
+    #stock-table {
+        min-width: 700px;
+    }
+
+    #stock-table th,
+    #stock-table td,
+    #pending-orders-table th,
+    #pending-orders-table td {
+        font-size: 15px;
+        padding: 12px 8px;
+    }
+
+    #pending-orders-table {
+        min-width: 700px;
+    }
+
+    #stock-table .btn,
+    #pending-orders-table .btn {
+        font-size: 14px;
+        padding: 8px 12px;
+        min-height: 40px;
+    }
+
+    /* 履歴テーブル */
+    #history-table {
+        min-width: 800px;
+    }
+
+    /* テーブルコンテナのスクロール */
+    .table-container {
+        max-height: none; /* スマホでは高さ制限を解除 */
     }
 
     /* フィルター（スマホ用） */
     .filter-group {
-        gap: 8px;
+        gap: 12px;
     }
 
     .filter-group > div {
-        padding: 8px !important;
+        padding: 12px !important;
     }
 
     .filter-group label {
-        font-size: 13px;
+        font-size: 15px;
+        font-weight: 600;
     }
 
     .filter-group select,
     .filter-group input[type="date"] {
-        font-size: 14px;
-        padding: 10px;
+        font-size: 16px;
+        padding: 12px;
+        min-height: 48px;
     }
 
     .filter-group span {
-        font-size: 13px;
+        font-size: 15px;
+    }
+
+    /* フォーム要素のサイズ調整 */
+    .form-group {
+        margin-bottom: 16px;
+    }
+
+    .form-group label {
+        font-size: 16px;
+        font-weight: 600;
+        margin-bottom: 8px;
+    }
+
+    .form-group input,
+    .form-group select {
+        font-size: 16px;
+        padding: 14px;
+        min-height: 48px;
     }
 
     /* 週次入力 */
     .daily-table input[type="number"] {
-        width: 60px;
-        padding: 4px;
-        font-size: 12px;
+        width: 80px;
+        padding: 10px;
+        font-size: 16px;
+        min-height: 44px;
     }
 
     .weekly-thumbnail {
-        width: 40px !important;
-        height: 40px !important;
+        width: 50px !important;
+        height: 50px !important;
     }
 
     /* モーダル */
     .modal-content {
-        padding: 15px;
+        padding: 20px;
+    }
+
+    .modal-content h3 {
+        font-size: 20px;
+        margin-bottom: 16px;
     }
 
     .close {
-        right: 10px;
-        top: 10px;
-        font-size: 24px;
+        right: 12px;
+        top: 12px;
+        font-size: 32px;
+        min-width: 44px;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
 
     /* アラート */
     .alert-box {
-        padding: 10px;
-        font-size: 13px;
+        padding: 14px;
+        font-size: 15px;
+    }
+
+    /* ダッシュボードセクション */
+    .dashboard-section h3 {
+        font-size: 18px;
+        padding: 16px 20px;
+    }
+
+    .dashboard-section .badge {
+        font-size: 15px;
+        padding: 4px 12px;
+    }
+
+    /* 履歴テーブル */
+    #history-table th,
+    #history-table td {
+        font-size: 15px;
+        padding: 12px 8px;
+    }
+
+    #history-table .btn {
+        font-size: 14px;
+        padding: 8px 12px;
+        min-height: 40px;
     }
 
     /* 画像ポップアップ */

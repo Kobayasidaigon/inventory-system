@@ -44,6 +44,7 @@ db.serialize(() => {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
+        role TEXT DEFAULT 'user' CHECK(role IN ('admin', 'user')),
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
@@ -88,10 +89,14 @@ db.serialize(() => {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         product_id INTEGER NOT NULL,
         requested_quantity INTEGER NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'ordered', 'received', 'cancelled')),
-        user_id INTEGER NOT NULL,
+        requested_by TEXT,
         requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected', 'cancelled')),
+        approved_quantity INTEGER,
+        approved_by TEXT,
+        approved_at DATETIME,
         note TEXT,
+        user_id INTEGER NOT NULL,
         FOREIGN KEY (product_id) REFERENCES products(id),
         FOREIGN KEY (user_id) REFERENCES users(id)
     )`);

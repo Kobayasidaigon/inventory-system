@@ -951,9 +951,8 @@ table th.sortable .sort-arrow {
     /* テーブル - 横スクロール対応 */
     table {
         display: table;
-        width: auto;
-        min-width: 100%;
-        table-layout: auto;
+        width: 100%;
+        table-layout: fixed; /* 固定レイアウトに変更 */
         font-size: 15px;
     }
 
@@ -965,73 +964,188 @@ table th.sortable .sort-arrow {
 
     table th,
     table td {
-        padding: 12px 10px;
+        padding: 12px 8px;
         font-size: 15px;
+        overflow: hidden;
+        text-overflow: ellipsis;
         white-space: nowrap;
-        min-width: 80px;
+    }
+
+    /* テキストが長い場合のスクロール対応 */
+    table td.scrollable-text {
+        max-width: 0; /* table-layout: fixed と組み合わせて使用 */
+        overflow-x: auto;
+        overflow-y: hidden;
+        white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    table td.scrollable-text::-webkit-scrollbar {
+        height: 3px;
+    }
+
+    table td.scrollable-text::-webkit-scrollbar-thumb {
+        background: #667eea;
+        border-radius: 2px;
     }
 
     /* 商品マスターテーブル専用の調整 */
     #products-table {
-        min-width: 840px; /* スマホではより広く（ID列削除により調整） */
+        table-layout: fixed;
+        width: 100%;
     }
 
     #products-table th,
     #products-table td {
         font-size: 16px;
-        padding: 14px 10px;
+        padding: 14px 8px;
     }
 
-    /* 各列の最小幅を指定 */
+    /* 各列の幅を指定（合計100%） */
     #products-table th:nth-child(1),
-    #products-table td:nth-child(1) { min-width: 80px; } /* 画像 */
+    #products-table td:nth-child(1) { width: 15%; } /* 画像 */
     #products-table th:nth-child(2),
-    #products-table td:nth-child(2) { min-width: 180px; } /* 商品名 */
+    #products-table td:nth-child(2) { width: 20%; } /* 商品名 */
     #products-table th:nth-child(3),
-    #products-table td:nth-child(3) { min-width: 120px; } /* カテゴリ */
+    #products-table td:nth-child(3) { width: 18%; } /* カテゴリ */
     #products-table th:nth-child(4),
-    #products-table td:nth-child(4) { min-width: 90px; } /* 発注点 */
+    #products-table td:nth-child(4) { width: 12%; } /* 発注点 */
     #products-table th:nth-child(5),
-    #products-table td:nth-child(5) { min-width: 90px; } /* 現在庫 */
+    #products-table td:nth-child(5) { width: 12%; } /* 現在庫 */
     #products-table th:nth-child(6),
-    #products-table td:nth-child(6) { min-width: 200px; } /* 操作 */
+    #products-table td:nth-child(6) { width: 23%; } /* 操作 */
+
+    /* スクロール可能なテキスト列 */
+    #products-table td:nth-child(2),
+    #products-table td:nth-child(3) {
+        overflow-x: auto;
+        overflow-y: hidden;
+        white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
+    }
 
     #products-table .btn {
-        padding: 10px 14px;
-        font-size: 15px;
-        margin: 3px;
+        padding: 8px 10px;
+        font-size: 14px;
+        margin: 2px;
         display: inline-block;
-        min-height: 44px;
+        min-height: 40px;
         white-space: nowrap;
     }
 
     /* ダッシュボードテーブルも読みやすく */
     #stock-table {
-        min-width: 700px;
+        table-layout: fixed;
+        width: 100%;
     }
 
     #stock-table th,
-    #stock-table td,
+    #stock-table td {
+        font-size: 15px;
+        padding: 12px 8px;
+    }
+
+    /* 現在庫テーブルの列幅 */
+    #stock-table th:nth-child(1),
+    #stock-table td:nth-child(1) { width: 25%; } /* 商品名 */
+    #stock-table th:nth-child(2),
+    #stock-table td:nth-child(2) { width: 18%; } /* カテゴリ */
+    #stock-table th:nth-child(3),
+    #stock-table td:nth-child(3) { width: 12%; } /* 現在庫 */
+    #stock-table th:nth-child(4),
+    #stock-table td:nth-child(4) { width: 12%; } /* 発注点 */
+    #stock-table th:nth-child(5),
+    #stock-table td:nth-child(5) { width: 15%; } /* 状態 */
+    #stock-table th:nth-child(6),
+    #stock-table td:nth-child(6) { width: 18%; } /* 操作 */
+
+    /* スクロール可能なテキスト列 */
+    #stock-table td:nth-child(1),
+    #stock-table td:nth-child(2) {
+        overflow-x: auto;
+        overflow-y: hidden;
+        white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    #pending-orders-table {
+        table-layout: fixed;
+        width: 100%;
+    }
+
     #pending-orders-table th,
     #pending-orders-table td {
         font-size: 15px;
         padding: 12px 8px;
     }
 
-    #pending-orders-table {
-        min-width: 700px;
+    /* 発注依頼済みテーブルの列幅 */
+    #pending-orders-table th:nth-child(1),
+    #pending-orders-table td:nth-child(1) { width: 25%; } /* 商品名 */
+    #pending-orders-table th:nth-child(2),
+    #pending-orders-table td:nth-child(2) { width: 18%; } /* 依頼者 */
+    #pending-orders-table th:nth-child(3),
+    #pending-orders-table td:nth-child(3) { width: 22%; } /* 依頼日時 */
+    #pending-orders-table th:nth-child(4),
+    #pending-orders-table td:nth-child(4) { width: 15%; } /* 備考 */
+    #pending-orders-table th:nth-child(5),
+    #pending-orders-table td:nth-child(5) { width: 20%; } /* 操作 */
+
+    /* スクロール可能なテキスト列 */
+    #pending-orders-table td:nth-child(1),
+    #pending-orders-table td:nth-child(4) {
+        overflow-x: auto;
+        overflow-y: hidden;
+        white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
     }
 
     #stock-table .btn,
     #pending-orders-table .btn {
-        font-size: 14px;
-        padding: 8px 12px;
+        font-size: 13px;
+        padding: 8px 10px;
         min-height: 40px;
     }
 
     /* 履歴テーブル */
     #history-table {
-        min-width: 800px;
+        table-layout: fixed;
+        width: 100%;
+    }
+
+    #history-table th,
+    #history-table td {
+        font-size: 15px;
+        padding: 12px 6px;
+    }
+
+    /* 履歴テーブルの列幅 */
+    #history-table th:nth-child(1),
+    #history-table td:nth-child(1) { width: 18%; } /* 日時 */
+    #history-table th:nth-child(2),
+    #history-table td:nth-child(2) { width: 18%; } /* 商品名 */
+    #history-table th:nth-child(3),
+    #history-table td:nth-child(3) { width: 13%; } /* カテゴリ */
+    #history-table th:nth-child(4),
+    #history-table td:nth-child(4) { width: 10%; } /* 種別 */
+    #history-table th:nth-child(5),
+    #history-table td:nth-child(5) { width: 10%; } /* 数量 */
+    #history-table th:nth-child(6),
+    #history-table td:nth-child(6) { width: 13%; } /* 備考 */
+    #history-table th:nth-child(7),
+    #history-table td:nth-child(7) { width: 11%; } /* 担当者 */
+    #history-table th:nth-child(8),
+    #history-table td:nth-child(8) { width: 7%; } /* 操作 */
+
+    /* スクロール可能なテキスト列 */
+    #history-table td:nth-child(2),
+    #history-table td:nth-child(3),
+    #history-table td:nth-child(6),
+    #history-table td:nth-child(7) {
+        overflow-x: auto;
+        overflow-y: hidden;
+        white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
     }
 
     /* テーブルコンテナのスクロール */
@@ -1204,4 +1318,49 @@ table th.sortable .sort-arrow {
     #stock-chart {
         max-height: 330px;
     }
+}
+
+/* 発注管理関連のスタイル */
+.status-pending {
+    color: #ff9800;
+    font-weight: bold;
+}
+
+.status-approved {
+    color: #4caf50;
+    font-weight: bold;
+}
+
+.status-rejected {
+    color: #f44336;
+    font-weight: bold;
+}
+
+.status-cancelled {
+    color: #9e9e9e;
+    font-weight: bold;
+}
+
+.stock-approved {
+    color: #4caf50;
+    font-weight: bold;
+}
+
+.stock-ok {
+    color: #4caf50;
+}
+
+.stock-warning {
+    color: #ff9800;
+    font-weight: bold;
+}
+
+.stock-rejected {
+    color: #f44336;
+}
+
+/* ボタンサイズバリエーション */
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 13px;
 }

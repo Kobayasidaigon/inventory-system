@@ -6,17 +6,17 @@ const path = require('path');
 const fs = require('fs');
 const router = express.Router();
 
-// 在庫入力（入庫）
+// 在庫入力（入庫）- 日付指定対応
 router.post('/in', requireAuth, async (req, res) => {
     const db = getLocationDatabase(req.session.locationCode);
-    const { productId, quantity, note } = req.body;
+    const { productId, quantity, date, note } = req.body;
 
     try {
-        // 在庫履歴に記録
+        // 在庫履歴に記録（日付を指定）
         await db.run(
-            `INSERT INTO inventory_history (product_id, type, quantity, note, user_id)
-             VALUES (?, 'in', ?, ?, ?)`,
-            [productId, quantity, note || '', req.session.userId]
+            `INSERT INTO inventory_history (product_id, type, quantity, date, note, user_id)
+             VALUES (?, 'in', ?, ?, ?, ?)`,
+            [productId, quantity, date, note || '', req.session.userId]
         );
 
         // 現在庫を更新
@@ -27,6 +27,7 @@ router.post('/in', requireAuth, async (req, res) => {
 
         res.json({ success: true });
     } catch (err) {
+        console.error('入庫処理エラー:', err);
         res.status(500).json({ error: '入庫処理に失敗しました' });
     }
 });

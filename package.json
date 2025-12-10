@@ -5,7 +5,8 @@
   "main": "server/app.js",
   "scripts": {
     "start": "node server/app.js",
-    "dev": "nodemon server/app.js"
+    "dev": "nodemon server/app.js",
+    "migrate": "node server/db/migrate-user-roles.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

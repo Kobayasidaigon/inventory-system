@@ -109,6 +109,62 @@ curl -X POST http://localhost:3000/api/auth/admin/init \
 SQLiteを使用しているため、データは `server/db/inventory.db` ファイルに保存されます。
 バックアップが必要な場合は、このファイルをコピーしてください。
 
+### ローカル環境でのバックアップ
+
+データベースファイルを直接コピー：
+```bash
+cp server/db/inventory.db server/db/inventory.db.backup
+```
+
+### Fly.ioでのバックアップ
+
+#### 手動バックアップ
+
+```bash
+# SSHでコンテナに接続してバックアップを作成
+flyctl ssh console -a inventory-system-aburiva
+cd /data
+tar -czf backup-$(date +%Y%m%d-%H%M%S).tar.gz *.db uploads/
+exit
+
+# バックアップファイルをローカルにダウンロード
+flyctl ssh sftp get /data/backup-*.tar.gz -a inventory-system-aburiva
+```
+
+#### 自動バックアップスクリプト
+
+プロジェクトに含まれている `backup.sh` スクリプトを使用：
+
+```bash
+# 実行権限を付与（初回のみ）
+chmod +x backup.sh
+
+# バックアップを実行
+./backup.sh
+```
+
+このスクリプトは：
+- リモートでバックアップファイルを作成
+- ローカルの `backups/` ディレクトリにダウンロード
+- 30日以上古いバックアップを自動削除
+
+#### データの復元
+
+```bash
+# バックアップファイルをFly.ioにアップロード
+flyctl ssh sftp put backups/backup-YYYYMMDD-HHMMSS.tar.gz /data/ -a inventory-system-aburiva
+
+# SSHで接続して解凍
+flyctl ssh console -a inventory-system-aburiva
+cd /data
+tar -xzf backup-YYYYMMDD-HHMMSS.tar.gz
+rm backup-YYYYMMDD-HHMMSS.tar.gz
+exit
+
+# アプリを再起動
+flyctl apps restart -a inventory-system-aburiva
+```
+
 ## トラブルシューティング
 
 ### ポート3000が使用中の場合

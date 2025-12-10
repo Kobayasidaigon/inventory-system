@@ -1,5 +1,6 @@
 // グローバル変数
 let currentUser = null;
+let currentUserRole = 'user'; // 'admin' or 'user'
 let products = [];
 let chartInstance = null;
 let productsSortColumn = 'category';
@@ -12,7 +13,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     await checkAuth();
     await loadProducts();
     setupEventListeners();
-    showDashboard();
+
+    // ロールに応じた初期ページを表示
+    if (currentUserRole === 'user') {
+        showPage('stock-view');
+    } else {
+        showPage('dashboard');
+    }
 });
 
 // 認証チェック
@@ -26,18 +33,56 @@ async function checkAuth() {
             return;
         }
 
-        // 管理者の場合は管理画面にリダイレクト
-        if (data.isAdmin) {
-            window.location.href = '/admin.html';
-            return;
-        }
+        currentUser = data.username;
+        currentUserRole = data.role || 'user';
 
-        currentUser = data.userName;
         document.getElementById('username-display').textContent = `ログイン中: ${currentUser}`;
+
+        // ロールに応じてUIを調整
+        setupUIForRole();
     } catch (error) {
         console.error('認証チェックエラー:', error);
         window.location.href = '/';
     }
+}
+
+// ロールに応じたUI設定
+function setupUIForRole() {
+    const nav = document.querySelector('.nav');
+    nav.innerHTML = ''; // ナビゲーションをクリア
+
+    if (currentUserRole === 'user') {
+        // 一般ユーザー: 現在庫・出庫・入庫・発注希望のみ
+        nav.innerHTML = `
+            <button class="nav-btn active" data-page="stock-view">現在庫</button>
+            <button class="nav-btn" data-page="out-stock">出庫</button>
+            <button class="nav-btn" data-page="in-stock">入庫</button>
+            <button class="nav-btn" data-page="order-request">発注希望</button>
+        `;
+    } else if (currentUserRole === 'admin') {
+        // 管理者: すべての機能
+        nav.innerHTML = `
+            <button class="nav-btn active" data-page="dashboard">ダッシュボード</button>
+            <button class="nav-btn" data-page="order-management">発注管理</button>
+            <button class="nav-btn" data-page="products">商品管理</button>
+            <button class="nav-btn" data-page="stock-chart">在庫推移</button>
+            <button class="nav-btn" data-page="history">履歴確認</button>
+            <button class="nav-btn" data-page="out-stock">出庫</button>
+            <button class="nav-btn" data-page="in-stock">入庫</button>
+            <button class="nav-btn" data-page="weekly-input">週次入力</button>
+        `;
+    }
+
+    // イベントリスナーを再設定
+    document.querySelectorAll('.nav-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const page = btn.dataset.page;
+            await showPage(page);
+
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        });
+    });
 }
 
 // ログアウト
@@ -103,6 +148,26 @@ async function showPage(pageName) {
         case 'products':
             await showProducts();
             break;
+        case 'stock-view':
+            await loadProducts();
+            loadStockViewCategoryFilter();
+            await showStockView();
+            break;
+        case 'order-request':
+            await loadProducts();
+            await showOrderRequest();
+            break;
+        case 'order-management':
+            await loadProducts();
+            await showOrderManagement();
+            break;
+        case 'out-stock':
+            await loadProducts();
+            setDefaultOutDate();
+            loadOutStockCategoryFilter();
+            loadOutStockProducts();
+            loadTodayOutHistory();
+            break;
         case 'weekly-input':
             await loadProducts();
             setDefaultOutDate();
@@ -111,6 +176,7 @@ async function showPage(pageName) {
             break;
         case 'in-stock':
             await loadProducts();
+            setDefaultInDate();
             loadInStockCategoryFilter();
             loadInStockProducts();
             break;
@@ -120,6 +186,7 @@ async function showPage(pageName) {
             loadHistoryProductFilter();
             loadHistory();
             break;
+        case 'stock-chart':
         case 'chart':
             await loadProducts();
             loadChartCategoryFilter();
@@ -283,13 +350,22 @@ async function showOrderDialog(productId) {
 
             analysisText = `
                 <div style="background: #f0f0f0; padding: 15px; margin: 10px 0; border-radius: 5px;">
-                    <h4>発注分析</h4>
+                    <h4>発注分析 (${analysis.analysisPeriod || '過去30日間'}のデータ)</h4>
                     ${reorderPointInfo}
                     <p>・1日平均消費量: ${analysis.avgDailyConsumption}個</p>
                     <p>・在庫切れまで: 約${analysis.daysUntilStockout}日</p>
                     <p>・推奨発注量: ${analysis.recommendedOrderQty}個</p>
                     <p>・消費トレンド: ${analysis.analysisNote}</p>
                     ${analysis.hasWeeklyPattern ? '<p>・曜日別の消費パターンが確認されています</p>' : ''}
+                </div>
+            `;
+        } else if (analysis.message) {
+            analysisText = `
+                <div style="background: #fff3cd; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #ffc107;">
+                    <p style="margin: 0; color: #856404;">
+                        <strong>📊 分析情報:</strong><br>
+                        ${analysis.message}
+                    </p>
                 </div>
             `;
         }
@@ -1463,7 +1539,7 @@ async function loadStockChart() {
         if (analysis.hasData) {
             analysisDiv.innerHTML = `
                 <div style="background: white; padding: 20px; margin-top: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                    <h3>発注分析情報</h3>
+                    <h3>発注分析情報 (${analysis.analysisPeriod || '過去30日間'}のデータ)</h3>
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 15px;">
                         <div>
                             <strong>1日平均消費量:</strong><br>
@@ -1492,8 +1568,11 @@ async function loadStockChart() {
             `;
         } else {
             analysisDiv.innerHTML = `
-                <div style="background: white; padding: 20px; margin-top: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                    <p>分析に十分なデータがありません（過去90日間の出庫データが必要です）</p>
+                <div style="background: #fff3cd; padding: 20px; margin-top: 20px; border-radius: 8px; border-left: 4px solid #ffc107;">
+                    <p style="margin: 0; color: #856404;">
+                        <strong>📊 分析情報:</strong><br>
+                        ${analysis.message || '分析に十分なデータがありません（最低3日分の出庫データが必要です）'}
+                    </p>
                 </div>
             `;
         }
@@ -1501,4 +1580,174 @@ async function loadStockChart() {
         console.error('グラフ取得エラー:', error);
         alert('グラフの読み込みに失敗しました');
     }
+}
+
+// 現在庫表示用のカテゴリフィルター読み込み
+function loadStockViewCategoryFilter() {
+    const categoryFilter = document.getElementById('stock-view-category-filter');
+    if (!categoryFilter) return;
+
+    const categories = [...new Set(products.map(p => p.category).filter(c => c))];
+
+    categoryFilter.innerHTML = '<option value="">すべてのカテゴリ</option>';
+    categories.forEach(category => {
+        const option = document.createElement('option');
+        option.value = category;
+        option.textContent = category;
+        categoryFilter.appendChild(option);
+    });
+}
+
+// 出庫日付のデフォルト設定（今日）
+function setDefaultOutDate() {
+    const dateInput = document.getElementById('out-date');
+    if (!dateInput) return;
+
+    const today = new Date();
+    const dateStr = today.toISOString().split('T')[0];
+    dateInput.value = dateStr;
+}
+
+// 入庫日付のデフォルト設定（今日）
+function setDefaultInDate() {
+    const dateInput = document.getElementById('in-date');
+    if (!dateInput) return;
+
+    const today = new Date();
+    const dateStr = today.toISOString().split('T')[0];
+    dateInput.value = dateStr;
+}
+
+// 今日の出庫履歴を読み込み
+async function loadTodayOutHistory() {
+    const today = new Date().toISOString().split('T')[0];
+
+    try {
+        const response = await fetch(`/api/inventory/history?startDate=${today}&endDate=${today}`);
+        const history = await response.json();
+
+        const outHistory = history.filter(h => h.type === 'out');
+
+        const tbody = document.querySelector('#today-out-table tbody');
+        tbody.innerHTML = '';
+
+        if (outHistory.length === 0) {
+            const row = document.createElement('tr');
+            row.innerHTML = '<td colspan="3">今日の出庫記録はありません</td>';
+            tbody.appendChild(row);
+            return;
+        }
+
+        outHistory.forEach(item => {
+            const row = document.createElement('tr');
+
+            const nameCell = document.createElement('td');
+            nameCell.textContent = item.product_name;
+            row.appendChild(nameCell);
+
+            const qtyCell = document.createElement('td');
+            qtyCell.textContent = `${item.quantity}個`;
+            row.appendChild(qtyCell);
+
+            const timeCell = document.createElement('td');
+            const time = new Date(item.created_at).toLocaleTimeString('ja-JP', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            timeCell.textContent = time;
+            row.appendChild(timeCell);
+
+            tbody.appendChild(row);
+        });
+    } catch (error) {
+        console.error('今日の出庫履歴取得エラー:', error);
+    }
+}
+
+// 出庫処理の更新（日付対応）
+async function submitOutStock(e) {
+    e.preventDefault();
+
+    const productId = document.getElementById('out-product').value;
+    const quantity = document.getElementById('out-quantity').value;
+    const date = document.getElementById('out-date').value;
+    const note = document.getElementById('out-note').value;
+
+    try {
+        const response = await fetch('/api/inventory/out', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                productId: parseInt(productId),
+                quantity: parseInt(quantity),
+                date,
+                note
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            alert('出庫を記録しました');
+            document.getElementById('out-stock-form').reset();
+            setDefaultOutDate(); // 日付を今日に戻す
+            document.getElementById('out-product-image').innerHTML = '';
+            document.getElementById('out-product-info').innerHTML = '';
+            await loadProducts(); // 商品情報を再読み込み
+            await loadTodayOutHistory(); // 今日の出庫履歴を更新
+        } else {
+            alert('エラー: ' + (data.error || '出庫処理に失敗しました'));
+        }
+    } catch (error) {
+        console.error('出庫処理エラー:', error);
+        alert('出庫処理に失敗しました');
+    }
+}
+
+// 入庫処理の更新（日付対応）
+async function submitInStock(e) {
+    e.preventDefault();
+
+    const productId = document.getElementById('in-product').value;
+    const quantity = document.getElementById('in-quantity').value;
+    const date = document.getElementById('in-date').value;
+    const note = document.getElementById('in-note').value;
+
+    try {
+        const response = await fetch('/api/inventory/in', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                productId: parseInt(productId),
+                quantity: parseInt(quantity),
+                date,
+                note
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            alert('入庫を記録しました');
+            document.getElementById('in-stock-form').reset();
+            setDefaultInDate(); // 日付を今日に戻す
+            document.getElementById('in-product-image').innerHTML = '';
+            document.getElementById('in-product-info').innerHTML = '';
+            await loadProducts(); // 商品情報を再読み込み
+        } else {
+            alert('エラー: ' + (data.error || '入庫処理に失敗しました'));
+        }
+    } catch (error) {
+        console.error('入庫処理エラー:', error);
+        alert('入庫処理に失敗しました');
+    }
+}
+
+// 初期化時に追加のイベントリスナーを設定
+if (typeof setupUserPagesEventListeners === 'function') {
+    setupUserPagesEventListeners();
+}
+
+if (typeof setupAdminPagesEventListeners === 'function') {
+    setupAdminPagesEventListeners();
 }

@@ -1,22 +1,23 @@
 const express = require('express');
 const { getLocationDatabase, mainDb } = require('../db/database-admin');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireAdmin } = require('../middleware/auth');
 const router = express.Router();
 
 // 発注依頼作成
 router.post('/', requireAuth, async (req, res) => {
     const db = getLocationDatabase(req.session.locationCode);
-    const { productId, quantity, note } = req.body;
+    const { productId, quantity, requestedBy, note } = req.body;
 
     try {
         const result = await db.run(
-            `INSERT INTO order_requests (product_id, requested_quantity, user_id, note)
-             VALUES (?, ?, ?, ?)`,
-            [productId, quantity, req.session.userId, note || '']
+            `INSERT INTO order_requests (product_id, requested_quantity, requested_by, user_id, note)
+             VALUES (?, ?, ?, ?, ?)`,
+            [productId, quantity, requestedBy || req.session.username, req.session.userId, note || '']
         );
 
         res.json({ success: true, orderId: result.lastID });
     } catch (err) {
+        console.error('Order creation error:', err);
         res.status(500).json({ error: '発注依頼の登録に失敗しました' });
     }
 });
@@ -47,25 +48,138 @@ router.get('/', requireAuth, async (req, res) => {
     }
 });
 
-// 発注依頼ステータス更新
-router.put('/:id', requireAuth, async (req, res) => {
+// 発注依頼の承認・却下（管理者のみ）
+router.put('/:id/approve', requireAdmin, async (req, res) => {
     const db = getLocationDatabase(req.session.locationCode);
-    const { status } = req.body;
+    const { approvedQuantity, note } = req.body;
     const orderId = req.params.id;
 
     try {
         await db.run(
-            'UPDATE order_requests SET status = ? WHERE id = ?',
-            [status, orderId]
+            `UPDATE order_requests
+             SET status = 'approved',
+                 approved_quantity = ?,
+                 approved_by = ?,
+                 approved_at = CURRENT_TIMESTAMP,
+                 note = ?
+             WHERE id = ?`,
+            [approvedQuantity, req.session.username, note || '', orderId]
         );
 
         res.json({ success: true });
     } catch (err) {
-        res.status(500).json({ error: 'ステータス更新に失敗しました' });
+        console.error('Approve error:', err);
+        res.status(500).json({ error: '承認に失敗しました' });
     }
 });
 
-// 商品ごとの発注分析（90日間の消費トレンド）
+router.put('/:id/reject', requireAdmin, async (req, res) => {
+    const db = getLocationDatabase(req.session.locationCode);
+    const { note } = req.body;
+    const orderId = req.params.id;
+
+    try {
+        await db.run(
+            `UPDATE order_requests
+             SET status = 'rejected',
+                 approved_by = ?,
+                 approved_at = CURRENT_TIMESTAMP,
+                 note = ?
+             WHERE id = ?`,
+            [req.session.username, note || '', orderId]
+        );
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Reject error:', err);
+        res.status(500).json({ error: '却下に失敗しました' });
+    }
+});
+
+// 発注依頼の編集（管理者のみ）
+router.put('/:id', requireAdmin, async (req, res) => {
+    const db = getLocationDatabase(req.session.locationCode);
+    const { quantity, note } = req.body;
+    const orderId = req.params.id;
+
+    try {
+        // pending状態の発注依頼のみ編集可能
+        const order = await db.get('SELECT * FROM order_requests WHERE id = ?', [orderId]);
+
+        if (!order) {
+            return res.status(404).json({ error: '発注依頼が見つかりません' });
+        }
+
+        if (order.status !== 'pending' && order.status !== 'approved') {
+            return res.status(400).json({ error: 'この発注依頼は編集できません' });
+        }
+
+        const updates = [];
+        const params = [];
+
+        if (quantity !== undefined) {
+            if (order.status === 'approved') {
+                updates.push('approved_quantity = ?');
+                params.push(quantity);
+            } else {
+                updates.push('requested_quantity = ?');
+                params.push(quantity);
+            }
+        }
+
+        if (note !== undefined) {
+            updates.push('note = ?');
+            params.push(note);
+        }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ error: '更新する項目がありません' });
+        }
+
+        params.push(orderId);
+
+        await db.run(
+            `UPDATE order_requests SET ${updates.join(', ')} WHERE id = ?`,
+            params
+        );
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Update error:', err);
+        res.status(500).json({ error: '更新に失敗しました' });
+    }
+});
+
+// 発注依頼のキャンセル
+router.delete('/:id', requireAuth, async (req, res) => {
+    const db = getLocationDatabase(req.session.locationCode);
+    const orderId = req.params.id;
+
+    try {
+        const order = await db.get('SELECT * FROM order_requests WHERE id = ?', [orderId]);
+
+        if (!order) {
+            return res.status(404).json({ error: '発注依頼が見つかりません' });
+        }
+
+        // 一般ユーザーは自分の発注のみキャンセル可能、管理者はすべてキャンセル可能
+        if (req.session.userRole !== 'admin' && order.user_id !== req.session.userId) {
+            return res.status(403).json({ error: '権限がありません' });
+        }
+
+        await db.run(
+            'UPDATE order_requests SET status = ? WHERE id = ?',
+            ['cancelled', orderId]
+        );
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Cancel error:', err);
+        res.status(500).json({ error: 'キャンセルに失敗しました' });
+    }
+});
+
+// 商品ごとの発注分析（過去30日間の消費トレンド）
 router.get('/analysis/:productId', requireAuth, async (req, res) => {
     const db = getLocationDatabase(req.session.locationCode);
     const productId = req.params.productId;
@@ -78,7 +192,7 @@ router.get('/analysis/:productId', requireAuth, async (req, res) => {
             return res.status(404).json({ error: '商品が見つかりません' });
         }
 
-        // 過去90日間の出庫履歴を取得
+        // 過去30日間の出庫履歴を取得
         const query = `
             SELECT
                 COALESCE(h.date, DATE(h.created_at)) as date,
@@ -86,17 +200,19 @@ router.get('/analysis/:productId', requireAuth, async (req, res) => {
                 SUM(CASE WHEN h.type = 'out' THEN h.quantity ELSE 0 END) as out_quantity
             FROM inventory_history h
             WHERE h.product_id = ?
-            AND DATE(COALESCE(h.date, h.created_at)) >= DATE('now', '-90 days')
+            AND DATE(COALESCE(h.date, h.created_at)) >= DATE('now', '-30 days')
             GROUP BY date
             ORDER BY date ASC
         `;
 
         const history = await db.all(query, [productId]);
 
-        if (history.length === 0) {
+        // データが少なくても分析を実行（最低3日分のデータがあれば分析）
+        if (history.length < 3) {
             return res.json({
                 hasData: false,
-                message: '分析に十分なデータがありません'
+                message: '分析に十分なデータがありません（最低3日分の出庫データが必要です）',
+                dataCount: history.length
             });
         }
 
@@ -143,55 +259,35 @@ router.get('/analysis/:productId', requireAuth, async (req, res) => {
             ? Math.floor(product.current_stock / avgDailyConsumption)
             : 999;
 
-        // 発注点を自動計算（発注リードタイム7日分 + 安全在庫3日分）
+        // 推奨発注点を計算（発注リードタイム7日分 + 安全在庫3日分）
         const leadTimeDays = 7; // 発注から納品までの日数
         const safetyStockDays = 3; // 安全在庫の日数
-        const calculatedReorderPoint = Math.ceil(avgDailyConsumption * (leadTimeDays + safetyStockDays));
+        const recommendedReorderPoint = Math.ceil(avgDailyConsumption * (leadTimeDays + safetyStockDays));
 
-        // 自動調整された発注点を使用（最小値は現在の発注点の50%）
-        const minReorderPoint = Math.floor(product.reorder_point * 0.5);
-        const optimizedReorderPoint = Math.max(calculatedReorderPoint, minReorderPoint);
+        // 発注が必要かどうか（現在の発注点を使用）
+        const needsOrder = product.current_stock <= product.reorder_point;
 
-        // 発注点を更新すべきかチェック（現在の発注点と20%以上差がある場合）
-        const shouldUpdateReorderPoint = product.reorder_point > 0 &&
-            Math.abs(optimizedReorderPoint - product.reorder_point) / product.reorder_point > 0.2;
-
-        // 発注が必要かどうか（最適化された発注点を使用）
-        const needsOrder = product.current_stock <= optimizedReorderPoint;
-
-        // 推奨発注量を計算（最適化された発注点の2倍 - 現在庫）
+        // 推奨発注量を計算（推奨発注点の2倍 - 現在庫）
         const recommendedOrderQty = needsOrder
-            ? Math.max(0, (optimizedReorderPoint * 2) - product.current_stock)
+            ? Math.max(0, (Math.max(recommendedReorderPoint, product.reorder_point) * 2) - product.current_stock)
             : 0;
 
         // 最近の消費トレンド（直近7日間 vs 全期間の比較）
-        const recentHistory = history.slice(-7);
+        // データが少ない場合は直近の半分を使用
+        const recentDays = Math.min(7, Math.floor(history.length / 2));
+        const recentHistory = history.slice(-recentDays);
         const recentConsumption = recentHistory.reduce((sum, item) => sum + item.out_quantity, 0);
         const recentAvg = recentHistory.length > 0 ? recentConsumption / recentHistory.length : 0;
         const trendChange = avgDailyConsumption > 0
             ? ((recentAvg - avgDailyConsumption) / avgDailyConsumption * 100)
             : 0;
 
-        // 発注点の自動更新
-        if (shouldUpdateReorderPoint) {
-            try {
-                await db.run(
-                    'UPDATE products SET reorder_point = ? WHERE id = ?',
-                    [optimizedReorderPoint, productId]
-                );
-                console.log(`商品ID ${productId} の発注点を ${product.reorder_point} → ${optimizedReorderPoint} に自動更新しました`);
-            } catch (updateErr) {
-                console.error('発注点の自動更新エラー:', updateErr);
-            }
-        }
-
         res.json({
             hasData: true,
             productName: product.name,
             currentStock: product.current_stock,
             reorderPoint: product.reorder_point,
-            optimizedReorderPoint: optimizedReorderPoint,
-            reorderPointUpdated: shouldUpdateReorderPoint,
+            recommendedReorderPoint: recommendedReorderPoint,
             avgDailyConsumption: Math.round(avgDailyConsumption * 100) / 100,
             daysUntilStockout: daysUntilStockout,
             needsOrder: needsOrder,
@@ -203,7 +299,9 @@ router.get('/analysis/:productId', requireAuth, async (req, res) => {
                 ? '消費量が増加傾向です'
                 : trendChange < -20
                     ? '消費量が減少傾向です'
-                    : '消費量は安定しています'
+                    : '消費量は安定しています',
+            analysisPeriod: `過去${totalDays}日間`,
+            dataCount: totalDays
         });
     } catch (err) {
         res.status(500).json({ error: 'データ取得エラー' });

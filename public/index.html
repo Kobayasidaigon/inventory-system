@@ -155,6 +155,10 @@
             <h2>入庫処理</h2>
             <form id="in-stock-form">
                 <div class="form-group">
+                    <label for="in-date">入庫日</label>
+                    <input type="date" id="in-date" required>
+                </div>
+                <div class="form-group">
                     <label for="in-category-filter">カテゴリ</label>
                     <select id="in-category-filter">
                         <option value="">すべてのカテゴリ</option>
@@ -260,6 +264,151 @@
                 <canvas id="stock-chart"></canvas>
             </div>
         </div>
+
+        <!-- 現在庫表示（一般ユーザー向け） -->
+        <div id="stock-view" class="page">
+            <h2>現在庫</h2>
+            <div class="actions">
+                <div class="form-group" style="display: inline-block; margin-right: 15px;">
+                    <label for="stock-view-category-filter">カテゴリフィルター</label>
+                    <select id="stock-view-category-filter">
+                        <option value="">すべてのカテゴリ</option>
+                    </select>
+                </div>
+            </div>
+            <div class="table-scroll-hint">← 左右にスワイプしてスクロールできます →</div>
+            <div class="table-container">
+                <table id="stock-view-table">
+                    <thead>
+                        <tr>
+                            <th>画像</th>
+                            <th>商品名</th>
+                            <th>カテゴリ</th>
+                            <th>現在庫</th>
+                            <th>発注点</th>
+                            <th>状態</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 発注希望（一般ユーザー向け） -->
+        <div id="order-request" class="page">
+            <h2>発注希望</h2>
+            <div class="actions">
+                <div class="form-group" style="display: inline-block; margin-right: 15px;">
+                    <label for="order-request-filter">表示</label>
+                    <select id="order-request-filter">
+                        <option value="all">すべて</option>
+                        <option value="needs-order" selected>要発注のみ</option>
+                        <option value="pending">発注希望済み</option>
+                    </select>
+                </div>
+            </div>
+            <div class="table-scroll-hint">← 左右にスワイプしてスクロールできます →</div>
+            <div class="table-container">
+                <table id="order-request-table">
+                    <thead>
+                        <tr>
+                            <th>画像</th>
+                            <th>商品名</th>
+                            <th>現在庫</th>
+                            <th>発注点</th>
+                            <th>推奨数</th>
+                            <th>状態</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 発注管理（管理者向け） -->
+        <div id="order-management" class="page">
+            <h2>発注管理</h2>
+            <div class="actions">
+                <div class="form-group" style="display: inline-block; margin-right: 15px;">
+                    <label for="order-mgmt-filter">表示</label>
+                    <select id="order-mgmt-filter">
+                        <option value="pending" selected>未承認</option>
+                        <option value="approved">承認済み</option>
+                        <option value="rejected">却下</option>
+                        <option value="all">すべて</option>
+                    </select>
+                </div>
+            </div>
+            <div class="table-scroll-hint">← 左右にスワイプしてスクロールできます →</div>
+            <div class="table-container">
+                <table id="order-mgmt-table">
+                    <thead>
+                        <tr>
+                            <th>商品名</th>
+                            <th>現在庫</th>
+                            <th>希望数</th>
+                            <th>希望者</th>
+                            <th>希望日時</th>
+                            <th>状態</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 出庫処理（都度入力） -->
+        <div id="out-stock" class="page">
+            <h2>出庫処理</h2>
+            <div class="form-container">
+                <form id="out-stock-form">
+                    <div class="form-group">
+                        <label for="out-date">日付</label>
+                        <input type="date" id="out-date" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="out-category-filter">カテゴリフィルター</label>
+                        <select id="out-category-filter">
+                            <option value="">すべてのカテゴリ</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="out-product">商品</label>
+                        <select id="out-product" required>
+                            <option value="">商品を選択してください</option>
+                        </select>
+                    </div>
+                    <div id="out-product-image" class="product-image-display"></div>
+                    <div id="out-product-info" class="product-info"></div>
+                    <div class="form-group">
+                        <label for="out-quantity">出庫数</label>
+                        <input type="number" id="out-quantity" min="1" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="out-note">備考</label>
+                        <input type="text" id="out-note">
+                    </div>
+                    <button type="submit" class="btn btn-primary">出庫を記録</button>
+                </form>
+            </div>
+            <div class="dashboard-section" style="margin-top: 30px;">
+                <h3>今日の出庫記録</h3>
+                <div class="table-container">
+                    <table id="today-out-table">
+                        <thead>
+                            <tr>
+                                <th>商品名</th>
+                                <th>数量</th>
+                                <th>時刻</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </main>
 
     <!-- モーダル -->
@@ -277,6 +426,8 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="/js/user-pages.js"></script>
+    <script src="/js/admin-pages.js"></script>
     <script src="/js/app.js"></script>
 </body>
 </html>

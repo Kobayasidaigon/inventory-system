@@ -3,7 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { getLocationDatabase } = require('../db/database-admin');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireAdmin } = require('../middleware/auth');
 const router = express.Router();
 
 // アップロードディレクトリのパス（環境変数または既定値）
@@ -152,6 +152,25 @@ router.post('/initialize', requireAuth, async (req, res) => {
     } catch (err) {
         console.error('Initialize stock error:', err);
         res.status(500).json({ error: '初期在庫設定に失敗しました' });
+    }
+});
+
+// 推奨発注点を現在の発注点に適用（管理者のみ）
+router.put('/:id/apply-recommended-reorder-point', requireAdmin, async (req, res) => {
+    try {
+        const db = getLocationDatabase(req.session.locationCode);
+        const { recommendedReorderPoint } = req.body;
+        const productId = req.params.id;
+
+        await db.run(
+            'UPDATE products SET reorder_point = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [recommendedReorderPoint, productId]
+        );
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Apply recommended reorder point error:', err);
+        res.status(500).json({ error: '推奨発注点の適用に失敗しました' });
     }
 });
 

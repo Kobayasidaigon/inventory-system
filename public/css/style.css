@@ -684,17 +684,17 @@ table tbody tr:hover {
 
     table th,
     table td {
-        flex: 1 1 auto;
+        flex: 0 0 auto;
         min-width: 100px;
         padding: 10px 8px;
         display: flex;
         align-items: center;
-        white-space: normal;
-        word-wrap: break-word;
-        overflow-wrap: break-word;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
-    /* 最初の列を固定 */
+    /* 最初の列（商品名など）を固定 */
     table th:first-child,
     table td:first-child {
         position: sticky;
@@ -705,6 +705,53 @@ table tbody tr:hover {
         flex: 0 0 120px;
         font-weight: 600;
         border-right: 2px solid #e0e0e0;
+        overflow-x: auto;
+        overflow-y: hidden;
+        white-space: nowrap;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* 商品名列のスクロールバーを細く */
+    table td:first-child::-webkit-scrollbar {
+        height: 4px;
+    }
+
+    table td:first-child::-webkit-scrollbar-track {
+        background: #f1f1f1;
+    }
+
+    table td:first-child::-webkit-scrollbar-thumb {
+        background: #888;
+        border-radius: 2px;
+    }
+
+    /* その他の列も固定幅に */
+    table th:nth-child(2),
+    table td:nth-child(2) {
+        min-width: 100px;
+        max-width: 100px;
+        flex: 0 0 100px;
+    }
+
+    table th:nth-child(3),
+    table td:nth-child(3) {
+        min-width: 80px;
+        max-width: 80px;
+        flex: 0 0 80px;
+    }
+
+    table th:nth-child(4),
+    table td:nth-child(4) {
+        min-width: 80px;
+        max-width: 80px;
+        flex: 0 0 80px;
+    }
+
+    table th:nth-child(5),
+    table td:nth-child(5) {
+        min-width: 80px;
+        max-width: 80px;
+        flex: 0 0 80px;
     }
 
     table th:first-child {
@@ -890,7 +937,7 @@ table tbody tr:hover {
 
     table th,
     table td {
-        min-width: 90px;
+        min-width: 80px;
         padding: 8px 6px;
     }
 
@@ -899,6 +946,36 @@ table tbody tr:hover {
         min-width: 100px;
         max-width: 100px;
         flex: 0 0 100px;
+        overflow-x: auto;
+        overflow-y: hidden;
+    }
+
+    table th:nth-child(2),
+    table td:nth-child(2) {
+        min-width: 80px;
+        max-width: 80px;
+        flex: 0 0 80px;
+    }
+
+    table th:nth-child(3),
+    table td:nth-child(3) {
+        min-width: 70px;
+        max-width: 70px;
+        flex: 0 0 70px;
+    }
+
+    table th:nth-child(4),
+    table td:nth-child(4) {
+        min-width: 70px;
+        max-width: 70px;
+        flex: 0 0 70px;
+    }
+
+    table th:nth-child(5),
+    table td:nth-child(5) {
+        min-width: 70px;
+        max-width: 70px;
+        flex: 0 0 70px;
     }
 
     table th:last-child,

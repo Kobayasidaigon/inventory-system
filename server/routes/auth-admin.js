@@ -118,24 +118,27 @@ router.post('/admin/locations', async (req, res) => {
             return res.status(403).json({ error: '管理者権限が必要です' });
         }
 
-        const { locationCode, locationName } = req.body;
+        const { locationName } = req.body;
 
-        if (!locationCode || !locationName) {
-            return res.status(400).json({ error: '拠点コードと拠点名を入力してください' });
+        if (!locationName) {
+            return res.status(400).json({ error: '拠点名を入力してください' });
         }
 
-        const sanitizedCode = locationCode.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const dbName = `location_${sanitizedCode}.db`;
+        // 次の拠点コードを自動生成（数値オートインクリメント）
+        const maxLocation = await mainDb.get('SELECT MAX(CAST(location_code AS INTEGER)) as max_code FROM locations WHERE location_code GLOB "[0-9]*"');
+        const nextCode = (maxLocation && maxLocation.max_code ? parseInt(maxLocation.max_code) + 1 : 1).toString();
+
+        const dbName = `location_${nextCode}.db`;
 
         const result = await mainDb.run(
             'INSERT INTO locations (location_code, location_name, db_name) VALUES (?, ?, ?)',
-            [locationCode, locationName, dbName]
+            [nextCode, locationName, dbName]
         );
 
         // 拠点用のデータベースを初期化
-        getLocationDatabase(locationCode);
+        getLocationDatabase(nextCode);
 
-        res.json({ success: true, locationId: result.lastID });
+        res.json({ success: true, locationId: result.lastID, locationCode: nextCode });
     } catch (err) {
         console.error('Location registration error:', err);
         if (err.message && err.message.includes('UNIQUE')) {

@@ -288,40 +288,30 @@ function updateDashboardDisplay() {
 }
 
 // 発注依頼済み商品一覧表示
+let allActiveOrders = [];
+let showingAllOrders = false;
+
 async function loadPendingOrders() {
     try {
         const response = await fetch('/api/orders');
         const orders = await response.json();
 
+<<<<<<< HEAD
         // グローバル変数に保存
         pendingOrders = orders.filter(o => o.status === 'pending');
+=======
+        // pending、ordered、receivedのステータスを表示（cancelledは除外）
+        allActiveOrders = orders.filter(o => o.status !== 'cancelled');
+>>>>>>> 029fa2513e42604e6dbaa49df4c21a9525eb4c46
         const pendingSection = document.getElementById('pending-orders-section');
         const pendingCount = document.getElementById('pending-count');
 
-        if (pendingOrders.length > 0) {
+        if (allActiveOrders.length > 0) {
             pendingSection.style.display = 'block';
-
-            const tbody = document.querySelector('#pending-orders-table tbody');
-            tbody.innerHTML = '';
-
-            pendingOrders.forEach(order => {
-                const row = tbody.insertRow();
-                const requestedDate = new Date(order.requested_at).toLocaleString('ja-JP');
-
-                row.innerHTML = `
-                    <td>${order.product_name}</td>
-                    <td>${order.username}</td>
-                    <td>${requestedDate}</td>
-                    <td>${order.note || '-'}</td>
-                    <td>
-                        <button class="btn btn-secondary" onclick="completeOrder(${order.id}, ${order.product_id}, '${order.product_name.replace(/'/g, "\\'")}')">入荷完了</button>
-                        <button class="btn btn-secondary" onclick="updateOrderStatus(${order.id}, 'cancelled')">キャンセル</button>
-                    </td>
-                `;
-            });
+            renderPendingOrders(false);
 
             // 件数バッジを更新
-            pendingCount.textContent = `${pendingOrders.length}件`;
+            pendingCount.textContent = `${allActiveOrders.length}件`;
         } else {
             pendingSection.style.display = 'none';
         }
@@ -329,6 +319,81 @@ async function loadPendingOrders() {
         console.error('発注依頼取得エラー:', error);
     }
 }
+
+function renderPendingOrders(showAll) {
+    const tbody = document.querySelector('#pending-orders-table tbody');
+    const showMoreDiv = document.getElementById('show-more-orders');
+    tbody.innerHTML = '';
+
+    const DISPLAY_LIMIT = 8;
+    const ordersToShow = showAll ? allActiveOrders : allActiveOrders.slice(0, DISPLAY_LIMIT);
+
+    ordersToShow.forEach(order => {
+        const row = tbody.insertRow();
+        const requestedDateTime = new Date(order.requested_at);
+        const formattedDate = requestedDateTime.toLocaleDateString('ja-JP');
+
+        // ステータスの表示
+        const statusMap = {
+            'pending': '発注依頼中',
+            'ordered': '発注済',
+            'received': '受領済',
+            'cancelled': 'キャンセル'
+        };
+        const statusColorMap = {
+            'pending': '#f57c00',
+            'ordered': '#1976d2',
+            'received': '#388e3c',
+            'cancelled': '#757575'
+        };
+
+        const statusText = statusMap[order.status] || order.status;
+        const statusColor = statusColorMap[order.status] || '#000';
+
+        // ステータスに応じたボタン表示
+        let actionButtons = '';
+        if (order.status === 'pending') {
+            actionButtons = `
+                <button class="btn btn-secondary" onclick="completeOrder(${order.id}, ${order.product_id}, '${order.product_name.replace(/'/g, "\\'")}')">入荷完了</button>
+                <button class="btn btn-secondary" onclick="updateOrderStatus(${order.id}, 'cancelled')">キャンセル</button>
+            `;
+        } else if (order.status === 'ordered') {
+            actionButtons = `
+                <button class="btn btn-secondary" onclick="completeOrder(${order.id}, ${order.product_id}, '${order.product_name.replace(/'/g, "\\'")}')">入荷完了</button>
+            `;
+        } else {
+            actionButtons = '-';
+        }
+
+        row.innerHTML = `
+            <td>${order.product_name}</td>
+            <td>${order.username}</td>
+            <td>${formattedDate}</td>
+            <td style="color: ${statusColor}; font-weight: bold;">${statusText}</td>
+            <td>${order.note || '-'}</td>
+            <td>${actionButtons}</td>
+        `;
+    });
+
+    // 「もっと確認」リンクの表示制御
+    if (allActiveOrders.length > DISPLAY_LIMIT && !showAll) {
+        showMoreDiv.style.display = 'block';
+    } else {
+        showMoreDiv.style.display = 'none';
+    }
+}
+
+// 「もっと確認」リンクのイベントリスナー
+document.addEventListener('DOMContentLoaded', () => {
+    const showMoreLink = document.getElementById('show-more-orders-link');
+    if (showMoreLink) {
+        showMoreLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            showingAllOrders = true;
+            renderPendingOrders(true);
+        });
+    }
+});
 
 // 発注依頼ダイアログ表示
 async function showOrderDialog(productId) {
@@ -590,7 +655,7 @@ function updateProductsDisplay() {
             <td>${product.current_stock}</td>
             <td>
                 <button class="btn btn-secondary" onclick="editProduct(${product.id})">編集</button>
-                <button class="btn btn-secondary" onclick="setInitialStock(${product.id})">初期在庫</button>
+                <button class="btn btn-danger" onclick="deleteProduct(${product.id}, '${product.name.replace(/'/g, "\\'")}')">削除</button>
             </td>
         `;
     });
@@ -634,6 +699,10 @@ function showAddProductForm() {
     const modal = document.getElementById('modal');
     const modalBody = document.getElementById('modal-body');
 
+    // 既存のカテゴリ一覧を取得
+    const categories = [...new Set(products.map(p => p.category).filter(c => c))];
+    const categoryOptions = categories.map(cat => `<option value="${cat}">${cat}</option>`).join('');
+
     modalBody.innerHTML = `
         <h3>新規商品登録</h3>
         <form id="product-form" enctype="multipart/form-data">
@@ -643,7 +712,12 @@ function showAddProductForm() {
             </div>
             <div class="form-group">
                 <label>カテゴリ</label>
-                <input type="text" id="product-category">
+                <select id="product-category" required>
+                    <option value="">カテゴリを選択してください</option>
+                    ${categoryOptions}
+                    <option value="__new__">新しいカテゴリを追加...</option>
+                </select>
+                <input type="text" id="product-category-new" style="display: none; margin-top: 10px;" placeholder="新しいカテゴリ名を入力">
             </div>
             <div class="form-group">
                 <label>商品画像</label>
@@ -661,6 +735,19 @@ function showAddProductForm() {
             <button type="submit" class="btn btn-primary">登録</button>
         </form>
     `;
+
+    // カテゴリ選択の変更イベント
+    document.getElementById('product-category').addEventListener('change', (e) => {
+        const newCategoryInput = document.getElementById('product-category-new');
+        if (e.target.value === '__new__') {
+            newCategoryInput.style.display = 'block';
+            newCategoryInput.required = true;
+        } else {
+            newCategoryInput.style.display = 'none';
+            newCategoryInput.required = false;
+            newCategoryInput.value = '';
+        }
+    });
 
     // 画像プレビュー
     document.getElementById('product-image').addEventListener('change', (e) => {
@@ -681,9 +768,22 @@ function showAddProductForm() {
     document.getElementById('product-form').addEventListener('submit', async (e) => {
         e.preventDefault();
 
+        const categorySelect = document.getElementById('product-category');
+        const newCategoryInput = document.getElementById('product-category-new');
+        let category = categorySelect.value;
+
+        // 新しいカテゴリが選択された場合
+        if (category === '__new__') {
+            category = newCategoryInput.value.trim();
+            if (!category) {
+                alert('新しいカテゴリ名を入力してください');
+                return;
+            }
+        }
+
         const formData = new FormData();
         formData.append('name', document.getElementById('product-name').value);
-        formData.append('category', document.getElementById('product-category').value);
+        formData.append('category', category);
         formData.append('reorder_point', parseInt(document.getElementById('product-reorder').value));
         formData.append('current_stock', parseInt(document.getElementById('product-initial').value));
 
@@ -724,6 +824,12 @@ async function editProduct(productId) {
     const modal = document.getElementById('modal');
     const modalBody = document.getElementById('modal-body');
 
+    // 既存のカテゴリ一覧を取得
+    const categories = [...new Set(products.map(p => p.category).filter(c => c))];
+    const categoryOptions = categories.map(cat =>
+        `<option value="${cat}" ${cat === product.category ? 'selected' : ''}>${cat}</option>`
+    ).join('');
+
     const currentImageHtml = product.image_url
         ? `<div style="margin-bottom: 10px;"><img src="${product.image_url}" style="max-width: 150px; max-height: 150px; border-radius: 5px;"></div>`
         : '';
@@ -737,7 +843,12 @@ async function editProduct(productId) {
             </div>
             <div class="form-group">
                 <label>カテゴリ</label>
-                <input type="text" id="edit-category" value="${product.category || ''}">
+                <select id="edit-category" required>
+                    <option value="">カテゴリを選択してください</option>
+                    ${categoryOptions}
+                    <option value="__new__">新しいカテゴリを追加...</option>
+                </select>
+                <input type="text" id="edit-category-new" style="display: none; margin-top: 10px;" placeholder="新しいカテゴリ名を入力">
             </div>
             <div class="form-group">
                 <label>商品画像</label>
@@ -749,9 +860,27 @@ async function editProduct(productId) {
                 <label>発注点</label>
                 <input type="number" id="edit-reorder" min="0" value="${product.reorder_point}">
             </div>
+            <div class="form-group">
+                <label>現在庫</label>
+                <input type="number" id="edit-current-stock" min="0" value="${product.current_stock}">
+                <small style="color: #666;">※在庫数を変更できます</small>
+            </div>
             <button type="submit" class="btn btn-primary">更新</button>
         </form>
     `;
+
+    // カテゴリ選択の変更イベント
+    document.getElementById('edit-category').addEventListener('change', (e) => {
+        const newCategoryInput = document.getElementById('edit-category-new');
+        if (e.target.value === '__new__') {
+            newCategoryInput.style.display = 'block';
+            newCategoryInput.required = true;
+        } else {
+            newCategoryInput.style.display = 'none';
+            newCategoryInput.required = false;
+            newCategoryInput.value = '';
+        }
+    });
 
     // 画像プレビュー
     document.getElementById('edit-image').addEventListener('change', (e) => {
@@ -772,10 +901,24 @@ async function editProduct(productId) {
     document.getElementById('edit-product-form').addEventListener('submit', async (e) => {
         e.preventDefault();
 
+        const categorySelect = document.getElementById('edit-category');
+        const newCategoryInput = document.getElementById('edit-category-new');
+        let category = categorySelect.value;
+
+        // 新しいカテゴリが選択された場合
+        if (category === '__new__') {
+            category = newCategoryInput.value.trim();
+            if (!category) {
+                alert('新しいカテゴリ名を入力してください');
+                return;
+            }
+        }
+
         const formData = new FormData();
         formData.append('name', document.getElementById('edit-name').value);
-        formData.append('category', document.getElementById('edit-category').value);
+        formData.append('category', category);
         formData.append('reorder_point', parseInt(document.getElementById('edit-reorder').value));
+        formData.append('current_stock', parseInt(document.getElementById('edit-current-stock').value));
 
         const imageFile = document.getElementById('edit-image').files[0];
         if (imageFile) {
@@ -806,30 +949,35 @@ async function editProduct(productId) {
     modal.classList.add('show');
 }
 
-// 初期在庫設定
-async function setInitialStock(productId) {
-    const product = products.find(p => p.id === productId);
-    const stock = prompt(`${product.name}の初期在庫数を入力してください:`, product.current_stock);
+// 商品削除
+async function deleteProduct(productId, productName) {
+    // 確認ダイアログを表示
+    const confirmed = confirm(`商品「${productName}」を削除しますか？\n\n※在庫履歴がある商品は削除できません。`);
 
-    if (stock === null) return;
+    if (!confirmed) return;
 
     try {
-        const response = await fetch('/api/products/initialize', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                productId: productId,
-                initialStock: parseInt(stock)
-            })
+        const response = await fetch(`/api/products/${productId}`, {
+            method: 'DELETE'
         });
+
+        const data = await response.json();
 
         if (response.ok) {
             await loadProducts();
+<<<<<<< HEAD
             updateProductsDisplay();
             alert('初期在庫を設定しました');
+=======
+            showProducts();
+            alert('商品を削除しました');
+        } else {
+            alert('削除に失敗しました: ' + (data.error || ''));
+>>>>>>> 029fa2513e42604e6dbaa49df4c21a9525eb4c46
         }
     } catch (error) {
-        alert('設定に失敗しました');
+        console.error('削除エラー:', error);
+        alert('削除に失敗しました: ' + error.message);
     }
 }
 

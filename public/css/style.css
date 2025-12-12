@@ -239,12 +239,14 @@ table td {
 table th {
     font-weight: 600;
     color: #666;
+    background: #f5f5f5;
 }
 
 table tbody tr:hover {
     background: #f8f9fa;
 }
 
+<<<<<<< HEAD
 /* ソート可能なヘッダー */
 table th.sortable {
     cursor: pointer;
@@ -261,6 +263,12 @@ table th.sortable .sort-arrow {
     margin-left: 5px;
     color: #667eea;
     font-weight: bold;
+=======
+/* テーブルのスクロールコンテナ */
+.table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+>>>>>>> 029fa2513e42604e6dbaa49df4c21a9525eb4c46
 }
 
 /* ダッシュボードセクション */
@@ -711,6 +719,7 @@ table th.sortable .sort-arrow {
         width: 100%;
     }
 
+<<<<<<< HEAD
     /* テーブル - 横スクロール対応 */
     .page {
         overflow-x: hidden; /* ページ全体はスクロールさせない */
@@ -729,6 +738,17 @@ table th.sortable .sort-arrow {
     /* テーブルラッパーを追加してスクロール */
     .table-wrapper {
         width: 100%;
+=======
+    /* テーブル */
+    .table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    table {
+        font-size: 14px;
+        display: block;
+>>>>>>> 029fa2513e42604e6dbaa49df4c21a9525eb4c46
         overflow-x: auto;
         -webkit-overflow-scrolling: touch;
         margin-top: 20px;
@@ -738,11 +758,26 @@ table th.sortable .sort-arrow {
     table thead,
     table tbody,
     table tr {
+<<<<<<< HEAD
         display: table-row;
+=======
+        display: block;
+    }
+
+    table thead {
+        background: #f8f9fa;
+    }
+
+    table tr {
+        display: flex;
+        border-bottom: 1px solid #ddd;
+        min-width: max-content;
+>>>>>>> 029fa2513e42604e6dbaa49df4c21a9525eb4c46
     }
 
     table th,
     table td {
+<<<<<<< HEAD
         padding: 12px 10px;
         font-size: 15px;
         white-space: nowrap; /* テキストを折り返さない */
@@ -785,6 +820,60 @@ table th.sortable .sort-arrow {
         font-size: 14px;
         min-height: 40px;
         white-space: nowrap;
+=======
+        flex: 1 1 auto;
+        min-width: 100px;
+        padding: 10px 8px;
+        display: flex;
+        align-items: center;
+        white-space: normal;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+    }
+
+    /* 最初の列を固定 */
+    table th:first-child,
+    table td:first-child {
+        position: sticky;
+        left: 0;
+        z-index: 2;
+        min-width: 120px;
+        max-width: 120px;
+        flex: 0 0 120px;
+        font-weight: 600;
+        border-right: 2px solid #e0e0e0;
+    }
+
+    table th:first-child {
+        background: #f8f9fa;
+    }
+
+    table td:first-child {
+        background: white;
+    }
+
+    table tbody tr:hover td:first-child {
+        background: #f8f9fa;
+    }
+
+    /* ボタン列（操作列）は幅を固定 */
+    table th:last-child,
+    table td:last-child {
+        min-width: 140px;
+        max-width: 140px;
+        flex: 0 0 140px;
+        justify-content: center;
+        gap: 5px;
+        flex-wrap: nowrap;
+        flex-direction: row;
+    }
+
+    table td button {
+        font-size: 12px;
+        padding: 6px 10px;
+        white-space: nowrap;
+        flex-shrink: 0;
+>>>>>>> 029fa2513e42604e6dbaa49df4c21a9525eb4c46
     }
 
     /* フィルター */
@@ -948,6 +1037,7 @@ table th.sortable .sort-arrow {
         min-height: 48px;
     }
 
+<<<<<<< HEAD
     /* テーブル - 横スクロール対応 */
     table {
         display: table;
@@ -960,15 +1050,47 @@ table th.sortable .sort-arrow {
     table tbody,
     table tr {
         display: table-row;
+=======
+    /* テーブル - 読みやすく改善 */
+    table {
+        font-size: 13px;
+>>>>>>> 029fa2513e42604e6dbaa49df4c21a9525eb4c46
     }
 
     table th,
     table td {
+<<<<<<< HEAD
         padding: 12px 8px;
         font-size: 15px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+=======
+        min-width: 90px;
+        padding: 8px 6px;
+    }
+
+    table th:first-child,
+    table td:first-child {
+        min-width: 100px;
+        max-width: 100px;
+        flex: 0 0 100px;
+    }
+
+    table th:last-child,
+    table td:last-child {
+        min-width: 120px;
+        max-width: 120px;
+        flex: 0 0 120px;
+        flex-wrap: nowrap;
+        flex-direction: row;
+    }
+
+    table td button {
+        font-size: 11px;
+        padding: 5px 8px;
+        flex-shrink: 0;
+>>>>>>> 029fa2513e42604e6dbaa49df4c21a9525eb4c46
     }
 
     /* テキストが長い場合のスクロール対応 */
@@ -1320,6 +1442,7 @@ table th.sortable .sort-arrow {
     }
 }
 
+<<<<<<< HEAD
 /* 発注管理関連のスタイル */
 .status-pending {
     color: #ff9800;
@@ -1363,4 +1486,53 @@ table th.sortable .sort-arrow {
 .btn-sm {
     padding: 6px 12px;
     font-size: 13px;
+=======
+/* ダッシュボードセクションのレスポンシブ改善 */
+@media (max-width: 768px) {
+    .dashboard-section h3 {
+        font-size: 16px;
+        padding: 12px 15px;
+        flex-wrap: wrap;
+    }
+
+    .dashboard-section .badge {
+        font-size: 13px;
+    }
+}
+
+@media (max-width: 480px) {
+    .dashboard-section h3 {
+        font-size: 14px;
+        padding: 10px 12px;
+    }
+
+    .dashboard-section .badge {
+        font-size: 12px;
+        padding: 2px 8px;
+    }
+}
+
+/* タッチデバイス用のボタンサイズ改善 */
+@media (hover: none) and (pointer: coarse) {
+    .btn,
+    .nav-btn,
+    .tab-btn {
+        min-height: 44px; /* iOS推奨のタップターゲットサイズ */
+    }
+
+    .btn-small {
+        min-height: 40px;
+    }
+}
+
+/* もっと確認リンク */
+#show-more-orders a {
+    transition: all 0.3s;
+    display: inline-block;
+}
+
+#show-more-orders a:hover {
+    color: #5a67d8;
+    transform: translateX(5px);
+>>>>>>> 029fa2513e42604e6dbaa49df4c21a9525eb4c46
 }

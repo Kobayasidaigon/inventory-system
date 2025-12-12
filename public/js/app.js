@@ -82,6 +82,10 @@ function setupEventListeners() {
     // フォーム送信
     document.getElementById('out-stock-form').addEventListener('submit', submitOutStock);
     document.getElementById('in-stock-form').addEventListener('submit', submitInStock);
+
+    // 追加のイベントリスナー
+    setupShowMoreOrdersLink();
+    setupImagePopup();
 }
 
 // ページ表示
@@ -289,8 +293,8 @@ function renderPendingOrders(showAll) {
     }
 }
 
-// 「もっと確認」リンクのイベントリスナー
-document.addEventListener('DOMContentLoaded', () => {
+// 「もっと確認」リンクのイベントリスナー（setupEventListeners内で設定）
+function setupShowMoreOrdersLink() {
     const showMoreLink = document.getElementById('show-more-orders-link');
     if (showMoreLink) {
         showMoreLink.addEventListener('click', (e) => {
@@ -299,7 +303,7 @@ document.addEventListener('DOMContentLoaded', () => {
             renderPendingOrders(true);
         });
     }
-});
+}
 
 // 発注依頼ダイアログ表示
 async function showOrderDialog(productId) {
@@ -1324,8 +1328,8 @@ function closeImagePopup() {
     document.getElementById('image-popup').classList.remove('show');
 }
 
-// 画像ポップアップのイベントリスナー設定
-document.addEventListener('DOMContentLoaded', () => {
+// 画像ポップアップのイベントリスナー設定（setupEventListeners内で設定）
+function setupImagePopup() {
     const popup = document.getElementById('image-popup');
     const closeBtn = popup.querySelector('.image-popup-close');
 
@@ -1337,7 +1341,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 背景クリックで閉じる（画像クリックでも閉じる）
     popup.addEventListener('click', closeImagePopup);
-});
+}
 
 // 全入力クリア
 function clearAllInputs() {

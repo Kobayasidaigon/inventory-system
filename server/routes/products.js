@@ -70,23 +70,23 @@ router.post('/', requireAuth, upload.single('image'), async (req, res) => {
 router.put('/:id', requireAuth, upload.single('image'), async (req, res) => {
     try {
         const db = getLocationDatabase(req.session.locationCode);
-        const { name, category, reorder_point } = req.body;
+        const { name, category, reorder_point, current_stock } = req.body;
         const productId = req.params.id;
         const imageUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
 
         let query, params;
         if (imageUrl) {
             query = `UPDATE products
-                     SET name = ?, category = ?, reorder_point = ?, image_url = ?,
+                     SET name = ?, category = ?, reorder_point = ?, current_stock = ?, image_url = ?,
                          updated_at = CURRENT_TIMESTAMP
                      WHERE id = ?`;
-            params = [name, category, reorder_point, imageUrl, productId];
+            params = [name, category, reorder_point, current_stock, imageUrl, productId];
         } else {
             query = `UPDATE products
-                     SET name = ?, category = ?, reorder_point = ?,
+                     SET name = ?, category = ?, reorder_point = ?, current_stock = ?,
                          updated_at = CURRENT_TIMESTAMP
                      WHERE id = ?`;
-            params = [name, category, reorder_point, productId];
+            params = [name, category, reorder_point, current_stock, productId];
         }
 
         await db.run(query, params);

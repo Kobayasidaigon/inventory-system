@@ -109,20 +109,6 @@
         .btn-delete:hover {
             background: #c66a6a;
         }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }
-        table th, table td {
-            padding: 10px;
-            text-align: left;
-            border-bottom: 1px solid #ddd;
-        }
-        table th {
-            background: #f5f5f5;
-            font-weight: 600;
-        }
         .form-inline {
             display: flex;
             gap: 10px;
@@ -135,6 +121,89 @@
         .form-inline .btn {
             margin-top: 0;
             flex-shrink: 0;
+        }
+
+        /* レスポンシブ対応 */
+        @media (max-width: 768px) {
+            .admin-container {
+                padding: 10px;
+            }
+
+            .admin-tabs {
+                overflow-x: auto;
+                white-space: nowrap;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            .admin-tab {
+                padding: 12px 20px;
+                font-size: 14px;
+            }
+
+            .admin-section {
+                padding: 15px;
+            }
+
+            .admin-section h2 {
+                font-size: 18px;
+            }
+
+            .form-inline {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 15px;
+            }
+
+            .form-inline .form-group {
+                width: 100%;
+            }
+
+            .form-inline .btn {
+                width: 100%;
+            }
+
+            .location-item {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 10px;
+            }
+
+            .action-buttons {
+                justify-content: stretch;
+            }
+
+            .action-buttons .btn-small {
+                flex: 1;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .admin-tab {
+                padding: 10px 15px;
+                font-size: 13px;
+            }
+
+            .admin-section {
+                padding: 10px;
+            }
+
+            .admin-section h2 {
+                font-size: 16px;
+            }
+
+            .btn-small {
+                padding: 5px 10px;
+                font-size: 12px;
+            }
+
+            .form-group label {
+                font-size: 14px;
+            }
+
+            .form-group input,
+            .form-group select {
+                font-size: 16px; /* iOS対応：ズーム防止 */
+            }
         }
     </style>
 </head>

@@ -34,7 +34,12 @@ app.use('/api/orders', orderRoutes);
 // 静的ファイルの提供（CSS, JS, 画像）
 app.use('/css', express.static(path.join(__dirname, '../public/css')));
 app.use('/js', express.static(path.join(__dirname, '../public/js')));
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// アップロード画像のパス（本番環境では /data/uploads を使用）
+const uploadsPath = process.env.NODE_ENV === 'production'
+    ? '/data/uploads'
+    : path.join(__dirname, '../uploads');
+app.use('/uploads', express.static(uploadsPath));
 
 // ルートパス
 app.get('/', (req, res) => {

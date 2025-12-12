@@ -6,9 +6,19 @@ const { requireAuth } = require('../middleware/auth');
 const router = express.Router();
 
 // Multer設定（画像アップロード）
+const fs = require('fs');
+const uploadsDir = process.env.NODE_ENV === 'production'
+    ? '/data/uploads'
+    : path.join(__dirname, '../../uploads');
+
+// アップロードディレクトリが存在しない場合は作成
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        cb(null, path.join(__dirname, '../../uploads'));
+        cb(null, uploadsDir);
     },
     filename: function (req, file, cb) {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);

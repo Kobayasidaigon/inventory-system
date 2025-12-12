@@ -6,6 +6,39 @@
     <title>管理者画面 - 在庫管理システム</title>
     <link rel="stylesheet" href="/css/style.css">
     <style>
+        .admin-tabs {
+            display: flex;
+            gap: 0;
+            border-bottom: 2px solid #667eea;
+            margin-bottom: 20px;
+            background: white;
+        }
+        .admin-tab {
+            padding: 15px 30px;
+            background: #f5f5f5;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+            color: #666;
+            transition: all 0.3s;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+        }
+        .admin-tab:hover {
+            background: #e8eaf6;
+            color: #667eea;
+        }
+        .admin-tab.active {
+            background: #667eea;
+            color: white;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
         .admin-container {
             max-width: 1200px;
             margin: 0 auto;
@@ -115,14 +148,73 @@
     </header>
 
     <div class="admin-container">
+        <!-- タブナビゲーション -->
+        <div class="admin-tabs">
+            <button class="admin-tab active" data-tab="inventory-view">在庫・発注確認</button>
+            <button class="admin-tab" data-tab="management">ユーザー・拠点管理</button>
+        </div>
+
+        <!-- 在庫・発注確認タブ -->
+        <div id="inventory-view" class="tab-content active">
+            <!-- 拠点選択セクション -->
+            <div class="admin-section">
+            <h2>拠点情報表示</h2>
+            <div class="form-inline">
+                <div class="form-group" style="flex: 2;">
+                    <label for="view-location-select">表示する拠点を選択</label>
+                    <select id="view-location-select">
+                        <option value="">拠点を選択してください</option>
+                    </select>
+                </div>
+                <button id="refresh-data-btn" class="btn btn-secondary">更新</button>
+            </div>
+        </div>
+
+        <!-- 発注情報セクション -->
+        <div class="admin-section" id="orders-section" style="display: none;">
+            <h2>発注依頼一覧 - <span id="orders-location-name"></span></h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>商品名</th>
+                        <th>依頼数量</th>
+                        <th>現在庫</th>
+                        <th>ステータス</th>
+                        <th>依頼者</th>
+                        <th>依頼日時</th>
+                        <th>備考</th>
+                        <th style="width: 100px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="orders-list"></tbody>
+            </table>
+        </div>
+
+        <!-- 在庫状況セクション -->
+        <div class="admin-section" id="inventory-section" style="display: none;">
+            <h2>在庫状況 - <span id="inventory-location-name"></span></h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>商品名</th>
+                        <th>カテゴリ</th>
+                        <th>現在庫</th>
+                        <th>発注点</th>
+                        <th>状態</th>
+                        <th style="width: 100px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="inventory-list"></tbody>
+            </table>
+        </div>
+        </div>
+
+        <!-- ユーザー・拠点管理タブ -->
+        <div id="management" class="tab-content">
         <!-- 拠点管理セクション -->
         <div class="admin-section">
             <h2>拠点管理</h2>
             <div class="form-inline">
-                <div class="form-group">
-                    <label for="location-code">拠点コード</label>
-                    <input type="text" id="location-code" required>
-                </div>
                 <div class="form-group">
                     <label for="location-name">拠点名</label>
                     <input type="text" id="location-name" required>
@@ -136,7 +228,7 @@
         <div class="admin-section">
             <h2>ユーザー管理</h2>
             <div id="selected-location-info" style="margin-bottom: 20px; color: #666;">
-                ※ 左側の拠点リストから拠点を選択してください
+                ※ 上の拠点リストから拠点を選択してください
             </div>
             <div class="form-inline" id="user-form" style="display: none;">
                 <div class="form-group">
@@ -165,8 +257,34 @@
                 <tbody id="users-list"></tbody>
             </table>
         </div>
+        </div>
     </div>
 
+    <!-- グラフ表示モーダル -->
+    <div id="chart-modal" class="modal">
+        <div class="modal-content" style="max-width: 900px;">
+            <span class="close" id="chart-modal-close">&times;</span>
+            <div id="chart-modal-body">
+                <h3 id="chart-product-name"></h3>
+                <div style="margin-bottom: 20px;">
+                    <label for="chart-period-select">表示期間:</label>
+                    <select id="chart-period-select" style="padding: 5px 10px; margin-left: 10px;">
+                        <option value="7">過去7日間</option>
+                        <option value="14">過去14日間</option>
+                        <option value="30" selected>過去30日間</option>
+                        <option value="60">過去60日間</option>
+                        <option value="90">過去90日間</option>
+                    </select>
+                    <button id="chart-reload-btn" class="btn btn-secondary" style="margin-left: 10px;">更新</button>
+                </div>
+                <div style="position: relative; height: 400px; width: 100%;">
+                    <canvas id="admin-stock-chart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="/js/admin.js"></script>
 </body>
 </html>

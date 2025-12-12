@@ -17,9 +17,9 @@
 
     <nav>
         <button class="nav-btn active" data-page="dashboard">ダッシュボード</button>
-        <button class="nav-btn" data-page="products">商品管理</button>
         <button class="nav-btn" data-page="weekly-input">出庫処理</button>
         <button class="nav-btn" data-page="in-stock">入庫処理</button>
+        <button class="nav-btn" data-page="products">商品管理</button>
         <button class="nav-btn" data-page="history">履歴確認</button>
         <button class="nav-btn" data-page="chart">在庫推移グラフ</button>
     </nav>
@@ -50,6 +50,7 @@
                                 <th>商品名</th>
                                 <th>依頼者</th>
                                 <th>依頼日時</th>
+                                <th>ステータス</th>
                                 <th>備考</th>
                                 <th>操作</th>
                             </tr>
@@ -87,7 +88,6 @@
             <table id="products-table">
                 <thead>
                     <tr>
-                        <th>ID</th>
                         <th>画像</th>
                         <th>商品名</th>
                         <th>カテゴリ</th>

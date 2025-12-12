@@ -365,4 +365,231 @@ router.post('/admin/init', async (req, res) => {
     }
 });
 
+// 拠点の在庫データ取得（管理者のみ）
+router.get('/admin/locations/:locationId/inventory', async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.status(403).json({ error: '管理者権限が必要です' });
+        }
+
+        const locationId = req.params.locationId;
+
+        // 拠点情報を取得
+        const location = await mainDb.get('SELECT * FROM locations WHERE id = ?', [locationId]);
+
+        if (!location) {
+            return res.status(404).json({ error: '拠点が見つかりません' });
+        }
+
+        // 拠点のデータベースを取得
+        const db = getLocationDatabase(location.location_code);
+
+        // 在庫データを取得
+        const products = await db.all(`
+            SELECT id, name, category, current_stock, reorder_point, created_at, updated_at
+            FROM products
+            ORDER BY category, name
+        `);
+
+        res.json({
+            locationName: location.location_name,
+            locationCode: location.location_code,
+            products: products
+        });
+    } catch (err) {
+        console.error('Get inventory error:', err);
+        res.status(500).json({ error: 'データ取得エラー' });
+    }
+});
+
+// 拠点の発注データ取得（管理者のみ）
+router.get('/admin/locations/:locationId/orders', async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.status(403).json({ error: '管理者権限が必要です' });
+        }
+
+        const locationId = req.params.locationId;
+
+        // 拠点情報を取得
+        const location = await mainDb.get('SELECT * FROM locations WHERE id = ?', [locationId]);
+
+        if (!location) {
+            return res.status(404).json({ error: '拠点が見つかりません' });
+        }
+
+        // 拠点のデータベースを取得
+        const db = getLocationDatabase(location.location_code);
+
+        // 発注データを取得
+        const orders = await db.all(`
+            SELECT o.*, p.name as product_name, p.current_stock, p.reorder_point
+            FROM order_requests o
+            JOIN products p ON o.product_id = p.id
+            ORDER BY o.requested_at DESC
+        `);
+
+        // ユーザー名をメインDBから取得して追加
+        for (let order of orders) {
+            const user = await mainDb.get('SELECT user_name FROM users WHERE id = ?', [order.user_id]);
+            order.username = user ? user.user_name : '不明';
+        }
+
+        res.json({
+            locationName: location.location_name,
+            locationCode: location.location_code,
+            orders: orders
+        });
+    } catch (err) {
+        console.error('Get orders error:', err);
+        res.status(500).json({ error: 'データ取得エラー' });
+    }
+});
+
+// 拠点の在庫推移グラフデータ取得（管理者のみ）
+router.get('/admin/locations/:locationId/chart/:productId', async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.status(403).json({ error: '管理者権限が必要です' });
+        }
+
+        const locationId = req.params.locationId;
+        const productId = req.params.productId;
+        const { days = 30 } = req.query;
+
+        // 拠点情報を取得
+        const location = await mainDb.get('SELECT * FROM locations WHERE id = ?', [locationId]);
+
+        if (!location) {
+            return res.status(404).json({ error: '拠点が見つかりません' });
+        }
+
+        // 拠点のデータベースを取得
+        const db = getLocationDatabase(location.location_code);
+
+        // 商品名を取得
+        const product = await db.get('SELECT name, reorder_point FROM products WHERE id = ?', [productId]);
+
+        if (!product) {
+            return res.status(404).json({ error: '商品が見つかりません' });
+        }
+
+        // 指定日数分の在庫履歴を取得
+        const query = `
+            SELECT
+                COALESCE(h.date, DATE(h.created_at)) as date,
+                h.type,
+                h.quantity,
+                h.created_at
+            FROM inventory_history h
+            WHERE h.product_id = ?
+            AND DATE(COALESCE(h.date, h.created_at)) >= DATE('now', '-' || ? || ' days')
+            ORDER BY h.created_at ASC
+        `;
+
+        const history = await db.all(query, [productId, days]);
+
+        // 現在の在庫を取得
+        const currentProduct = await db.get('SELECT current_stock FROM products WHERE id = ?', [productId]);
+
+        // 日付ごとに在庫を計算
+        const today = new Date();
+        const startDate = new Date(today);
+        startDate.setDate(today.getDate() - days);
+
+        const dateMap = {};
+        let stock = currentProduct.current_stock;
+
+        // 履歴を逆順に処理して各日の在庫を復元
+        for (let i = history.length - 1; i >= 0; i--) {
+            const item = history[i];
+            const date = item.date;
+
+            if (!dateMap[date]) {
+                dateMap[date] = stock;
+            }
+
+            // 履歴を遡って在庫を戻す
+            if (item.type === 'in') {
+                stock -= item.quantity;
+            } else if (item.type === 'out') {
+                stock += item.quantity;
+            }
+        }
+
+        // 日付配列とデータを生成
+        const labels = [];
+        const stocks = [];
+
+        for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
+            const dateStr = d.toISOString().split('T')[0];
+            labels.push(dateStr);
+
+            if (dateMap[dateStr] !== undefined) {
+                stocks.push(dateMap[dateStr]);
+                stock = dateMap[dateStr];
+            } else {
+                stocks.push(stock);
+            }
+        }
+
+        res.json({
+            productName: product.name,
+            reorderPoint: product.reorder_point,
+            labels: labels,
+            stocks: stocks
+        });
+    } catch (err) {
+        console.error('Get chart error:', err);
+        res.status(500).json({ error: 'データ取得エラー' });
+    }
+});
+
+// 発注ステータス更新（管理者のみ）
+router.put('/admin/locations/:locationId/orders/:orderId/status', async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.status(403).json({ error: '管理者権限が必要です' });
+        }
+
+        const { locationId, orderId } = req.params;
+        const { status } = req.body;
+
+        if (!status) {
+            return res.status(400).json({ error: 'ステータスを指定してください' });
+        }
+
+        // 有効なステータスかチェック
+        const validStatuses = ['pending', 'ordered', 'received', 'cancelled'];
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({ error: '無効なステータスです' });
+        }
+
+        // 拠点情報を取得
+        const location = await mainDb.get('SELECT * FROM locations WHERE id = ?', [locationId]);
+
+        if (!location) {
+            return res.status(404).json({ error: '拠点が見つかりません' });
+        }
+
+        // 拠点のデータベースを取得
+        const db = getLocationDatabase(location.location_code);
+
+        // 発注を更新
+        const result = await db.run(
+            'UPDATE order_requests SET status = ? WHERE id = ?',
+            [status, orderId]
+        );
+
+        if (result.changes === 0) {
+            return res.status(404).json({ error: '発注が見つかりませんでした' });
+        }
+
+        res.json({ success: true, message: 'ステータスを更新しました' });
+    } catch (err) {
+        console.error('Update order status error:', err);
+        res.status(500).json({ error: 'ステータスの更新に失敗しました' });
+    }
+});
+
 module.exports = router;

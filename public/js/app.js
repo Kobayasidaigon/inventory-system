@@ -86,6 +86,7 @@ function setupEventListeners() {
     // 追加のイベントリスナー
     setupShowMoreOrdersLink();
     setupImagePopup();
+    setupTableColumnResize();
 }
 
 // ページ表示
@@ -1527,4 +1528,69 @@ async function loadStockChart() {
         console.error('グラフ取得エラー:', error);
         alert('グラフの読み込みに失敗しました');
     }
+}
+
+
+// テーブル列のリサイズ機能
+function setupTableColumnResize() {
+    const tables = document.querySelectorAll('table');
+
+    tables.forEach(table => {
+        const headers = table.querySelectorAll('th');
+
+        headers.forEach((header, index) => {
+            header.style.cursor = 'pointer';
+            header.style.transition = 'all 0.2s ease';
+            header.title = 'タップで列幅を変更 (通常 → 広い → 狭い)';
+
+            let currentSize = 'normal'; // normal, wide, narrow
+
+            const resizeColumn = () => {
+                const allCells = table.querySelectorAll(`tr > *:nth-child(${index + 1})`);
+
+                // フィードバックアニメーション
+                header.style.transform = 'scale(0.95)';
+                setTimeout(() => {
+                    header.style.transform = 'scale(1)';
+                }, 100);
+
+                if (currentSize === 'normal') {
+                    // 広くする
+                    allCells.forEach(cell => {
+                        cell.style.minWidth = '200px';
+                        cell.style.maxWidth = '200px';
+                        cell.style.flex = '0 0 200px';
+                    });
+                    currentSize = 'wide';
+                    header.style.backgroundColor = '#d4e4ff';
+                } else if (currentSize === 'wide') {
+                    // 狭くする
+                    allCells.forEach(cell => {
+                        cell.style.minWidth = '60px';
+                        cell.style.maxWidth = '60px';
+                        cell.style.flex = '0 0 60px';
+                    });
+                    currentSize = 'narrow';
+                    header.style.backgroundColor = '#ffe4d4';
+                } else {
+                    // 通常に戻す
+                    allCells.forEach(cell => {
+                        cell.style.minWidth = '';
+                        cell.style.maxWidth = '';
+                        cell.style.flex = '';
+                    });
+                    currentSize = 'normal';
+                    header.style.backgroundColor = '';
+                }
+            };
+
+            // タッチデバイス対応: シングルタップで動作
+            header.addEventListener('click', resizeColumn);
+
+            // PC対応: ダブルクリックでも動作
+            header.addEventListener('dblclick', (e) => {
+                e.preventDefault();
+            });
+        });
+    });
 }

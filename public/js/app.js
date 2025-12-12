@@ -300,13 +300,8 @@ async function loadPendingOrders() {
         const response = await fetch('/api/orders');
         const orders = await response.json();
 
-<<<<<<< HEAD
-        // グローバル変数に保存
-        pendingOrders = orders.filter(o => o.status === 'pending');
-=======
         // pending、ordered、receivedのステータスを表示（cancelledは除外）
         allActiveOrders = orders.filter(o => o.status !== 'cancelled');
->>>>>>> 029fa2513e42604e6dbaa49df4c21a9525eb4c46
         const pendingSection = document.getElementById('pending-orders-section');
         const pendingCount = document.getElementById('pending-count');
 
@@ -969,15 +964,10 @@ async function deleteProduct(productId, productName) {
 
         if (response.ok) {
             await loadProducts();
-<<<<<<< HEAD
-            updateProductsDisplay();
-            alert('初期在庫を設定しました');
-=======
             showProducts();
             alert('商品を削除しました');
         } else {
             alert('削除に失敗しました: ' + (data.error || ''));
->>>>>>> 029fa2513e42604e6dbaa49df4c21a9525eb4c46
         }
     } catch (error) {
         console.error('削除エラー:', error);

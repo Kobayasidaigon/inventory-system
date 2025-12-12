@@ -44,11 +44,11 @@ async function optimizeImage(buffer, filename) {
 
     await sharp(buffer)
         .rotate() // EXIFの回転情報を自動適用
-        .resize(800, 800, {
+        .resize(600, 600, {
             fit: 'inside',
             withoutEnlargement: true
         })
-        .jpeg({ quality: 80 })
+        .jpeg({ quality: 75, mozjpeg: true }) // mozjpegで高速化
         .toFile(outputPath);
 
     return filename;

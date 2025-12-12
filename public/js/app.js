@@ -576,6 +576,12 @@ function showAddProductForm() {
     document.getElementById('product-form').addEventListener('submit', async (e) => {
         e.preventDefault();
 
+        // 2重送信防止
+        const submitButton = e.target.querySelector('button[type="submit"]');
+        if (submitButton.disabled) return;
+        submitButton.disabled = true;
+        submitButton.textContent = '処理中...';
+
         const categorySelect = document.getElementById('product-category');
         const newCategoryInput = document.getElementById('product-category-new');
         let category = categorySelect.value;
@@ -585,6 +591,8 @@ function showAddProductForm() {
             category = newCategoryInput.value.trim();
             if (!category) {
                 alert('新しいカテゴリ名を入力してください');
+                submitButton.disabled = false;
+                submitButton.textContent = '登録';
                 return;
             }
         }
@@ -618,6 +626,9 @@ function showAddProductForm() {
         } catch (error) {
             console.error('登録エラー:', error);
             alert('登録に失敗しました: ' + error.message);
+        } finally {
+            submitButton.disabled = false;
+            submitButton.textContent = '登録';
         }
     });
 
@@ -709,6 +720,12 @@ async function editProduct(productId) {
     document.getElementById('edit-product-form').addEventListener('submit', async (e) => {
         e.preventDefault();
 
+        // 2重送信防止
+        const submitButton = e.target.querySelector('button[type="submit"]');
+        if (submitButton.disabled) return;
+        submitButton.disabled = true;
+        submitButton.textContent = '処理中...';
+
         const categorySelect = document.getElementById('edit-category');
         const newCategoryInput = document.getElementById('edit-category-new');
         let category = categorySelect.value;
@@ -718,6 +735,8 @@ async function editProduct(productId) {
             category = newCategoryInput.value.trim();
             if (!category) {
                 alert('新しいカテゴリ名を入力してください');
+                submitButton.disabled = false;
+                submitButton.textContent = '更新';
                 return;
             }
         }
@@ -751,6 +770,9 @@ async function editProduct(productId) {
         } catch (error) {
             console.error('更新エラー:', error);
             alert('更新に失敗しました: ' + error.message);
+        } finally {
+            submitButton.disabled = false;
+            submitButton.textContent = '更新';
         }
     });
 

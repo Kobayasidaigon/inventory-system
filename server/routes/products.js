@@ -43,6 +43,7 @@ async function optimizeImage(buffer, filename) {
     const outputPath = path.join(uploadsDir, filename);
 
     await sharp(buffer)
+        .rotate() // EXIFの回転情報を自動適用
         .resize(800, 800, {
             fit: 'inside',
             withoutEnlargement: true

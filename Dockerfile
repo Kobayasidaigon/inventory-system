@@ -1,6 +1,13 @@
 # ベースイメージ
 FROM node:18-alpine
 
+# sharp のビルドに必要な依存関係をインストール
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    vips-dev
+
 # 作業ディレクトリを設定
 WORKDIR /app
 

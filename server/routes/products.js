@@ -1,6 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
+const sharp = require('sharp');
 const { getLocationDatabase } = require('../db/database-admin');
 const { requireAuth } = require('../middleware/auth');
 const router = express.Router();
@@ -16,15 +17,8 @@ if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, uploadsDir);
-    },
-    filename: function (req, file, cb) {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, 'product-' + uniqueSuffix + path.extname(file.originalname));
-    }
-});
+// 一時フォルダを使用
+const storage = multer.memoryStorage();
 
 const fileFilter = (req, file, cb) => {
     const allowedTypes = /jpeg|jpg|png|gif|webp/;
@@ -40,9 +34,24 @@ const fileFilter = (req, file, cb) => {
 
 const upload = multer({
     storage: storage,
-    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB制限
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB制限（圧縮前）
     fileFilter: fileFilter
 });
+
+// 画像を圧縮・リサイズする関数
+async function optimizeImage(buffer, filename) {
+    const outputPath = path.join(uploadsDir, filename);
+
+    await sharp(buffer)
+        .resize(800, 800, {
+            fit: 'inside',
+            withoutEnlargement: true
+        })
+        .jpeg({ quality: 80 })
+        .toFile(outputPath);
+
+    return filename;
+}
 
 // 商品一覧取得
 router.get('/', requireAuth, async (req, res) => {
@@ -61,7 +70,14 @@ router.post('/', requireAuth, upload.single('image'), async (req, res) => {
     try {
         const db = getLocationDatabase(req.session.locationCode);
         const { name, category, reorder_point, current_stock } = req.body;
-        const imageUrl = req.file ? `/uploads/${req.file.filename}` : null;
+
+        let imageUrl = null;
+        if (req.file) {
+            const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+            const filename = 'product-' + uniqueSuffix + '.jpg';
+            await optimizeImage(req.file.buffer, filename);
+            imageUrl = `/uploads/${filename}`;
+        }
 
         const result = await db.run(
             `INSERT INTO products (name, category, reorder_point, current_stock, image_url)
@@ -82,7 +98,14 @@ router.put('/:id', requireAuth, upload.single('image'), async (req, res) => {
         const db = getLocationDatabase(req.session.locationCode);
         const { name, category, reorder_point, current_stock } = req.body;
         const productId = req.params.id;
-        const imageUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
+
+        let imageUrl = undefined;
+        if (req.file) {
+            const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+            const filename = 'product-' + uniqueSuffix + '.jpg';
+            await optimizeImage(req.file.buffer, filename);
+            imageUrl = `/uploads/${filename}`;
+        }
 
         let query, params;
         if (imageUrl) {

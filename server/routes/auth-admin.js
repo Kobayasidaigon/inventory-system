@@ -289,29 +289,46 @@ router.put('/admin/users/:id', async (req, res) => {
         }
 
         const { id } = req.params;
-        const { userName, password } = req.body;
+        const { userId, userName, password } = req.body;
 
         if (!userName) {
             return res.status(400).json({ error: 'ユーザー名を入力してください' });
         }
 
-        // パスワードが指定されている場合のみ更新
+        // ユーザーIDとユーザー名、パスワードを更新
         if (password) {
             const hashedPassword = bcrypt.hashSync(password, 10);
-            await mainDb.run(
-                'UPDATE users SET user_name = ?, password = ? WHERE id = ?',
-                [userName, hashedPassword, id]
-            );
+            if (userId) {
+                await mainDb.run(
+                    'UPDATE users SET user_id = ?, user_name = ?, password = ? WHERE id = ?',
+                    [userId, userName, hashedPassword, id]
+                );
+            } else {
+                await mainDb.run(
+                    'UPDATE users SET user_name = ?, password = ? WHERE id = ?',
+                    [userName, hashedPassword, id]
+                );
+            }
         } else {
-            await mainDb.run(
-                'UPDATE users SET user_name = ? WHERE id = ?',
-                [userName, id]
-            );
+            if (userId) {
+                await mainDb.run(
+                    'UPDATE users SET user_id = ?, user_name = ? WHERE id = ?',
+                    [userId, userName, id]
+                );
+            } else {
+                await mainDb.run(
+                    'UPDATE users SET user_name = ? WHERE id = ?',
+                    [userName, id]
+                );
+            }
         }
 
         res.json({ success: true, message: 'ユーザーを更新しました' });
     } catch (err) {
         console.error('User update error:', err);
+        if (err.message && err.message.includes('UNIQUE')) {
+            return res.status(400).json({ error: 'このユーザーIDは既に使用されています' });
+        }
         res.status(500).json({ error: 'ユーザーの更新に失敗しました' });
     }
 });

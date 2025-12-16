@@ -151,13 +151,14 @@ async function loadUsers(locationId) {
         usersList.innerHTML = '';
 
         if (users.length === 0) {
-            usersList.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #666;">登録されているユーザーがいません</td></tr>';
+            usersList.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #666;">登録されているユーザーがいません</td></tr>';
             return;
         }
 
         users.forEach(user => {
             const tr = document.createElement('tr');
             tr.innerHTML = `
+                <td>${user.id}</td>
                 <td>${user.user_id}</td>
                 <td>${user.user_name}</td>
                 <td>${new Date(user.created_at).toLocaleDateString('ja-JP')}</td>
@@ -172,7 +173,7 @@ async function loadUsers(locationId) {
             const deleteBtn = tr.querySelector('.btn-delete');
 
             editBtn.addEventListener('click', () => {
-                editUser(user.id, user.user_id, user.user_name);
+                showEditUserModal(user.id, user.user_id, user.user_name);
             });
 
             deleteBtn.addEventListener('click', () => {
@@ -327,18 +328,69 @@ async function deleteLocation(locationId, locationName) {
     }
 }
 
-// ユーザー編集
-async function editUser(userId, currentUserId, currentUserName) {
-    const newUserName = prompt('新しいユーザー名を入力してください:', currentUserName);
+// ユーザー編集モーダルを表示
+function showEditUserModal(userId, currentUserId, currentUserName) {
+    const modalHtml = `
+        <h3>ユーザー編集</h3>
+        <form id="edit-user-form">
+            <div class="form-group">
+                <label>ID（システム内部ID）</label>
+                <input type="text" value="${userId}" disabled style="background: #f0f0f0;">
+            </div>
+            <div class="form-group">
+                <label for="edit-user-login-id">ユーザーID（ログインID）</label>
+                <input type="text" id="edit-user-login-id" value="${currentUserId}" required>
+            </div>
+            <div class="form-group">
+                <label for="edit-user-name">ユーザー名</label>
+                <input type="text" id="edit-user-name" value="${currentUserName}" required>
+            </div>
+            <div class="form-group">
+                <label for="edit-user-password">パスワード</label>
+                <input type="password" id="edit-user-password" placeholder="変更しない場合は空欄">
+                <small style="color: #666;">※空欄の場合、パスワードは変更されません</small>
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button type="submit" class="btn btn-primary">更新</button>
+                <button type="button" class="btn btn-secondary" onclick="closeEditUserModal()">キャンセル</button>
+            </div>
+        </form>
+    `;
 
-    if (!newUserName) {
+    const modal = document.getElementById('chart-modal');
+    const modalBody = document.getElementById('chart-modal-body');
+    modalBody.innerHTML = modalHtml;
+    modal.style.display = 'block';
+
+    document.getElementById('edit-user-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await editUser(userId);
+    });
+
+    document.getElementById('chart-modal-close').onclick = closeEditUserModal;
+}
+
+// ユーザー編集モーダルを閉じる
+function closeEditUserModal() {
+    document.getElementById('chart-modal').style.display = 'none';
+}
+
+// ユーザー編集処理
+async function editUser(userId) {
+    const newUserId = document.getElementById('edit-user-login-id').value.trim();
+    const newUserName = document.getElementById('edit-user-name').value.trim();
+    const newPassword = document.getElementById('edit-user-password').value;
+
+    if (!newUserId || !newUserName) {
+        alert('ユーザーIDとユーザー名を入力してください');
         return;
     }
 
-    const newPassword = prompt('新しいパスワードを入力してください（変更しない場合は空欄）:', '');
-
     try {
-        const body = { userName: newUserName };
+        const body = {
+            userId: newUserId,
+            userName: newUserName
+        };
         if (newPassword) {
             body.password = newPassword;
         }
@@ -353,6 +405,7 @@ async function editUser(userId, currentUserId, currentUserName) {
 
         if (response.ok) {
             alert('ユーザーを更新しました');
+            closeEditUserModal();
             await loadUsers(selectedLocationId);
         } else {
             alert(data.error || 'ユーザーの更新に失敗しました');

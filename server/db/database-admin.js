@@ -132,6 +132,33 @@ const locationTablesSql = [
         requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         note TEXT,
         FOREIGN KEY (product_id) REFERENCES products(id)
+    )`,
+
+    // 棚卸テーブル
+    `CREATE TABLE IF NOT EXISTS inventory_counts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        count_date DATE NOT NULL,
+        status TEXT NOT NULL DEFAULT 'in_progress' CHECK(status IN ('in_progress', 'completed', 'approved')),
+        user_id INTEGER NOT NULL,
+        approved_by INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        completed_at DATETIME,
+        approved_at DATETIME
+    )`,
+
+    // 棚卸明細テーブル
+    `CREATE TABLE IF NOT EXISTS inventory_count_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        count_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        system_quantity INTEGER NOT NULL,
+        actual_quantity INTEGER,
+        difference INTEGER,
+        reason TEXT,
+        note TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (count_id) REFERENCES inventory_counts(id),
+        FOREIGN KEY (product_id) REFERENCES products(id)
     )`
 ];
 

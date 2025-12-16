@@ -24,12 +24,19 @@ const publicRoutes = require('./routes/public');
 const productRoutes = require('./routes/products');
 const inventoryRoutes = require('./routes/inventory');
 const orderRoutes = require('./routes/orders');
+const { getLocationDatabase } = require('./db/database-admin');
+const { requireAuth } = require('./middleware/auth');
+const inventoryCountRoutes = require('./routes/inventory-count');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/public', publicRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/orders', orderRoutes);
+app.use('/api/inventory-count', requireAuth, (req, res, next) => {
+    const db = getLocationDatabase(req.session.locationCode);
+    inventoryCountRoutes(db)(req, res, next);
+});
 
 // 静的ファイルの提供（CSS, JS, 画像）
 app.use('/css', express.static(path.join(__dirname, '../public/css')));

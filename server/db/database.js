@@ -95,6 +95,35 @@ db.serialize(() => {
         FOREIGN KEY (product_id) REFERENCES products(id),
         FOREIGN KEY (user_id) REFERENCES users(id)
     )`);
+
+    // 棚卸テーブル
+    originalRun(`CREATE TABLE IF NOT EXISTS inventory_counts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        count_date DATE NOT NULL,
+        status TEXT NOT NULL DEFAULT 'in_progress' CHECK(status IN ('in_progress', 'completed', 'approved')),
+        user_id INTEGER NOT NULL,
+        approved_by INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        completed_at DATETIME,
+        approved_at DATETIME,
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (approved_by) REFERENCES users(id)
+    )`);
+
+    // 棚卸明細テーブル
+    originalRun(`CREATE TABLE IF NOT EXISTS inventory_count_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        count_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        system_quantity INTEGER NOT NULL,
+        actual_quantity INTEGER,
+        difference INTEGER,
+        reason TEXT,
+        note TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (count_id) REFERENCES inventory_counts(id),
+        FOREIGN KEY (product_id) REFERENCES products(id)
+    )`);
 });
 
 module.exports = db;

@@ -1184,3 +1184,57 @@ table tbody tr:hover {
     color: #5a67d8;
     transform: translateX(5px);
 }
+
+/* 棚卸関連のスタイル */
+.status-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.status-in_progress {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.status-completed {
+    background: #d1ecf1;
+    color: #0c5460;
+}
+
+.status-approved {
+    background: #d4edda;
+    color: #155724;
+}
+
+.difference-cell {
+    font-weight: bold;
+}
+
+#count-items-table .actual-qty-input,
+#count-items-table .reason-input {
+    padding: 5px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.btn-danger {
+    background: #e74c3c;
+}
+
+.btn-danger:hover {
+    background: #c0392b;
+}
+
+#count-detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+#count-detail-header h2 {
+    margin: 0;
+}

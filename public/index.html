@@ -22,6 +22,7 @@
         <button class="nav-btn" data-page="products">商品管理</button>
         <button class="nav-btn" data-page="history">履歴確認</button>
         <button class="nav-btn" data-page="chart">在庫推移グラフ</button>
+        <button class="nav-btn" data-page="inventory-count">棚卸</button>
     </nav>
 
     <main>
@@ -246,6 +247,70 @@
             </div>
             <div id="chart-container">
                 <canvas id="stock-chart"></canvas>
+            </div>
+        </div>
+
+        <!-- 棚卸 -->
+        <div id="inventory-count" class="page">
+            <!-- 棚卸一覧画面 -->
+            <div id="count-list-view">
+                <h2>棚卸管理</h2>
+                <div style="margin-bottom: 20px;">
+                    <button id="new-count-btn" class="btn btn-primary">新規棚卸開始</button>
+                </div>
+
+                <h3>棚卸履歴</h3>
+                <table id="count-list-table">
+                    <thead>
+                        <tr>
+                            <th>棚卸日</th>
+                            <th>ステータス</th>
+                            <th>作成者</th>
+                            <th>作成日時</th>
+                            <th>進捗</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <!-- 新規棚卸作成画面 -->
+            <div id="count-new-view" style="display: none;">
+                <h2>新規棚卸開始</h2>
+                <form id="new-count-form">
+                    <div class="form-group">
+                        <label for="count-date">棚卸日</label>
+                        <input type="date" id="count-date" required>
+                    </div>
+                    <div style="margin-top: 20px;">
+                        <button type="submit" class="btn btn-primary">棚卸開始</button>
+                        <button type="button" class="btn btn-secondary" onclick="showCountListView()">キャンセル</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- 棚卸詳細画面 -->
+            <div id="count-detail-view" style="display: none;">
+                <div id="count-detail-header">
+                    <h2>棚卸詳細</h2>
+                    <button class="btn btn-secondary" onclick="showCountListView()">← 一覧に戻る</button>
+                </div>
+                <div id="count-detail-info"></div>
+                <div id="count-detail-filter" style="margin: 15px 0;"></div>
+                <div id="count-detail-items"></div>
+                <div id="count-detail-actions" style="margin-top: 20px;"></div>
+            </div>
+
+            <!-- 棚卸差異レポート画面 -->
+            <div id="count-report-view" style="display: none;">
+                <div style="margin-bottom: 20px;">
+                    <h2>棚卸差異レポート</h2>
+                    <button class="btn btn-secondary" onclick="showCountListView()">← 一覧に戻る</button>
+                </div>
+                <div id="count-report-summary"></div>
+                <h3>差異詳細（差異が大きい順）</h3>
+                <div id="count-report-items"></div>
             </div>
         </div>
     </main>

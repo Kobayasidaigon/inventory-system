@@ -87,6 +87,10 @@ function setupEventListeners() {
     setupShowMoreOrdersLink();
     setupImagePopup();
     setupTableColumnResize();
+
+    // 棚卸関連のイベント
+    document.getElementById('new-count-btn').addEventListener('click', showNewCountForm);
+    document.getElementById('new-count-form').addEventListener('submit', handleNewCountSubmit);
 }
 
 // ページ表示
@@ -125,6 +129,9 @@ async function showPage(pageName) {
             await loadProducts();
             loadChartCategoryFilter();
             loadChartProductList();
+            break;
+        case 'inventory-count':
+            await loadInventoryCounts();
             break;
     }
 }
@@ -1615,4 +1622,493 @@ function setupTableColumnResize() {
             });
         });
     });
+}
+
+// ========== 棚卸機能 ==========
+
+let currentCountId = null;
+
+// 画面切り替え
+function showCountListView() {
+    document.getElementById('count-list-view').style.display = 'block';
+    document.getElementById('count-new-view').style.display = 'none';
+    document.getElementById('count-detail-view').style.display = 'none';
+    document.getElementById('count-report-view').style.display = 'none';
+    loadInventoryCounts();
+}
+
+function showCountNewView() {
+    document.getElementById('count-list-view').style.display = 'none';
+    document.getElementById('count-new-view').style.display = 'block';
+    document.getElementById('count-detail-view').style.display = 'none';
+    document.getElementById('count-report-view').style.display = 'none';
+
+    const today = new Date();
+    document.getElementById('count-date').value = today.toISOString().split('T')[0];
+}
+
+function showCountDetailView(countId) {
+    currentCountId = countId;
+    document.getElementById('count-list-view').style.display = 'none';
+    document.getElementById('count-new-view').style.display = 'none';
+    document.getElementById('count-detail-view').style.display = 'block';
+    document.getElementById('count-report-view').style.display = 'none';
+    loadCountDetails(countId);
+}
+
+function showCountReportView(countId) {
+    currentCountId = countId;
+    document.getElementById('count-list-view').style.display = 'none';
+    document.getElementById('count-new-view').style.display = 'none';
+    document.getElementById('count-detail-view').style.display = 'none';
+    document.getElementById('count-report-view').style.display = 'block';
+    loadCountReport(countId);
+}
+
+// 棚卸一覧を読み込み
+async function loadInventoryCounts() {
+    try {
+        const response = await fetch('/api/inventory-count/list');
+        const counts = await response.json();
+
+        const tbody = document.querySelector('#count-list-table tbody');
+        tbody.innerHTML = '';
+
+        if (counts.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align: center;">棚卸データがありません</td></tr>';
+            return;
+        }
+
+        counts.forEach(count => {
+            const row = document.createElement('tr');
+
+            const statusText = {
+                'in_progress': '実施中',
+                'completed': '完了',
+                'approved': '承認済み'
+            }[count.status] || count.status;
+
+            const progress = `${count.counted_items}/${count.item_count}`;
+
+            row.innerHTML = `
+                <td>${count.count_date}</td>
+                <td><span class="status-badge status-${count.status}">${statusText}</span></td>
+                <td>${count.created_by}</td>
+                <td>${new Date(count.created_at).toLocaleString('ja-JP')}</td>
+                <td>${progress}</td>
+                <td>
+                    <button class="btn btn-small" onclick="showCountDetailView(${count.id})">詳細</button>
+                    ${count.status === 'in_progress' ? `<button class="btn btn-small btn-danger" onclick="deleteCount(${count.id})">削除</button>` : ''}
+                </td>
+            `;
+            tbody.appendChild(row);
+        });
+    } catch (error) {
+        console.error('棚卸一覧取得エラー:', error);
+        alert('棚卸一覧の取得に失敗しました');
+    }
+}
+
+// 新規棚卸フォームを表示
+function showNewCountForm() {
+    showCountNewView();
+}
+
+// 新規棚卸作成フォームの送信を処理
+async function handleNewCountSubmit(e) {
+    e.preventDefault();
+
+    const countDate = document.getElementById('count-date').value;
+
+    try {
+        const response = await fetch('/api/inventory-count/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ count_date: countDate })
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            alert(result.message);
+            showCountDetailView(result.count_id);
+        } else {
+            alert(result.error || '棚卸の開始に失敗しました');
+        }
+    } catch (error) {
+        console.error('棚卸作成エラー:', error);
+        alert('棚卸の開始に失敗しました');
+    }
+}
+
+// 棚卸詳細を読み込み
+async function loadCountDetails(countId) {
+    try {
+        const response = await fetch(`/api/inventory-count/${countId}`);
+        const data = await response.json();
+
+        if (!response.ok) {
+            alert(data.error || '棚卸の取得に失敗しました');
+            return;
+        }
+
+        const { count, items } = data;
+
+        const statusText = {
+            'in_progress': '実施中',
+            'completed': '完了',
+            'approved': '承認済み'
+        }[count.status] || count.status;
+
+        // 情報表示
+        document.getElementById('count-detail-info').innerHTML = `
+            <p><strong>棚卸日:</strong> ${count.count_date}</p>
+            <p><strong>ステータス:</strong> <span class="status-badge status-${count.status}">${statusText}</span></p>
+        `;
+
+        // カテゴリフィルター
+        const categories = [...new Set(items.map(item => item.category))].filter(c => c);
+        if (categories.length > 0) {
+            document.getElementById('count-detail-filter').innerHTML = `
+                <label>カテゴリフィルター：</label>
+                <select id="count-category-filter" onchange="filterCountItems()">
+                    <option value="">すべて</option>
+                    ${categories.map(cat => `<option value="${cat}">${cat}</option>`).join('')}
+                </select>
+            `;
+        } else {
+            document.getElementById('count-detail-filter').innerHTML = '';
+        }
+
+        // 商品一覧
+        document.getElementById('count-detail-items').innerHTML = `
+            ${count.status === 'in_progress' ? `
+                <div style="background: #e3f2fd; padding: 12px; border-radius: 5px; margin-bottom: 15px; border-left: 4px solid #2196f3;">
+                    <strong>💡 操作方法：</strong>
+                    <ul style="margin: 8px 0 0 20px; padding: 0;">
+                        <li>実在庫を入力すると差異が自動計算されます</li>
+                        <li>「保存」ボタン：入力した実在庫をすぐに保存したい場合に使用（任意）</li>
+                        <li>「棚卸完了」ボタン：未保存の実在庫も自動保存されて完了します</li>
+                    </ul>
+                </div>
+            ` : ''}
+            <table id="count-items-table">
+                <thead>
+                    <tr>
+                        <th>商品名</th>
+                        <th>カテゴリ</th>
+                        <th>理論在庫</th>
+                        <th>実在庫</th>
+                        <th>差異</th>
+                        <th>理由</th>
+                        ${count.status === 'in_progress' ? '<th>操作</th>' : ''}
+                    </tr>
+                </thead>
+                <tbody>
+                    ${items.map(item => `
+                        <tr data-category="${item.category || ''}" data-item-id="${item.id}">
+                            <td>${item.product_name}</td>
+                            <td>${item.category || '-'}</td>
+                            <td>${item.system_quantity}</td>
+                            <td>
+                                ${count.status === 'in_progress'
+                                    ? `<input type="number" class="actual-qty-input" data-item-id="${item.id}" value="${item.actual_quantity || ''}" min="0" style="width: 80px;">`
+                                    : (item.actual_quantity !== null ? item.actual_quantity : '-')
+                                }
+                            </td>
+                            <td class="difference-cell">${item.difference !== null ? (item.difference >= 0 ? '+' : '') + item.difference : '-'}</td>
+                            <td>
+                                ${count.status === 'in_progress' && item.difference !== 0
+                                    ? `<input type="text" class="reason-input" data-item-id="${item.id}" value="${item.reason || ''}" placeholder="理由" style="width: 150px;">`
+                                    : (item.reason || '-')
+                                }
+                            </td>
+                            ${count.status === 'in_progress' ? `<td><button class="btn btn-small" onclick="saveCountItem(${item.id})">保存</button></td>` : ''}
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+
+        // アクション
+        document.getElementById('count-detail-actions').innerHTML = `
+            ${count.status === 'in_progress' ? `
+                <button class="btn btn-primary" onclick="completeCount(${countId})">棚卸完了</button>
+            ` : ''}
+            ${count.status === 'completed' ? `
+                <button class="btn btn-primary" onclick="approveCount(${countId})">承認・在庫反映</button>
+                <button class="btn btn-secondary" onclick="showCountReportView(${countId})">差異レポート</button>
+            ` : ''}
+            ${count.status === 'approved' ? `
+                <button class="btn btn-secondary" onclick="showCountReportView(${countId})">差異レポート</button>
+            ` : ''}
+        `;
+
+        // 実在庫入力時に差異を自動計算
+        if (count.status === 'in_progress') {
+            document.querySelectorAll('.actual-qty-input').forEach(input => {
+                input.addEventListener('change', function() {
+                    const row = this.closest('tr');
+                    const systemQty = parseInt(row.querySelector('td:nth-child(3)').textContent);
+                    const actualQty = parseInt(this.value) || 0;
+                    const difference = actualQty - systemQty;
+
+                    const diffCell = row.querySelector('.difference-cell');
+                    diffCell.textContent = difference >= 0 ? '+' + difference : difference;
+                    diffCell.style.color = difference === 0 ? '#666' : (difference > 0 ? '#2ecc71' : '#e74c3c');
+                });
+            });
+        }
+    } catch (error) {
+        console.error('棚卸詳細取得エラー:', error);
+        alert('棚卸詳細の取得に失敗しました');
+    }
+}
+
+// カテゴリフィルター
+function filterCountItems() {
+    const selectedCategory = document.getElementById('count-category-filter').value;
+    const rows = document.querySelectorAll('#count-items-table tbody tr');
+
+    rows.forEach(row => {
+        const category = row.dataset.category;
+        if (!selectedCategory || category === selectedCategory) {
+            row.style.display = '';
+        } else {
+            row.style.display = 'none';
+        }
+    });
+}
+
+// 棚卸明細を保存
+async function saveCountItem(itemId) {
+    try {
+        const row = document.querySelector(`tr[data-item-id="${itemId}"]`);
+        const actualQtyInput = row.querySelector('.actual-qty-input');
+        const reasonInput = row.querySelector('.reason-input');
+
+        const actualQuantity = parseInt(actualQtyInput.value);
+        const reason = reasonInput ? reasonInput.value : '';
+
+        if (isNaN(actualQuantity) || actualQuantity < 0) {
+            alert('実在庫数を正しく入力してください');
+            return;
+        }
+
+        // 実在庫を保存
+        const countResponse = await fetch(`/api/inventory-count/0/items/${itemId}/count`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ actual_quantity: actualQuantity })
+        });
+
+        if (!countResponse.ok) {
+            const error = await countResponse.json();
+            alert(error.error || '保存に失敗しました');
+            return;
+        }
+
+        // 差異理由を保存
+        if (reason) {
+            await fetch(`/api/inventory-count/0/items/${itemId}/reason`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason })
+            });
+        }
+
+        alert('保存しました');
+    } catch (error) {
+        console.error('保存エラー:', error);
+        alert('保存に失敗しました');
+    }
+}
+
+// 棚卸完了
+async function completeCount(countId) {
+    if (!confirm('棚卸を完了しますか？入力済みの実在庫を自動保存して完了します。')) {
+        return;
+    }
+
+    try {
+        // まず、入力された実在庫を全て保存
+        const rows = document.querySelectorAll('#count-items-table tbody tr');
+        let savedCount = 0;
+        let errorCount = 0;
+
+        for (const row of rows) {
+            const itemId = row.dataset.itemId;
+            const actualQtyInput = row.querySelector('.actual-qty-input');
+            const reasonInput = row.querySelector('.reason-input');
+
+            if (actualQtyInput && actualQtyInput.value !== '') {
+                const actualQuantity = parseInt(actualQtyInput.value);
+                const reason = reasonInput ? reasonInput.value : '';
+
+                if (!isNaN(actualQuantity) && actualQuantity >= 0) {
+                    try {
+                        // 実在庫を保存
+                        const countResponse = await fetch(`/api/inventory-count/0/items/${itemId}/count`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ actual_quantity: actualQuantity })
+                        });
+
+                        if (countResponse.ok) {
+                            // 差異理由を保存
+                            if (reason) {
+                                await fetch(`/api/inventory-count/0/items/${itemId}/reason`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ reason })
+                                });
+                            }
+                            savedCount++;
+                        } else {
+                            errorCount++;
+                        }
+                    } catch (err) {
+                        errorCount++;
+                        console.error('保存エラー:', err);
+                    }
+                }
+            }
+        }
+
+        if (errorCount > 0) {
+            alert(`一部の商品の保存に失敗しました（${errorCount}件）`);
+            return;
+        }
+
+        if (savedCount > 0) {
+            console.log(`${savedCount}件の実在庫を保存しました`);
+        }
+
+        // 棚卸完了処理
+        const response = await fetch(`/api/inventory-count/${countId}/complete`, {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            alert(result.message);
+            loadCountDetails(countId); // 詳細を再読み込み
+        } else {
+            alert(result.error || '棚卸の完了に失敗しました');
+        }
+    } catch (error) {
+        console.error('棚卸完了エラー:', error);
+        alert('棚卸の完了に失敗しました');
+    }
+}
+
+// 棚卸承認・在庫反映
+async function approveCount(countId) {
+    if (!confirm('差異を在庫に反映しますか？この操作は取り消せません。')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/inventory-count/${countId}/approve`, {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            alert(`${result.message}\n調整した商品: ${result.adjusted_items}件`);
+            showCountListView();
+        } else {
+            alert(result.error || '承認に失敗しました');
+        }
+    } catch (error) {
+        console.error('承認エラー:', error);
+        alert('承認に失敗しました');
+    }
+}
+
+// 棚卸削除
+async function deleteCount(countId) {
+    if (!confirm('この棚卸を削除しますか？')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/inventory-count/${countId}`, {
+            method: 'DELETE'
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            alert(result.message);
+            await loadInventoryCounts();
+        } else {
+            alert(result.error || '削除に失敗しました');
+        }
+    } catch (error) {
+        console.error('削除エラー:', error);
+        alert('削除に失敗しました');
+    }
+}
+
+// 差異レポート読み込み
+async function loadCountReport(countId) {
+    try {
+        const response = await fetch(`/api/inventory-count/${countId}/report`);
+        const data = await response.json();
+
+        if (!response.ok) {
+            alert(data.error || 'レポートの取得に失敗しました');
+            return;
+        }
+
+        const { count, items, stats } = data;
+
+        document.getElementById('count-report-summary').innerHTML = `
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                <h3>棚卸日: ${count.count_date}</h3>
+                <h4>サマリー</h4>
+                <p>総商品数: ${stats.total_items}件</p>
+                <p>カウント済み: ${stats.counted_items}件</p>
+                <p>差異あり: ${stats.items_with_difference}件</p>
+                <p>差異合計: ${stats.total_difference >= 0 ? '+' : ''}${stats.total_difference}</p>
+                <p style="color: #2ecc71;">プラス差異: +${stats.positive_difference}</p>
+                <p style="color: #e74c3c;">マイナス差異: -${stats.negative_difference}</p>
+            </div>
+        `;
+
+        document.getElementById('count-report-items').innerHTML = `
+            <table>
+                <thead>
+                    <tr>
+                        <th>商品名</th>
+                        <th>カテゴリ</th>
+                        <th>理論在庫</th>
+                        <th>実在庫</th>
+                        <th>差異</th>
+                        <th>理由</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${items.filter(item => item.difference !== 0 && item.difference !== null).map(item => `
+                        <tr>
+                            <td>${item.product_name}</td>
+                            <td>${item.category || '-'}</td>
+                            <td>${item.system_quantity}</td>
+                            <td>${item.actual_quantity}</td>
+                            <td style="color: ${item.difference > 0 ? '#2ecc71' : '#e74c3c'}; font-weight: bold;">
+                                ${item.difference >= 0 ? '+' : ''}${item.difference}
+                            </td>
+                            <td>${item.reason || '-'}</td>
+                        </tr>
+                    `).join('') || '<tr><td colspan="6" style="text-align: center;">差異のある商品はありません</td></tr>'}
+                </tbody>
+            </table>
+        `;
+    } catch (error) {
+        console.error('レポート取得エラー:', error);
+        alert('レポートの取得に失敗しました');
+    }
 }

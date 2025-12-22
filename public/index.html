@@ -31,13 +31,21 @@
             <h2>在庫状況</h2>
             <div class="actions">
                 <div class="form-group" style="display: inline-block; margin-right: 15px;">
+                    <label for="dashboard-account-filter">勘定科目</label>
+                    <select id="dashboard-account-filter">
+                        <option value="">すべて</option>
+                        <option value="商品">商品</option>
+                        <option value="貯蔵品">貯蔵品</option>
+                    </select>
+                </div>
+                <div class="form-group" style="display: inline-block; margin-right: 15px;">
                     <label for="dashboard-category-filter">カテゴリフィルター</label>
                     <select id="dashboard-category-filter">
                         <option value="">すべてのカテゴリ</option>
                     </select>
                 </div>
                 <button id="export-current" class="btn btn-primary">現在庫CSV出力</button>
-                <button id="export-history" class="btn btn-secondary">履歴CSV出力</button>
+                <button id="show-qrcode-btn" class="btn btn-secondary">📱 出庫QRコード</button>
             </div>
             <div id="stock-alerts" class="alert-box"></div>
 
@@ -73,6 +81,7 @@
                             <tr>
                                 <th>商品名</th>
                                 <th>カテゴリ</th>
+                                <th>単価</th>
                                 <th>現在庫</th>
                                 <th>発注点</th>
                                 <th>状態</th>
@@ -88,7 +97,15 @@
         <!-- 商品管理 -->
         <div id="products" class="page">
             <h2>商品マスター</h2>
-            <button id="add-product-btn" class="btn btn-primary">新規商品登録</button>
+            <div class="actions">
+                <div class="form-group" style="display: inline-block; margin-right: 15px;">
+                    <label for="products-category-filter">カテゴリフィルター</label>
+                    <select id="products-category-filter">
+                        <option value="">すべてのカテゴリ</option>
+                    </select>
+                </div>
+                <button id="add-product-btn" class="btn btn-primary">新規商品登録</button>
+            </div>
             <table id="products-table">
                 <thead>
                     <tr>
@@ -199,6 +216,7 @@
                     <input type="date" id="history-end-date">
                 </div>
                 <button id="refresh-history" class="btn btn-secondary">🔄 更新</button>
+                <button id="export-history" class="btn btn-primary">履歴CSV出力</button>
             </div>
             <table id="history-table">
                 <thead>
@@ -255,6 +273,13 @@
             <!-- 棚卸一覧画面 -->
             <div id="count-list-view">
                 <h2>棚卸管理</h2>
+                <div style="background: #f0f7ff; border-left: 4px solid #667eea; padding: 12px 16px; margin-bottom: 16px; border-radius: 4px;">
+                    <strong>📋 棚卸対象について</strong><br>
+                    <span style="font-size: 14px; color: #555;">
+                        棚卸対象: エステのサーマナイフ、プロテインなど<br>
+                        棚卸対象外: トイレットペーパー、クイックルワイパーなどAmazonで購入する消耗品
+                    </span>
+                </div>
                 <div style="margin-bottom: 20px;">
                     <button id="new-count-btn" class="btn btn-primary">新規棚卸開始</button>
                 </div>
@@ -292,9 +317,12 @@
 
             <!-- 棚卸詳細画面 -->
             <div id="count-detail-view" style="display: none;">
-                <div id="count-detail-header">
-                    <h2>棚卸詳細</h2>
-                    <button class="btn btn-secondary" onclick="showCountListView()">← 一覧に戻る</button>
+                <div id="count-detail-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2 style="margin: 0;">棚卸詳細</h2>
+                    <div>
+                        <button id="export-count-csv" class="btn btn-primary" style="margin-right: 10px;">CSV出力</button>
+                        <button class="btn btn-secondary" onclick="showCountListView()">← 一覧に戻る</button>
+                    </div>
                 </div>
                 <div id="count-detail-info"></div>
                 <div id="count-detail-filter" style="margin: 15px 0;"></div>

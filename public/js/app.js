@@ -8,7 +8,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     await checkAuth();
     await loadProducts();
     setupEventListeners();
-    showDashboard();
+
+    // URLパラメータをチェックしてページ遷移
+    const urlParams = new URLSearchParams(window.location.search);
+    const pageParam = urlParams.get('page');
+
+    if (pageParam) {
+        // URLパラメータに基づいてページを表示
+        await showPage(pageParam);
+
+        // ナビゲーションボタンのアクティブ状態を更新
+        document.querySelectorAll('.nav-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.page === pageParam);
+        });
+
+        // URLパラメータをクリア（履歴を汚さないため）
+        window.history.replaceState({}, '', window.location.pathname);
+    } else {
+        showDashboard();
+    }
 });
 
 // 認証チェック
@@ -68,6 +86,7 @@ function setupEventListeners() {
     document.getElementById('export-history').addEventListener('click', exportHistory);
     document.getElementById('refresh-history').addEventListener('click', loadHistory);
     document.getElementById('load-chart-btn').addEventListener('click', loadStockChart);
+    document.getElementById('show-qrcode-btn').addEventListener('click', showQRCode);
 
     // カテゴリフィルター変更イベント
     document.getElementById('out-category-filter').addEventListener('change', loadOutStockProducts);
@@ -91,6 +110,13 @@ function setupEventListeners() {
     // 棚卸関連のイベント
     document.getElementById('new-count-btn').addEventListener('click', showNewCountForm);
     document.getElementById('new-count-form').addEventListener('submit', handleNewCountSubmit);
+
+    // 棚卸CSV出力ボタン（ページ遷移時に動的に追加されるため、delegationで処理）
+    document.addEventListener('click', (e) => {
+        if (e.target && e.target.id === 'export-count-csv') {
+            exportCountCSV();
+        }
+    });
 }
 
 // ページ表示
@@ -142,6 +168,12 @@ async function showDashboard() {
     await loadPendingOrders();
     loadDashboardCategoryFilter();
 
+    // 勘定科目フィルターのイベントリスナーを設定
+    const accountFilter = document.getElementById('dashboard-account-filter');
+    const newAccountFilter = accountFilter.cloneNode(true);
+    accountFilter.parentNode.replaceChild(newAccountFilter, accountFilter);
+    newAccountFilter.addEventListener('change', updateDashboardDisplay);
+
     // カテゴリフィルターのイベントリスナーを設定（重複を避けるため一度削除）
     const categoryFilter = document.getElementById('dashboard-category-filter');
     const newFilter = categoryFilter.cloneNode(true);
@@ -166,10 +198,20 @@ function loadDashboardCategoryFilter() {
 
 // ダッシュボード表示更新
 function updateDashboardDisplay() {
+    const selectedAccount = document.getElementById('dashboard-account-filter').value;
     const selectedCategory = document.getElementById('dashboard-category-filter').value;
-    const filteredProducts = selectedCategory
-        ? products.filter(p => p.category === selectedCategory)
-        : products;
+
+    let filteredProducts = products;
+
+    // 勘定科目でフィルター
+    if (selectedAccount) {
+        filteredProducts = filteredProducts.filter(p => (p.account_item || '商品') === selectedAccount);
+    }
+
+    // カテゴリでフィルター
+    if (selectedCategory) {
+        filteredProducts = filteredProducts.filter(p => p.category === selectedCategory);
+    }
 
     const tbody = document.querySelector('#stock-table tbody');
     const alerts = document.getElementById('stock-alerts');
@@ -190,6 +232,7 @@ function updateDashboardDisplay() {
         row.innerHTML = `
             <td>${product.name}</td>
             <td>${product.category || '-'}</td>
+            <td>¥${(product.unit_price || 0).toLocaleString()}</td>
             <td>${product.current_stock}</td>
             <td>${product.reorder_point}</td>
             <td class="${isLow ? 'stock-low' : 'stock-ok'}">
@@ -468,11 +511,45 @@ async function updateOrderStatus(orderId, status) {
 // 商品一覧表示
 async function showProducts() {
     await loadProducts();
+    loadProductsCategoryFilter();
+
+    // カテゴリフィルターのイベントリスナーを設定（重複を避けるため一度削除）
+    const categoryFilter = document.getElementById('products-category-filter');
+    const newFilter = categoryFilter.cloneNode(true);
+    categoryFilter.parentNode.replaceChild(newFilter, categoryFilter);
+    newFilter.addEventListener('change', updateProductsDisplay);
+
+    updateProductsDisplay();
+}
+
+// 商品マスター用カテゴリフィルター読み込み
+function loadProductsCategoryFilter() {
+    const categoryFilter = document.getElementById('products-category-filter');
+    const categories = [...new Set(products.map(p => p.category).filter(c => c))];
+
+    const currentValue = categoryFilter.value;
+    categoryFilter.innerHTML = '<option value="">すべてのカテゴリ</option>';
+    categories.forEach(category => {
+        categoryFilter.innerHTML += `<option value="${category}">${category}</option>`;
+    });
+    categoryFilter.value = currentValue;
+}
+
+// 商品マスター表示更新
+function updateProductsDisplay() {
+    const selectedCategory = document.getElementById('products-category-filter').value;
+
+    let filteredProducts = products;
+
+    // カテゴリでフィルター
+    if (selectedCategory) {
+        filteredProducts = filteredProducts.filter(p => p.category === selectedCategory);
+    }
 
     const tbody = document.querySelector('#products-table tbody');
     tbody.innerHTML = '';
 
-    products.forEach(product => {
+    filteredProducts.forEach(product => {
         const row = tbody.insertRow();
         const imageHtml = product.image_url
             ? `<img src="${product.image_url}" class="product-thumbnail" onclick="showImagePopup('${product.image_url}')" style="width: 50px; height: 50px; object-fit: cover; border-radius: 5px;">`
@@ -526,6 +603,13 @@ function showAddProductForm() {
                 <input type="text" id="product-name" required>
             </div>
             <div class="form-group">
+                <label>勘定科目</label>
+                <select id="product-account-item" required>
+                    <option value="商品">商品</option>
+                    <option value="貯蔵品">貯蔵品</option>
+                </select>
+            </div>
+            <div class="form-group">
                 <label>カテゴリ</label>
                 <select id="product-category" required>
                     <option value="">カテゴリを選択してください</option>
@@ -540,12 +624,28 @@ function showAddProductForm() {
                 <div id="image-preview" style="margin-top: 10px;"></div>
             </div>
             <div class="form-group">
+                <label>単価（円）</label>
+                <input type="number" id="product-unit-price" min="0" step="0.01" value="0">
+            </div>
+            <div class="form-group">
                 <label>発注点</label>
                 <input type="number" id="product-reorder" min="0" value="0">
             </div>
             <div class="form-group">
                 <label>初期在庫</label>
                 <input type="number" id="product-initial" min="0" value="0">
+            </div>
+            <div class="form-group">
+                <label style="display: inline-flex; align-items: center; cursor: pointer;">
+                    <input type="checkbox" id="product-include-count" checked style="
+                        width: 18px;
+                        height: 18px;
+                        margin-right: 8px;
+                        cursor: pointer;
+                        accent-color: #667eea;
+                    ">
+                    <span>棚卸対象に含める</span>
+                </label>
             </div>
             <button type="submit" class="btn btn-primary">登録</button>
         </form>
@@ -606,9 +706,12 @@ function showAddProductForm() {
 
         const formData = new FormData();
         formData.append('name', document.getElementById('product-name').value);
+        formData.append('account_item', document.getElementById('product-account-item').value);
         formData.append('category', category);
+        formData.append('unit_price', parseFloat(document.getElementById('product-unit-price').value) || 0);
         formData.append('reorder_point', parseInt(document.getElementById('product-reorder').value));
         formData.append('current_stock', parseInt(document.getElementById('product-initial').value));
+        formData.append('include_in_count', document.getElementById('product-include-count').checked ? 1 : 0);
 
         const imageFile = document.getElementById('product-image').files[0];
         if (imageFile) {
@@ -668,6 +771,13 @@ async function editProduct(productId) {
                 <input type="text" id="edit-name" value="${product.name}" required>
             </div>
             <div class="form-group">
+                <label>勘定科目</label>
+                <select id="edit-account-item" required>
+                    <option value="商品" ${(product.account_item || '商品') === '商品' ? 'selected' : ''}>商品</option>
+                    <option value="貯蔵品" ${product.account_item === '貯蔵品' ? 'selected' : ''}>貯蔵品</option>
+                </select>
+            </div>
+            <div class="form-group">
                 <label>カテゴリ</label>
                 <select id="edit-category" required>
                     <option value="">カテゴリを選択してください</option>
@@ -683,6 +793,10 @@ async function editProduct(productId) {
                 <div id="edit-image-preview" style="margin-top: 10px;"></div>
             </div>
             <div class="form-group">
+                <label>単価（円）</label>
+                <input type="number" id="edit-unit-price" min="0" step="0.01" value="${product.unit_price || 0}">
+            </div>
+            <div class="form-group">
                 <label>発注点</label>
                 <input type="number" id="edit-reorder" min="0" value="${product.reorder_point}">
             </div>
@@ -690,6 +804,18 @@ async function editProduct(productId) {
                 <label>現在庫</label>
                 <input type="number" id="edit-current-stock" min="0" value="${product.current_stock}">
                 <small style="color: #666;">※在庫数を変更できます</small>
+            </div>
+            <div class="form-group">
+                <label style="display: inline-flex; align-items: center; cursor: pointer;">
+                    <input type="checkbox" id="edit-include-count" ${product.include_in_count !== 0 ? 'checked' : ''} style="
+                        width: 18px;
+                        height: 18px;
+                        margin-right: 8px;
+                        cursor: pointer;
+                        accent-color: #667eea;
+                    ">
+                    <span>棚卸対象に含める</span>
+                </label>
             </div>
             <button type="submit" class="btn btn-primary">更新</button>
         </form>
@@ -750,9 +876,12 @@ async function editProduct(productId) {
 
         const formData = new FormData();
         formData.append('name', document.getElementById('edit-name').value);
+        formData.append('account_item', document.getElementById('edit-account-item').value);
         formData.append('category', category);
+        formData.append('unit_price', parseFloat(document.getElementById('edit-unit-price').value) || 0);
         formData.append('reorder_point', parseInt(document.getElementById('edit-reorder').value));
         formData.append('current_stock', parseInt(document.getElementById('edit-current-stock').value));
+        formData.append('include_in_count', document.getElementById('edit-include-count').checked ? 1 : 0);
 
         const imageFile = document.getElementById('edit-image').files[0];
         if (imageFile) {
@@ -2111,4 +2240,105 @@ async function loadCountReport(countId) {
         console.error('レポート取得エラー:', error);
         alert('レポートの取得に失敗しました');
     }
+}
+
+// 棚卸結果CSV出力
+async function exportCountCSV() {
+    if (!currentCountId) {
+        alert('棚卸データが読み込まれていません');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/inventory-count/${currentCountId}`);
+        const data = await response.json();
+
+        if (!response.ok) {
+            alert(data.error || '棚卸データの取得に失敗しました');
+            return;
+        }
+
+        const { count, items } = data;
+
+        // CSV形式に変換
+        let csv = '\uFEFF'; // BOM for UTF-8
+        csv += '棚卸結果\n';
+        csv += `棚卸日,${count.count_date}\n`;
+        csv += `ステータス,${count.status === 'in_progress' ? '実施中' : count.status === 'completed' ? '完了' : '承認済み'}\n`;
+        csv += '\n';
+        csv += '商品名,カテゴリ,システム在庫,実在庫,差異,理由,備考\n';
+
+        items.forEach(item => {
+            const row = [
+                item.product_name,
+                item.category || '',
+                item.system_quantity,
+                item.actual_quantity !== null ? item.actual_quantity : '',
+                item.difference !== null ? item.difference : '',
+                item.reason || '',
+                item.note || ''
+            ];
+            csv += row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(',') + '\n';
+        });
+
+        // ダウンロード
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', `棚卸結果_${count.count_date}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    } catch (error) {
+        console.error('CSV出力エラー:', error);
+        alert('CSV出力に失敗しました');
+    }
+}
+
+// 出庫ページQRコード表示
+async function showQRCode() {
+    try {
+        const response = await fetch('/api/qrcode/out-stock');
+        const data = await response.json();
+
+        if (!response.ok) {
+            alert(data.error || 'QRコードの生成に失敗しました');
+            return;
+        }
+
+        const modal = document.getElementById('modal');
+        const modalBody = document.getElementById('modal-body');
+
+        modalBody.innerHTML = `
+            <h3>📱 出庫ページQRコード</h3>
+            <div style="text-align: center; padding: 20px;">
+                <p style="margin-bottom: 20px; color: #555;">
+                    このQRコードをスマートフォンで読み取ると、<br>
+                    出庫ページに直接アクセスできます。
+                </p>
+                <img src="${data.qrCodeUrl}" alt="QRコード" style="max-width: 100%; border: 2px solid #ddd; border-radius: 8px; padding: 10px;">
+                <p style="margin-top: 15px; font-size: 14px; color: #999;">
+                    ${data.targetUrl}
+                </p>
+                <button class="btn btn-primary" style="margin-top: 20px;" onclick="downloadQRCode('${data.qrCodeUrl}')">
+                    QRコードを保存
+                </button>
+            </div>
+        `;
+
+        modal.style.display = 'block';
+    } catch (error) {
+        console.error('QRコード取得エラー:', error);
+        alert('QRコードの取得に失敗しました');
+    }
+}
+
+// QRコードダウンロード
+function downloadQRCode(dataUrl) {
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = '出庫ページQRコード.png';
+    link.click();
 }

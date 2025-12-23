@@ -1745,16 +1745,16 @@ table tbody tr:hover {
     }
 
     .usage-guide-item strong {
-        font-size: 16px !important;
-        margin-bottom: 6px;
+        font-size: 13px !important;
+        margin-bottom: 5px;
         line-height: 1.5;
     }
 
     .usage-guide-item ul {
-        font-size: 15px !important;
-        line-height: 1.7 !important;
-        padding-left: 18px !important;
-        margin: 6px 0 0 0 !important;
+        font-size: 12px !important;
+        line-height: 1.6 !important;
+        padding-left: 16px !important;
+        margin: 5px 0 0 0 !important;
     }
 
     .usage-guide-item li {

@@ -1648,9 +1648,16 @@ table tbody tr:hover {
 
 .usage-guide-content {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
     gap: 15px;
     transition: all 0.3s ease;
+}
+
+/* PC表示時のみ2カラム */
+@media (min-width: 768px) {
+    .usage-guide-content {
+        grid-template-columns: 1fr 1fr;
+    }
 }
 
 .btn-icon:hover {

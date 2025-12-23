@@ -1644,7 +1644,7 @@ table tbody tr:hover {
     padding: 10px;
     border-radius: 8px;
     margin-bottom: 20px;
-    overflow: hidden;
+    overflow: visible;
 }
 
 /* PC表示時のみパディングを増やす */
@@ -1721,6 +1721,7 @@ table tbody tr:hover {
 @media (max-width: 768px) {
     .usage-guide {
         padding: 10px 12px;
+        overflow: visible;
     }
 
     .usage-guide-content {
@@ -1730,6 +1731,7 @@ table tbody tr:hover {
 
     .usage-guide-item {
         padding: 12px;
+        overflow: visible;
     }
 
     .usage-guide h3 {
@@ -1737,21 +1739,24 @@ table tbody tr:hover {
     }
 
     .usage-guide ul {
-        font-size: 14px;
-        line-height: 1.6 !important;
-        padding-left: 18px !important;
+        font-size: 13px;
+        line-height: 1.8 !important;
+        padding-left: 16px !important;
+        margin: 8px 0;
     }
 
     .usage-guide li {
-        margin-bottom: 6px;
+        margin-bottom: 8px;
         word-break: keep-all;
         overflow-wrap: break-word;
+        white-space: normal;
     }
 
     .usage-guide strong {
         display: block;
         margin-bottom: 8px;
-        font-size: 15px;
+        font-size: 14px;
         word-break: keep-all;
+        line-height: 1.6;
     }
 }

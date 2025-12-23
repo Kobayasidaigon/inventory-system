@@ -10,6 +10,7 @@
     <header>
         <h1>在庫管理システム</h1>
         <div class="user-info">
+            <button id="show-feedback-btn" class="btn btn-secondary" style="margin-right: 10px;">💡 ご意見ボックス</button>
             <span id="username-display"></span>
             <button id="logout-btn" class="btn btn-secondary">ログアウト</button>
         </div>
@@ -27,6 +28,37 @@
         <!-- ダッシュボード -->
         <div id="dashboard" class="page active">
             <h2>在庫状況</h2>
+            <!-- 使い方ガイド -->
+            <div class="dashboard-section usage-guide">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h3 style="margin: 0; font-size: 14px; color: white; background: none; line-height: 1;">📖 使い方ガイド</h3>
+                    <button id="toggle-usage-guide" class="btn-icon" style="background: rgba(255,255,255,0.2) !important; border: 2px solid rgba(255,255,255,0.3) !important; color: white !important; cursor: pointer; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: bold; line-height: 1; box-shadow: none; transition: all 0.2s;">閉じる</button>
+                </div>
+                <div class="usage-guide-content" id="usage-guide-content" style="display: grid; margin-top: 10px;">
+                    <div class="usage-guide-item" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 10px; border-radius: 4px; margin-bottom: 10px;">
+                        <strong style="font-size: 13px; color: #856404;">⚠️ 重要なルール：</strong>
+                        <ul style="margin: 5px 0 0 0; padding-left: 20px; line-height: 1.6; font-size: 12px; color: #856404;">
+                            <li>ペーパー類（ティッシュ、トイレットペーパー等）を一つでも出したら、必ず在庫システムに登録してください</li>
+                            <li>退勤時には必ず在庫の登録を完了させてください</li>
+                        </ul>
+                    </div>
+                    <div class="usage-guide-item">
+                        <strong style="font-size: 13px;">📦 在庫操作：</strong>
+                        <ul style="margin: 8px 0; padding-left: 20px; line-height: 1.6; font-size: 12px;">
+                            <li><span style="font-weight: 600;">-5 / -1</span>：在庫を減らす（出庫）</li>
+                            <li><span style="font-weight: 600;">+1 / +5</span>：在庫を増やす（誤操作の修正用）</li>
+                        </ul>
+                    </div>
+                    <div class="usage-guide-item">
+                        <strong style="font-size: 13px;">🔔 自動通知：</strong>
+                        <ul style="margin: 8px 0; padding-left: 20px; line-height: 1.6; font-size: 12px;">
+                            <li>在庫が発注点を下回ると<br>自動でLINE通知が届きます</li>
+                            <li>発注依頼済みの商品は<br>「発注依頼済み商品」セクションに表示されます</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
             <div class="actions">
                 <div class="form-group" style="display: inline-block; margin-right: 15px;">
                     <label for="dashboard-category-filter">カテゴリフィルター</label>
@@ -34,9 +66,7 @@
                         <option value="">すべてのカテゴリ</option>
                     </select>
                 </div>
-                <button id="show-qrcode-btn" class="btn btn-secondary">📱 出庫QRコード</button>
             </div>
-
 
             <!-- 発注依頼済み商品 -->
             <div id="pending-orders-section" class="dashboard-section" style="display: none;">
@@ -266,7 +296,29 @@
         <img id="image-popup-img" class="image-popup-content" src="" alt="商品画像">
     </div>
 
+    <!-- ご意見ボックスモーダル -->
+    <div id="feedback-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" id="feedback-modal-close">&times;</span>
+            <div id="feedback-modal-body">
+                <h2 style="margin-bottom: 20px;">💡 ご意見ボックス</h2>
+                <p style="color: #666; margin-bottom: 20px;">システムへのご意見・ご要望をお聞かせください。匿名で送信されます。</p>
+                <form id="feedback-form">
+                    <div class="form-group">
+                        <label for="feedback-text">ご意見・ご要望</label>
+                        <textarea id="feedback-text" rows="6" required placeholder="例：○○の機能があると便利です&#10;例：△△の表示を見やすくしてほしい" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: inherit;"></textarea>
+                    </div>
+                    <div style="text-align: right; margin-top: 20px;">
+                        <button type="button" class="btn btn-secondary" id="feedback-cancel">キャンセル</button>
+                        <button type="submit" class="btn btn-primary">送信</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="/js/csrf.js"></script>
     <script src="/js/app.js"></script>
 </body>
 </html>

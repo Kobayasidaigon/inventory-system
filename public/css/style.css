@@ -162,6 +162,43 @@ header h1 {
     display: flex;
     align-items: center;
     gap: 15px;
+    flex-wrap: wrap;
+}
+
+@media (max-width: 768px) {
+    header {
+        flex-direction: column;
+        gap: 10px;
+        padding: 12px;
+    }
+
+    header h1 {
+        font-size: 18px;
+        text-align: center;
+    }
+
+    .user-info {
+        width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+
+    .user-info button {
+        padding: 10px;
+        font-size: 14px;
+        width: 100%;
+    }
+
+    .user-info #username-display {
+        width: 100%;
+        text-align: center;
+        font-size: 13px;
+        padding: 8px;
+        background: #f5f5f5;
+        border-radius: 4px;
+        order: -1;
+    }
 }
 
 /* ナビゲーション */
@@ -379,6 +416,8 @@ table tbody tr:hover {
     width: 100%;
     height: 100%;
     background: rgba(0,0,0,0.5);
+    justify-content: center;
+    align-items: center;
 }
 
 .modal.show {
@@ -1595,5 +1634,86 @@ table tbody tr:hover {
     #pending-orders-table td:last-child {
         width: auto;
         min-width: 200px;
+    }
+}
+
+/* 使い方ガイド */
+.usage-guide {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 10px 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.usage-guide-content {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+    transition: all 0.3s ease;
+}
+
+.btn-icon:hover {
+    background: rgba(255, 255, 255, 0.3) !important;
+}
+
+.usage-guide-item {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 15px;
+    border-radius: 6px;
+}
+
+.usage-guide-item strong {
+    display: block;
+    margin-bottom: 8px;
+}
+
+.usage-guide-item ul {
+    word-break: keep-all;
+    overflow-wrap: break-word;
+}
+
+.usage-guide-item li {
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+    line-height: 1.8;
+}
+
+/* スマホ対応 */
+@media (max-width: 768px) {
+    .usage-guide {
+        padding: 10px 12px;
+    }
+
+    .usage-guide-content {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+
+    .usage-guide-item {
+        padding: 12px;
+    }
+
+    .usage-guide h3 {
+        font-size: 14px;
+    }
+
+    .usage-guide ul {
+        font-size: 14px;
+        line-height: 1.6 !important;
+        padding-left: 18px !important;
+    }
+
+    .usage-guide li {
+        margin-bottom: 6px;
+        word-break: keep-all;
+        overflow-wrap: break-word;
+    }
+
+    .usage-guide strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 15px;
+        word-break: keep-all;
     }
 }

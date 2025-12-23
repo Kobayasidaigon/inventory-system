@@ -4,16 +4,33 @@ require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
 const cookieParser = require('cookie-parser');
+const rateLimit = require('express-rate-limit');
 const path = require('path');
 const { startScheduledBackup } = require('./services/backup');
+const { generateCsrfToken, verifyCsrfToken, getCsrfToken } = require('./middleware/csrf');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// API全体のレート制限（1分間に100リクエストまで）
+const apiLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1分
+    max: 100, // 最大100リクエスト
+    message: {
+        success: false,
+        error: 'リクエストが多すぎます。しばらく待ってから再試行してください。'
+    },
+    standardHeaders: true,
+    legacyHeaders: false
+});
 
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
+// API全体にレート制限を適用
+app.use('/api/', apiLimiter);
 
 // Session設定
 app.use(session({
@@ -27,6 +44,9 @@ app.use(session({
     }
 }));
 
+// CSRF対策ミドルウェア
+app.use(generateCsrfToken);
+
 // Routes
 const authRoutes = require('./routes/auth-admin');
 const publicRoutes = require('./routes/public');
@@ -34,9 +54,16 @@ const productRoutes = require('./routes/products');
 const inventoryRoutes = require('./routes/inventory');
 const orderRoutes = require('./routes/orders');
 const qrcodeRoutes = require('./routes/qrcode');
+const feedbackRoutes = require('./routes/feedback');
 const { getLocationDatabase } = require('./db/database-admin');
 const { requireAuth } = require('./middleware/auth');
 const inventoryCountRoutes = require('./routes/inventory-count');
+
+// CSRFトークン取得エンドポイント（検証前に設定）
+app.get('/api/csrf-token', getCsrfToken);
+
+// CSRF検証を全てのAPIに適用（GETとwebhookは除外）
+app.use('/api/', verifyCsrfToken);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/public', publicRoutes);
@@ -44,6 +71,7 @@ app.use('/api/products', productRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/qrcode', qrcodeRoutes);
+app.use('/api', feedbackRoutes);
 app.use('/api/inventory-count', requireAuth, (req, res, next) => {
     const db = getLocationDatabase(req.session.locationCode);
     inventoryCountRoutes(db)(req, res, next);
@@ -60,15 +88,58 @@ const uploadsPath = process.env.NODE_ENV === 'production'
 app.use('/uploads', express.static(uploadsPath));
 
 // ルートパス
-app.get('/', (req, res) => {
-    if (!req.session.userId) {
-        return res.sendFile(path.join(__dirname, '../public/login.html'));
+app.get('/', async (req, res) => {
+    try {
+        // QRトークンによる自動ログイン
+        const qrToken = req.query.qr_token;
+        if (qrToken && !req.session.userId) {
+            const { mainDb } = require('./db/database-admin');
+
+            // トークンを検証
+            const tokenData = await mainDb.get(
+                'SELECT * FROM qr_tokens WHERE token = ? AND expires_at > datetime("now")',
+                [qrToken]
+            );
+
+            if (tokenData) {
+                // ユーザー情報を取得
+                const user = await mainDb.get('SELECT * FROM users WHERE id = ?', [tokenData.user_id]);
+
+                if (user) {
+                    // セッションを設定
+                    req.session.userId = user.id;
+                    req.session.userName = user.user_name;
+                    req.session.isAdmin = user.is_admin === 1;
+
+                    // 一般ユーザーの場合は拠点情報も取得
+                    if (!req.session.isAdmin) {
+                        const location = await mainDb.get(
+                            'SELECT * FROM locations WHERE id = ?',
+                            [user.location_id]
+                        );
+                        if (location) {
+                            req.session.locationId = location.id;
+                            req.session.locationCode = location.location_code;
+                        }
+                    }
+
+                    console.log(`QRトークンで自動ログイン: ${user.user_name}`);
+                }
+            }
+        }
+
+        if (!req.session.userId) {
+            return res.sendFile(path.join(__dirname, '../public/login.html'));
+        }
+        // 管理者の場合は管理画面へ
+        if (req.session.isAdmin) {
+            return res.sendFile(path.join(__dirname, '../public/admin.html'));
+        }
+        res.sendFile(path.join(__dirname, '../public/index.html'));
+    } catch (error) {
+        console.error('Route error:', error);
+        res.sendFile(path.join(__dirname, '../public/login.html'));
     }
-    // 管理者の場合は管理画面へ
-    if (req.session.isAdmin) {
-        return res.sendFile(path.join(__dirname, '../public/admin.html'));
-    }
-    res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
 // 初期セットアップ画面（管理者が存在しない場合のみアクセス可能）

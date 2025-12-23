@@ -67,7 +67,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
     const errorMessage = document.getElementById('error-message');
 
     try {
-        const response = await fetch('/api/auth/login', {
+        const response = await fetchWithCsrf('/api/auth/login', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -99,7 +99,7 @@ document.getElementById('admin-login-form').addEventListener('submit', async (e)
     const errorMessage = document.getElementById('error-message');
 
     try {
-        const response = await fetch('/api/auth/admin/login', {
+        const response = await fetchWithCsrf('/api/auth/admin/login', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'

@@ -1,10 +1,25 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const rateLimit = require('express-rate-limit');
 const { mainDb, getLocationDatabase } = require('../db/database-admin');
 const { backupDatabase, listBackups, restoreDatabase, BACKUP_DIR } = require('../services/backup');
+const { sanitizeHtml } = require('../utils/xss-protection');
 const path = require('path');
 const router = express.Router();
+
+// ログイン用のレート制限（15分間に5回まで）
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15分
+    max: 5, // 最大5回
+    message: {
+        success: false,
+        error: 'ログイン試行回数が多すぎます。15分後に再試行してください。'
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: true // 成功したログインはカウントしない
+});
 
 // Remember Meトークンを生成
 function generateToken() {
@@ -45,7 +60,7 @@ async function authenticateByToken(token) {
 }
 
 // 管理者ログイン
-router.post('/admin/login', async (req, res) => {
+router.post('/admin/login', loginLimiter, async (req, res) => {
     try {
         const { username, password, rememberMe } = req.body;
 
@@ -87,7 +102,7 @@ router.post('/admin/login', async (req, res) => {
 });
 
 // 一般ユーザーログイン
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
     try {
         const { locationCode, userId, password, rememberMe } = req.body;
 
@@ -235,6 +250,9 @@ router.post('/admin/locations', async (req, res) => {
             return res.status(400).json({ error: '拠点名を入力してください' });
         }
 
+        // XSS対策: ユーザー入力をサニタイズ
+        const sanitizedLocationName = sanitizeHtml(locationName);
+
         // 次の拠点コードを自動生成（数値オートインクリメント）
         const maxLocation = await mainDb.get('SELECT MAX(CAST(location_code AS INTEGER)) as max_code FROM locations WHERE location_code GLOB "[0-9]*"');
         const nextCode = (maxLocation && maxLocation.max_code ? parseInt(maxLocation.max_code) + 1 : 1).toString();
@@ -243,7 +261,7 @@ router.post('/admin/locations', async (req, res) => {
 
         const result = await mainDb.run(
             'INSERT INTO locations (location_code, location_name, db_name) VALUES (?, ?, ?)',
-            [nextCode, locationName, dbName]
+            [nextCode, sanitizedLocationName, dbName]
         );
 
         // 拠点用のデータベースを初期化
@@ -354,11 +372,15 @@ router.post('/admin/users', async (req, res) => {
             return res.status(400).json({ error: 'すべての項目を入力してください' });
         }
 
+        // XSS対策: ユーザー入力をサニタイズ
+        const sanitizedUserId = sanitizeHtml(userId);
+        const sanitizedUserName = sanitizeHtml(userName);
+
         const hashedPassword = bcrypt.hashSync(password, 10);
 
         const result = await mainDb.run(
             'INSERT INTO users (location_id, user_id, user_name, password, is_admin) VALUES (?, ?, ?, ?, 0)',
-            [locationId, userId, userName, hashedPassword]
+            [locationId, sanitizedUserId, sanitizedUserName, hashedPassword]
         );
 
         res.json({ success: true, userId: result.lastID });

@@ -50,7 +50,7 @@ async function checkAdminAuth() {
 // ログアウト
 document.getElementById('logout-btn').addEventListener('click', async () => {
     try {
-        await fetch('/api/auth/logout', { method: 'POST' });
+        await fetchWithCsrf('/api/auth/logout', { method: 'POST' });
         window.location.href = '/';
     } catch (error) {
         console.error('ログアウトエラー:', error);
@@ -194,7 +194,7 @@ document.getElementById('add-location-btn').addEventListener('click', async () =
     }
 
     try {
-        const response = await fetch('/api/auth/admin/locations', {
+        const response = await fetchWithCsrf('/api/auth/admin/locations', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ locationName })
@@ -233,7 +233,7 @@ document.getElementById('add-user-btn').addEventListener('click', async () => {
     }
 
     try {
-        const response = await fetch('/api/auth/admin/users', {
+        const response = await fetchWithCsrf('/api/auth/admin/users', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -270,7 +270,7 @@ async function editLocation(locationId, currentName) {
     }
 
     try {
-        const response = await fetch(`/api/auth/admin/locations/${locationId}`, {
+        const response = await fetchWithCsrf(`/api/auth/admin/locations/${locationId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ locationName: newName })
@@ -297,7 +297,7 @@ async function deleteLocation(locationId, locationName) {
     }
 
     try {
-        const response = await fetch(`/api/auth/admin/locations/${locationId}`, {
+        const response = await fetchWithCsrf(`/api/auth/admin/locations/${locationId}`, {
             method: 'DELETE'
         });
 
@@ -391,7 +391,7 @@ async function editUser(userId) {
             body.password = newPassword;
         }
 
-        const response = await fetch(`/api/auth/admin/users/${userId}`, {
+        const response = await fetchWithCsrf(`/api/auth/admin/users/${userId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
@@ -419,7 +419,7 @@ async function deleteUser(userId, userIdName) {
     }
 
     try {
-        const response = await fetch(`/api/auth/admin/users/${userId}`, {
+        const response = await fetchWithCsrf(`/api/auth/admin/users/${userId}`, {
             method: 'DELETE'
         });
 
@@ -580,7 +580,7 @@ async function updateOrderStatus(locationId, orderId, newStatus) {
     }
 
     try {
-        const response = await fetch(`/api/auth/admin/locations/${locationId}/orders/${orderId}/status`, {
+        const response = await fetchWithCsrf(`/api/auth/admin/locations/${locationId}/orders/${orderId}/status`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: newStatus })
@@ -635,7 +635,7 @@ async function createBackup() {
         button.disabled = true;
         button.textContent = '⏳ バックアップ作成中...';
 
-        const response = await fetch('/api/auth/admin/backup', {
+        const response = await fetchWithCsrf('/api/auth/admin/backup', {
             method: 'POST'
         });
 
@@ -739,7 +739,7 @@ async function restoreBackup(filename) {
     try {
         showBackupStatus('⏳ リストア中...', 'info');
 
-        const response = await fetch(`/api/auth/admin/restore/${filename}`, {
+        const response = await fetchWithCsrf(`/api/auth/admin/restore/${filename}`, {
             method: 'POST'
         });
 
@@ -801,3 +801,219 @@ function showBackupStatus(message, type = 'info') {
         statusDiv.innerHTML = '';
     }, 5000);
 }
+
+// ========== ご意見ボックス機能 ==========
+
+let allFeedbacks = [];
+
+// ご意見一覧を読み込み
+async function loadFeedbacks() {
+    try {
+        const response = await fetch('/api/admin/feedbacks');
+        const data = await response.json();
+
+        if (data.success) {
+            allFeedbacks = data.feedbacks;
+            renderFeedbacks();
+        } else {
+            console.error('Failed to load feedbacks:', data.error);
+        }
+    } catch (error) {
+        console.error('Load feedbacks error:', error);
+    }
+}
+
+// ご意見を表示
+function renderFeedbacks() {
+    const filterValue = document.querySelector('input[name="feedback-filter"]:checked').value;
+    const tbody = document.querySelector('#feedbacks-table tbody');
+    tbody.innerHTML = '';
+
+    let filteredFeedbacks = allFeedbacks;
+    if (filterValue === 'new') {
+        filteredFeedbacks = allFeedbacks.filter(f => f.status === 'new');
+    } else if (filterValue === 'resolved') {
+        filteredFeedbacks = allFeedbacks.filter(f => f.status === 'resolved');
+    }
+
+    if (filteredFeedbacks.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 20px; color: #999;">該当するご意見はありません</td></tr>';
+        return;
+    }
+
+    filteredFeedbacks.forEach(feedback => {
+        const row = document.createElement('tr');
+        const date = new Date(feedback.created_at);
+        const formattedDate = date.toLocaleString('ja-JP', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+
+        const statusBadge = {
+            'new': '<span style="background: #ff9800; color: white; padding: 3px 8px; border-radius: 3px; font-size: 12px;">未読</span>',
+            'read': '<span style="background: #2196f3; color: white; padding: 3px 8px; border-radius: 3px; font-size: 12px;">既読</span>',
+            'resolved': '<span style="background: #4caf50; color: white; padding: 3px 8px; border-radius: 3px; font-size: 12px;">対応済み</span>'
+        };
+
+        // 内容を50文字で切り取り
+        const excerpt = feedback.feedback_text.length > 50
+            ? feedback.feedback_text.substring(0, 50) + '...'
+            : feedback.feedback_text;
+
+        row.innerHTML = `
+            <td>${formattedDate}</td>
+            <td>${feedback.location_name || '不明'}</td>
+            <td style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${excerpt}</td>
+            <td>${statusBadge[feedback.status]}</td>
+            <td>
+                <button class="btn btn-secondary" onclick="showFeedbackDetail(${feedback.id})">詳細</button>
+            </td>
+        `;
+
+        tbody.appendChild(row);
+    });
+}
+
+// ご意見詳細モーダルを表示
+function showFeedbackDetail(feedbackId) {
+    const feedback = allFeedbacks.find(f => f.id === feedbackId);
+    if (!feedback) return;
+
+    const date = new Date(feedback.created_at);
+    const formattedDate = date.toLocaleString('ja-JP', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+
+    const statusText = {
+        'new': '未読',
+        'read': '既読',
+        'resolved': '対応済み'
+    };
+
+    const statusColor = {
+        'new': '#ff9800',
+        'read': '#2196f3',
+        'resolved': '#4caf50'
+    };
+
+    const detailContent = document.getElementById('feedback-detail-content');
+    detailContent.innerHTML = `
+        <h2>ご意見詳細</h2>
+        <div style="margin: 20px 0; padding: 20px; background: #f9f9f9; border-radius: 8px;">
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #666;">投稿日時:</strong>
+                <div style="margin-top: 5px;">${formattedDate}</div>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #666;">拠点:</strong>
+                <div style="margin-top: 5px;">${feedback.location_name || '不明'}</div>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #666;">ステータス:</strong>
+                <div style="margin-top: 5px;">
+                    <span style="background: ${statusColor[feedback.status]}; color: white; padding: 5px 12px; border-radius: 4px; font-size: 14px;">
+                        ${statusText[feedback.status]}
+                    </span>
+                </div>
+            </div>
+            <div>
+                <strong style="color: #666;">ご意見内容:</strong>
+                <div style="margin-top: 10px; padding: 15px; background: white; border-radius: 5px; white-space: pre-wrap; line-height: 1.6;">
+                    ${feedback.feedback_text}
+                </div>
+            </div>
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap;">
+            ${feedback.status === 'new'
+                ? `<button class="btn btn-primary" onclick="updateFeedbackStatusFromModal(${feedback.id}, 'read')">既読にする</button>
+                   <button class="btn btn-primary" onclick="updateFeedbackStatusFromModal(${feedback.id}, 'resolved')">対応済みにする</button>`
+                : feedback.status === 'read'
+                ? `<button class="btn btn-primary" onclick="updateFeedbackStatusFromModal(${feedback.id}, 'resolved')">対応済みにする</button>`
+                : ''}
+            ${feedback.status === 'resolved'
+                ? `<button class="btn btn-danger" onclick="deleteFeedbackFromModal(${feedback.id})">削除</button>`
+                : ''}
+            <button class="btn btn-secondary" onclick="closeFeedbackDetailModal()">閉じる</button>
+        </div>
+    `;
+
+    document.getElementById('feedback-detail-modal').style.display = 'flex';
+}
+
+// ご意見詳細モーダルを閉じる
+function closeFeedbackDetailModal() {
+    document.getElementById('feedback-detail-modal').style.display = 'none';
+}
+
+// モーダルからステータスを更新
+async function updateFeedbackStatusFromModal(feedbackId, newStatus) {
+    await updateFeedbackStatus(feedbackId, newStatus);
+    closeFeedbackDetailModal();
+}
+
+// モーダルから削除
+async function deleteFeedbackFromModal(feedbackId) {
+    await deleteFeedback(feedbackId);
+    closeFeedbackDetailModal();
+}
+
+// ご意見のステータスを更新
+async function updateFeedbackStatus(feedbackId, newStatus) {
+    try {
+        const response = await fetchWithCsrf(`/api/admin/feedbacks/${feedbackId}/status`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: newStatus })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            await loadFeedbacks();
+        } else {
+            alert('ステータスの更新に失敗しました: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Update feedback status error:', error);
+        alert('ステータスの更新に失敗しました');
+    }
+}
+
+// ご意見を削除
+async function deleteFeedback(feedbackId) {
+    if (!confirm('このご意見を削除しますか？')) {
+        return;
+    }
+
+    try {
+        const response = await fetchWithCsrf(`/api/admin/feedbacks/${feedbackId}`, {
+            method: 'DELETE'
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            await loadFeedbacks();
+        } else {
+            alert('削除に失敗しました: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Delete feedback error:', error);
+        alert('削除に失敗しました');
+    }
+}
+
+// フィルターの変更イベント
+document.querySelectorAll('input[name="feedback-filter"]').forEach(radio => {
+    radio.addEventListener('change', renderFeedbacks);
+});
+
+// タブ切り替え時にご意見を読み込む
+document.querySelector('.admin-tab[data-tab="feedback"]').addEventListener('click', loadFeedbacks);

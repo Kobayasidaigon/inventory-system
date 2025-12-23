@@ -102,11 +102,40 @@ async function initMainDatabase() {
         )
     `);
 
+    // QRコード用トークンテーブル（長期間有効）
+    await mainDb.run(`
+        CREATE TABLE IF NOT EXISTS qr_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            token TEXT UNIQUE NOT NULL,
+            expires_at DATETIME NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+
+    // ご意見ボックステーブル（匿名）
+    await mainDb.run(`
+        CREATE TABLE IF NOT EXISTS feedbacks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            location_id INTEGER,
+            feedback_text TEXT NOT NULL,
+            status TEXT DEFAULT 'new' CHECK(status IN ('new', 'read', 'resolved')),
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE SET NULL
+        )
+    `);
+
     // インデックス作成
     await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_users_location ON users(location_id)`);
     await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id)`);
     await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_remember_tokens_token ON remember_tokens(token)`);
     await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_remember_tokens_user_id ON remember_tokens(user_id)`);
+    await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_qr_tokens_token ON qr_tokens(token)`);
+    await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_qr_tokens_user_id ON qr_tokens(user_id)`);
+    await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_feedbacks_location ON feedbacks(location_id)`);
+    await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_feedbacks_status ON feedbacks(status)`);
 }
 
 // 拠点データベースのテーブル作成SQL

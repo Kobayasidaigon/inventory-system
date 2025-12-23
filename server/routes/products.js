@@ -4,6 +4,8 @@ const path = require('path');
 const sharp = require('sharp');
 const { getLocationDatabase } = require('../db/database-admin');
 const { requireAuth } = require('../middleware/auth');
+const { sanitizeHtml } = require('../utils/xss-protection');
+const { verifyCsrfTokenManual } = require('../middleware/csrf');
 const router = express.Router();
 
 // Multer設定（画像アップロード）
@@ -21,20 +23,33 @@ if (!fs.existsSync(uploadsDir)) {
 const storage = multer.memoryStorage();
 
 const fileFilter = (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif|webp/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
+    // 許可する画像形式
+    const allowedMimeTypes = [
+        'image/jpeg',
+        'image/jpg',
+        'image/png',
+        'image/gif',
+        'image/webp'
+    ];
 
+    const allowedExtensions = /jpeg|jpg|png|gif|webp/;
+    const extname = allowedExtensions.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedMimeTypes.includes(file.mimetype);
+
+    // 拡張子とMIMEタイプの両方をチェック
     if (mimetype && extname) {
         return cb(null, true);
     } else {
-        cb(new Error('画像ファイルのみアップロード可能です'));
+        cb(new Error('画像ファイル（JPEG、PNG、GIF、WebP）のみアップロード可能です'));
     }
 };
 
 const upload = multer({
     storage: storage,
-    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB制限（圧縮前）
+    limits: {
+        fileSize: 5 * 1024 * 1024, // 5MBに制限（セキュリティ強化）
+        files: 1 // 1ファイルのみ
+    },
     fileFilter: fileFilter
 });
 
@@ -79,8 +94,18 @@ router.get('/', requireAuth, async (req, res) => {
 // 商品追加（画像アップロード対応）
 router.post('/', requireAuth, upload.single('image'), async (req, res) => {
     try {
+        // CSRF検証（multer処理後）
+        const csrfResult = verifyCsrfTokenManual(req, res);
+        if (!csrfResult.valid) {
+            return res.status(403).json({ success: false, error: csrfResult.error });
+        }
+
         const db = getLocationDatabase(req.session.locationCode);
         const { name, category, reorder_point, current_stock } = req.body;
+
+        // XSS対策: ユーザー入力をサニタイズ
+        const sanitizedName = sanitizeHtml(name);
+        const sanitizedCategory = sanitizeHtml(category);
 
         let imageUrl = null;
         if (req.file) {
@@ -93,7 +118,7 @@ router.post('/', requireAuth, upload.single('image'), async (req, res) => {
         const result = await db.run(
             `INSERT INTO products (name, category, reorder_point, current_stock, image_url)
              VALUES (?, ?, ?, ?, ?)`,
-            [name, category || '', reorder_point || 0, current_stock || 0, imageUrl]
+            [sanitizedName, sanitizedCategory || '', reorder_point || 0, current_stock || 0, imageUrl]
         );
 
         res.json({ success: true, productId: result.lastID });
@@ -106,9 +131,19 @@ router.post('/', requireAuth, upload.single('image'), async (req, res) => {
 // 商品更新（画像アップロード対応）
 router.put('/:id', requireAuth, upload.single('image'), async (req, res) => {
     try {
+        // CSRF検証（multer処理後）
+        const csrfResult = verifyCsrfTokenManual(req, res);
+        if (!csrfResult.valid) {
+            return res.status(403).json({ success: false, error: csrfResult.error });
+        }
+
         const db = getLocationDatabase(req.session.locationCode);
         const { name, category, reorder_point, current_stock } = req.body;
         const productId = req.params.id;
+
+        // XSS対策: ユーザー入力をサニタイズ
+        const sanitizedName = sanitizeHtml(name);
+        const sanitizedCategory = sanitizeHtml(category);
 
         let imageUrl = undefined;
         if (req.file) {
@@ -124,13 +159,13 @@ router.put('/:id', requireAuth, upload.single('image'), async (req, res) => {
                      SET name = ?, category = ?, reorder_point = ?, current_stock = ?, image_url = ?,
                          updated_at = CURRENT_TIMESTAMP
                      WHERE id = ?`;
-            params = [name, category, reorder_point, current_stock, imageUrl, productId];
+            params = [sanitizedName, sanitizedCategory, reorder_point, current_stock, imageUrl, productId];
         } else {
             query = `UPDATE products
                      SET name = ?, category = ?, reorder_point = ?, current_stock = ?,
                          updated_at = CURRENT_TIMESTAMP
                      WHERE id = ?`;
-            params = [name, category, reorder_point, current_stock, productId];
+            params = [sanitizedName, sanitizedCategory, reorder_point, current_stock, productId];
         }
 
         await db.run(query, params);

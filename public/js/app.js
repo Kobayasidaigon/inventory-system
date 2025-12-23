@@ -1,6 +1,7 @@
 // グローバル変数
 let currentUser = null;
 let products = [];
+let productDisplayOrder = []; // ページロード時の表示順序を保持
 let chartInstance = null;
 
 // 初期化
@@ -57,7 +58,7 @@ async function checkAuth() {
 // ログアウト
 document.getElementById('logout-btn').addEventListener('click', async () => {
     try {
-        await fetch('/api/auth/logout', { method: 'POST' });
+        await fetchWithCsrf('/api/auth/logout', { method: 'POST' });
         window.location.href = '/';
     } catch (error) {
         console.error('ログアウトエラー:', error);
@@ -86,7 +87,7 @@ function setupEventListeners() {
     document.getElementById('export-history').addEventListener('click', exportHistory);
     document.getElementById('refresh-history').addEventListener('click', loadHistory);
     document.getElementById('load-chart-btn').addEventListener('click', loadStockChart);
-    document.getElementById('show-qrcode-btn').addEventListener('click', showQRCode);
+    document.getElementById('show-feedback-btn').addEventListener('click', showFeedbackModal);
 
     // カテゴリフィルター変更イベント
     document.getElementById('chart-category-filter').addEventListener('change', onChartCategoryChange);
@@ -99,6 +100,7 @@ function setupEventListeners() {
     setupShowMoreOrdersLink();
     setupImagePopup();
     setupTableColumnResize();
+    setupUsageGuideToggle();
 
     // 棚卸関連のイベント
     document.getElementById('new-count-btn').addEventListener('click', showNewCountForm);
@@ -146,7 +148,7 @@ async function showPage(pageName) {
 
 // ダッシュボード表示
 async function showDashboard() {
-    await loadProducts();
+    await loadProducts(true); // ダッシュボード表示時は順序を更新
     await loadPendingOrders();
     loadDashboardCategoryFilter();
 
@@ -197,7 +199,7 @@ function updateDashboardDisplay() {
 
         // ステータス
         const statusClass = isLow ? 'status-low' : 'status-ok';
-        const statusText = isLow ? '⚠️ 発注依頼済み' : '✓ 正常';
+        const statusText = isLow ? '⚠️ 発注依頼済み' : '✓ 在庫十分';
 
         // カード作成
         const card = document.createElement('div');
@@ -402,7 +404,7 @@ async function showOrderDialog(productId) {
             };
 
             try {
-                const response = await fetch('/api/orders', {
+                const response = await fetchWithCsrf('/api/orders', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(data)
@@ -441,7 +443,7 @@ async function completeOrder(orderId, productId, productName) {
 
     try {
         // 入庫処理
-        const inResponse = await fetch('/api/inventory/in', {
+        const inResponse = await fetchWithCsrf('/api/inventory/in', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -462,7 +464,7 @@ async function completeOrder(orderId, productId, productName) {
         }
 
         // 発注ステータスを「入荷完了」に更新
-        const statusResponse = await fetch(`/api/orders/${orderId}`, {
+        const statusResponse = await fetchWithCsrf(`/api/orders/${orderId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: 'received' })
@@ -482,7 +484,7 @@ async function updateOrderStatus(orderId, status) {
     if (!confirm('ステータスを更新しますか？')) return;
 
     try {
-        const response = await fetch(`/api/orders/${orderId}`, {
+        const response = await fetchWithCsrf(`/api/orders/${orderId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status })
@@ -560,10 +562,34 @@ function updateProductsDisplay() {
 }
 
 // 商品データ取得
-async function loadProducts() {
+async function loadProducts(forceUpdateOrder = false) {
     try {
         const response = await fetch('/api/products');
-        products = await response.json();
+        const newProducts = await response.json();
+
+        // 初回ロードまたは強制更新時のみ順序を更新
+        // 在庫操作後の再読み込みでは順序を保持
+        const isInitialLoad = productDisplayOrder.length === 0;
+
+        if (isInitialLoad || forceUpdateOrder) {
+            // 初回ロードまたは強制更新: サーバーから返された順序をそのまま保存
+            productDisplayOrder = newProducts.map(p => p.id);
+        }
+
+        // 商品データを更新
+        products = newProducts;
+
+        // 保存された順序で並び替え
+        products.sort((a, b) => {
+            const indexA = productDisplayOrder.indexOf(a.id);
+            const indexB = productDisplayOrder.indexOf(b.id);
+
+            // 新しく追加された商品は最後に表示
+            if (indexA === -1) return 1;
+            if (indexB === -1) return -1;
+
+            return indexA - indexB;
+        });
 
         // 履歴フィルター更新
         const filter = document.getElementById('history-filter');
@@ -701,7 +727,7 @@ function showAddProductForm() {
         }
 
         try {
-            const response = await fetch('/api/products', {
+            const response = await fetchWithCsrf('/api/products', {
                 method: 'POST',
                 body: formData
             });
@@ -863,7 +889,7 @@ async function editProduct(productId) {
         }
 
         try {
-            const response = await fetch(`/api/products/${productId}`, {
+            const response = await fetchWithCsrf(`/api/products/${productId}`, {
                 method: 'PUT',
                 body: formData
             });
@@ -897,7 +923,7 @@ async function deleteProduct(productId, productName) {
     if (!confirmed) return;
 
     try {
-        const response = await fetch(`/api/products/${productId}`, {
+        const response = await fetchWithCsrf(`/api/products/${productId}`, {
             method: 'DELETE'
         });
 
@@ -1152,7 +1178,7 @@ async function editHistory(historyId) {
     const note = prompt('備考を入力してください:');
 
     try {
-        const response = await fetch(`/api/inventory/history/${historyId}`, {
+        const response = await fetchWithCsrf(`/api/inventory/history/${historyId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1552,7 +1578,7 @@ async function handleNewCountSubmit(e) {
     const countDate = document.getElementById('count-date').value;
 
     try {
-        const response = await fetch('/api/inventory-count/create', {
+        const response = await fetchWithCsrf('/api/inventory-count/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ count_date: countDate })
@@ -1727,7 +1753,7 @@ async function saveCountItem(itemId) {
         }
 
         // 実在庫を保存
-        const countResponse = await fetch(`/api/inventory-count/0/items/${itemId}/count`, {
+        const countResponse = await fetchWithCsrf(`/api/inventory-count/0/items/${itemId}/count`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ actual_quantity: actualQuantity })
@@ -1741,7 +1767,7 @@ async function saveCountItem(itemId) {
 
         // 差異理由を保存
         if (reason) {
-            await fetch(`/api/inventory-count/0/items/${itemId}/reason`, {
+            await fetchWithCsrf(`/api/inventory-count/0/items/${itemId}/reason`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ reason })
@@ -1779,7 +1805,7 @@ async function completeCount(countId) {
                 if (!isNaN(actualQuantity) && actualQuantity >= 0) {
                     try {
                         // 実在庫を保存
-                        const countResponse = await fetch(`/api/inventory-count/0/items/${itemId}/count`, {
+                        const countResponse = await fetchWithCsrf(`/api/inventory-count/0/items/${itemId}/count`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ actual_quantity: actualQuantity })
@@ -1788,7 +1814,7 @@ async function completeCount(countId) {
                         if (countResponse.ok) {
                             // 差異理由を保存
                             if (reason) {
-                                await fetch(`/api/inventory-count/0/items/${itemId}/reason`, {
+                                await fetchWithCsrf(`/api/inventory-count/0/items/${itemId}/reason`, {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({ reason })
@@ -1816,7 +1842,7 @@ async function completeCount(countId) {
         }
 
         // 棚卸完了処理
-        const response = await fetch(`/api/inventory-count/${countId}/complete`, {
+        const response = await fetchWithCsrf(`/api/inventory-count/${countId}/complete`, {
             method: 'POST'
         });
 
@@ -1841,7 +1867,7 @@ async function approveCount(countId) {
     }
 
     try {
-        const response = await fetch(`/api/inventory-count/${countId}/approve`, {
+        const response = await fetchWithCsrf(`/api/inventory-count/${countId}/approve`, {
             method: 'POST'
         });
 
@@ -1866,7 +1892,7 @@ async function deleteCount(countId) {
     }
 
     try {
-        const response = await fetch(`/api/inventory-count/${countId}`, {
+        const response = await fetchWithCsrf(`/api/inventory-count/${countId}`, {
             method: 'DELETE'
         });
 
@@ -2016,7 +2042,7 @@ async function quickStockChange(productId, change) {
         const type = change < 0 ? 'out' : 'in';
         const quantity = Math.abs(change);
 
-        const response = await fetch(`/api/inventory/${type}`, {
+        const response = await fetchWithCsrf(`/api/inventory/${type}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2122,4 +2148,115 @@ function downloadQRCode(dataUrl) {
     link.href = dataUrl;
     link.download = '出庫ページQRコード.png';
     link.click();
+}
+
+// ご意見ボックスモーダルを表示
+function showFeedbackModal() {
+    const feedbackModal = document.getElementById('feedback-modal');
+    feedbackModal.style.display = 'flex';
+
+    // フォームをリセット
+    document.getElementById('feedback-text').value = '';
+}
+
+// ご意見ボックスモーダルを閉じる
+function closeFeedbackModal() {
+    const feedbackModal = document.getElementById('feedback-modal');
+    feedbackModal.style.display = 'none';
+}
+
+// ご意見ボックスのイベントリスナー設定
+document.getElementById('feedback-modal-close').addEventListener('click', closeFeedbackModal);
+document.getElementById('feedback-cancel').addEventListener('click', closeFeedbackModal);
+
+// モーダル外をクリックしたら閉じる
+window.addEventListener('click', (e) => {
+    const feedbackModal = document.getElementById('feedback-modal');
+    if (e.target === feedbackModal) {
+        closeFeedbackModal();
+    }
+});
+
+// ご意見フォーム送信
+document.getElementById('feedback-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const feedbackText = document.getElementById('feedback-text').value.trim();
+
+    if (!feedbackText) {
+        alert('ご意見を入力してください');
+        return;
+    }
+
+    try {
+        const response = await fetchWithCsrf('/api/feedback', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ feedbackText })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            alert(data.message);
+            closeFeedbackModal();
+        } else {
+            alert(data.error || 'ご意見の送信に失敗しました');
+        }
+    } catch (error) {
+        console.error('Feedback submission error:', error);
+        alert('ご意見の送信に失敗しました');
+    }
+});
+
+// 使い方ガイドの折りたたみ機能
+function setupUsageGuideToggle() {
+    const toggleBtn = document.getElementById('toggle-usage-guide');
+    const content = document.getElementById('usage-guide-content');
+
+    // localStorageから状態を読み込み（デフォルトは開いた状態）
+    const savedState = localStorage.getItem('usageGuideCollapsed');
+    let isCollapsed = savedState === null ? false : savedState === 'true';
+
+    // 初期状態を設定
+    if (isCollapsed) {
+        content.style.display = 'none';
+        toggleBtn.textContent = '開く';
+        toggleBtn.style.setProperty('background', '#4caf50', 'important');
+        toggleBtn.style.setProperty('border', '2px solid #66bb6a', 'important');
+        toggleBtn.style.setProperty('color', 'white', 'important');
+        toggleBtn.style.setProperty('box-shadow', '0 2px 6px rgba(76, 175, 80, 0.4)', 'important');
+    } else {
+        content.style.display = 'grid';
+        toggleBtn.textContent = '閉じる';
+        toggleBtn.style.setProperty('background', 'rgba(255,255,255,0.2)', 'important');
+        toggleBtn.style.setProperty('border', '2px solid rgba(255,255,255,0.3)', 'important');
+        toggleBtn.style.setProperty('color', 'white', 'important');
+        toggleBtn.style.setProperty('box-shadow', 'none', 'important');
+    }
+
+    toggleBtn.addEventListener('click', () => {
+        isCollapsed = !isCollapsed;
+
+        // localStorageに状態を保存
+        localStorage.setItem('usageGuideCollapsed', isCollapsed.toString());
+
+        if (isCollapsed) {
+            content.style.display = 'none';
+            toggleBtn.textContent = '開く';
+            toggleBtn.style.setProperty('background', '#4caf50', 'important');
+            toggleBtn.style.setProperty('border', '2px solid #66bb6a', 'important');
+            toggleBtn.style.setProperty('color', 'white', 'important');
+            toggleBtn.style.setProperty('box-shadow', '0 2px 6px rgba(76, 175, 80, 0.4)', 'important');
+        } else {
+            content.style.display = 'grid';
+            toggleBtn.textContent = '閉じる';
+            toggleBtn.style.setProperty('background', 'rgba(255,255,255,0.2)', 'important');
+            toggleBtn.style.setProperty('border', '2px solid rgba(255,255,255,0.3)', 'important');
+            toggleBtn.style.setProperty('color', 'white', 'important');
+            toggleBtn.style.setProperty('box-shadow', 'none', 'important');
+        }
+    });
 }

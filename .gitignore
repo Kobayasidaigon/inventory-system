@@ -6,3 +6,5 @@ uploads/
 npm-debug.log
 server/db/backups/*.tar.gz
 data/
+*.log
+check-*.sh

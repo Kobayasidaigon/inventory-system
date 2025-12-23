@@ -221,6 +221,7 @@
         <div class="admin-tabs">
             <button class="admin-tab active" data-tab="inventory-view">在庫・発注確認</button>
             <button class="admin-tab" data-tab="management">ユーザー・拠点管理</button>
+            <button class="admin-tab" data-tab="feedback">ご意見ボックス</button>
             <button class="admin-tab" data-tab="backup">バックアップ</button>
         </div>
 
@@ -325,6 +326,51 @@
         </div>
         </div>
 
+        <!-- ご意見ボックスタブ -->
+        <div id="feedback" class="tab-content">
+            <div class="admin-section">
+                <h2>ご意見ボックス</h2>
+                <p style="margin-bottom: 20px; color: #666;">
+                    ユーザーから送信された匿名のご意見・ご要望を確認できます。
+                </p>
+                <div style="margin-bottom: 15px;">
+                    <label style="margin-right: 15px;">
+                        <input type="radio" name="feedback-filter" value="all" checked> すべて
+                    </label>
+                    <label style="margin-right: 15px;">
+                        <input type="radio" name="feedback-filter" value="new"> 未読のみ
+                    </label>
+                    <label>
+                        <input type="radio" name="feedback-filter" value="resolved"> 対応済みのみ
+                    </label>
+                </div>
+                <table id="feedbacks-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 150px;">日時</th>
+                            <th style="width: 120px;">拠点</th>
+                            <th>ご意見内容（抜粋）</th>
+                            <th style="width: 100px;">ステータス</th>
+                            <th style="width: 100px;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- JavaScript で動的に追加 -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ご意見詳細モーダル -->
+        <div id="feedback-detail-modal" class="modal">
+            <div class="modal-content" style="max-width: 600px;">
+                <span class="close" onclick="closeFeedbackDetailModal()">&times;</span>
+                <div id="feedback-detail-content">
+                    <!-- JavaScript で動的に追加 -->
+                </div>
+            </div>
+        </div>
+
         <!-- バックアップタブ -->
         <div id="backup" class="tab-content">
             <div class="admin-section">
@@ -366,6 +412,15 @@
         </div>
     </div>
 
+    <!-- モーダル -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <div id="modal-body"></div>
+        </div>
+    </div>
+
+    <script src="/js/csrf.js"></script>
     <script src="/js/admin.js"></script>
 </body>
 </html>

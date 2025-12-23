@@ -1,7 +1,11 @@
+// 環境変数を最初に読み込む
+require('dotenv').config();
+
 const express = require('express');
 const session = require('express-session');
+const cookieParser = require('cookie-parser');
 const path = require('path');
-const initDatabase = require('./db/init-db');
+const { startScheduledBackup } = require('./services/backup');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -9,13 +13,18 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 
 // Session設定
 app.use(session({
     secret: 'inventory-secret-key-2024',
     resave: false,
     saveUninitialized: false,
-    cookie: { maxAge: 24 * 60 * 60 * 1000 } // 24時間
+    cookie: {
+        maxAge: 30 * 24 * 60 * 60 * 1000, // 30日間
+        httpOnly: true,
+        secure: false // 本番環境ではtrueに設定
+    }
 }));
 
 // Routes
@@ -24,6 +33,7 @@ const publicRoutes = require('./routes/public');
 const productRoutes = require('./routes/products');
 const inventoryRoutes = require('./routes/inventory');
 const orderRoutes = require('./routes/orders');
+const qrcodeRoutes = require('./routes/qrcode');
 const { getLocationDatabase } = require('./db/database-admin');
 const { requireAuth } = require('./middleware/auth');
 const inventoryCountRoutes = require('./routes/inventory-count');
@@ -33,6 +43,7 @@ app.use('/api/public', publicRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/orders', orderRoutes);
+app.use('/api/qrcode', qrcodeRoutes);
 app.use('/api/inventory-count', requireAuth, (req, res, next) => {
     const db = getLocationDatabase(req.session.locationCode);
     inventoryCountRoutes(db)(req, res, next);
@@ -102,10 +113,11 @@ app.use((err, req, res, next) => {
 });
 
 // サーバー起動
-initDatabase().then(() => {
-    app.listen(PORT, () => {
-        console.log(`サーバーが起動しました: http://localhost:${PORT}`);
-    });
-}).catch(err => {
-    console.error('データベース初期化エラー:', err);
+app.listen(PORT, () => {
+    console.log(`サーバーが起動しました: http://localhost:${PORT}`);
+
+    // 定期バックアップを開始（24時間ごと）
+    // 環境変数で間隔を設定可能（時間単位）
+    const backupInterval = parseInt(process.env.BACKUP_INTERVAL_HOURS) || 24;
+    startScheduledBackup(backupInterval);
 });

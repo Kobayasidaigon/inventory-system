@@ -4,3 +4,5 @@ uploads/
 .env
 .DS_Store
 npm-debug.log
+server/db/backups/*.tar.gz
+data/

@@ -89,18 +89,11 @@ function setupEventListeners() {
     document.getElementById('show-qrcode-btn').addEventListener('click', showQRCode);
 
     // カテゴリフィルター変更イベント
-    document.getElementById('out-category-filter').addEventListener('change', loadOutStockProducts);
-    document.getElementById('in-category-filter').addEventListener('change', loadInStockProducts);
     document.getElementById('chart-category-filter').addEventListener('change', onChartCategoryChange);
     document.getElementById('history-category-filter').addEventListener('change', onHistoryCategoryChange);
 
-    // 商品選択時の画像表示
-    document.getElementById('out-product').addEventListener('change', showOutStockProductImage);
-    document.getElementById('in-product').addEventListener('change', showInStockProductImage);
-
-    // フォーム送信
-    document.getElementById('out-stock-form').addEventListener('submit', submitOutStock);
-    document.getElementById('in-stock-form').addEventListener('submit', submitInStock);
+    // 履歴グループ化トグル
+    document.getElementById('group-history-toggle').addEventListener('change', loadHistory);
 
     // 追加のイベントリスナー
     setupShowMoreOrdersLink();
@@ -134,17 +127,6 @@ async function showPage(pageName) {
         case 'products':
             await showProducts();
             break;
-        case 'weekly-input':
-            await loadProducts();
-            setDefaultOutDate();
-            loadOutStockCategoryFilter();
-            loadOutStockProducts();
-            break;
-        case 'in-stock':
-            await loadProducts();
-            loadInStockCategoryFilter();
-            loadInStockProducts();
-            break;
         case 'history':
             await loadProducts();
             loadHistoryCategoryFilter();
@@ -168,12 +150,6 @@ async function showDashboard() {
     await loadPendingOrders();
     loadDashboardCategoryFilter();
 
-    // 勘定科目フィルターのイベントリスナーを設定
-    const accountFilter = document.getElementById('dashboard-account-filter');
-    const newAccountFilter = accountFilter.cloneNode(true);
-    accountFilter.parentNode.replaceChild(newAccountFilter, accountFilter);
-    newAccountFilter.addEventListener('change', updateDashboardDisplay);
-
     // カテゴリフィルターのイベントリスナーを設定（重複を避けるため一度削除）
     const categoryFilter = document.getElementById('dashboard-category-filter');
     const newFilter = categoryFilter.cloneNode(true);
@@ -196,61 +172,71 @@ function loadDashboardCategoryFilter() {
     categoryFilter.value = currentValue;
 }
 
-// ダッシュボード表示更新
+// ダッシュボード表示更新（カード型）
 function updateDashboardDisplay() {
-    const selectedAccount = document.getElementById('dashboard-account-filter').value;
     const selectedCategory = document.getElementById('dashboard-category-filter').value;
 
     let filteredProducts = products;
-
-    // 勘定科目でフィルター
-    if (selectedAccount) {
-        filteredProducts = filteredProducts.filter(p => (p.account_item || '商品') === selectedAccount);
-    }
 
     // カテゴリでフィルター
     if (selectedCategory) {
         filteredProducts = filteredProducts.filter(p => p.category === selectedCategory);
     }
 
-    const tbody = document.querySelector('#stock-table tbody');
-    const alerts = document.getElementById('stock-alerts');
+    const container = document.getElementById('stock-cards-container');
     const stockCount = document.getElementById('stock-count');
-    tbody.innerHTML = '';
-    alerts.innerHTML = '';
-
-    let lowStockItems = [];
+    container.innerHTML = '';
 
     filteredProducts.forEach(product => {
-        const row = tbody.insertRow();
         const isLow = product.current_stock <= product.reorder_point;
 
-        if (isLow) {
-            lowStockItems.push(product.name);
-        }
+        // 画像HTML
+        const imageHtml = product.image_url
+            ? `<img src="${product.image_url}" class="stock-card-image" onclick="openImagePopup('${product.image_url}')" alt="${product.name}">`
+            : `<div class="stock-card-image-placeholder">画像なし</div>`;
 
-        row.innerHTML = `
-            <td>${product.name}</td>
-            <td>${product.category || '-'}</td>
-            <td>¥${(product.unit_price || 0).toLocaleString()}</td>
-            <td>${product.current_stock}</td>
-            <td>${product.reorder_point}</td>
-            <td class="${isLow ? 'stock-low' : 'stock-ok'}">
-                ${isLow ? '要発注' : '正常'}
-            </td>
-            <td>
-                ${isLow ? `<button class="btn btn-secondary" onclick="showOrderDialog(${product.id})">発注依頼</button>` : '-'}
-            </td>
+        // ステータス
+        const statusClass = isLow ? 'status-low' : 'status-ok';
+        const statusText = isLow ? '⚠️ 発注依頼済み' : '✓ 正常';
+
+        // カード作成
+        const card = document.createElement('div');
+        card.className = `stock-card ${isLow ? 'low-stock' : ''}`;
+        card.innerHTML = `
+            <div class="stock-card-header">
+                ${imageHtml}
+                <div class="stock-card-name">${product.name}</div>
+                ${product.category ? `<span class="stock-card-category">${product.category}</span>` : ''}
+            </div>
+
+            <div class="stock-card-stats">
+                <div class="stock-stat">
+                    <div class="stock-stat-label">現在庫</div>
+                    <div class="stock-stat-value ${isLow ? 'low' : 'ok'}">${product.current_stock}</div>
+                </div>
+                <div class="stock-stat">
+                    <div class="stock-stat-label">発注点</div>
+                    <div class="stock-stat-value">${product.reorder_point}</div>
+                </div>
+            </div>
+
+            <div class="stock-card-status ${statusClass}">
+                ${statusText}
+            </div>
+
+            <div class="stock-card-actions">
+                <button class="btn-quick btn-quick-out" onclick="quickStockChange(${product.id}, -5)" title="5個出庫">-5</button>
+                <button class="btn-quick btn-quick-out" onclick="quickStockChange(${product.id}, -1)" title="1個出庫">-1</button>
+                <button class="btn-quick btn-quick-in" onclick="quickStockChange(${product.id}, 1)" title="1個入庫">+1</button>
+                <button class="btn-quick btn-quick-in" onclick="quickStockChange(${product.id}, 5)" title="5個入庫">+5</button>
+            </div>
         `;
+
+        container.appendChild(card);
     });
 
     // 件数バッジを更新
     stockCount.textContent = `${filteredProducts.length}件`;
-
-    if (lowStockItems.length > 0) {
-        alerts.className = 'alert-box warning';
-        alerts.innerHTML = `<strong>発注が必要な商品:</strong> ${lowStockItems.join(', ')}`;
-    }
 }
 
 // 発注依頼済み商品一覧表示
@@ -262,8 +248,8 @@ async function loadPendingOrders() {
         const response = await fetch('/api/orders');
         const orders = await response.json();
 
-        // pending、ordered、receivedのステータスを表示（cancelledは除外）
-        allActiveOrders = orders.filter(o => o.status !== 'cancelled');
+        // pending、orderedのステータスのみ表示（received、cancelledは除外）
+        allActiveOrders = orders.filter(o => o.status === 'pending' || o.status === 'ordered');
         const pendingSection = document.getElementById('pending-orders-section');
         const pendingCount = document.getElementById('pending-count');
 
@@ -328,11 +314,8 @@ function renderPendingOrders(showAll) {
 
         row.innerHTML = `
             <td>${order.product_name}</td>
-            <td>${order.username}</td>
             <td>${formattedDate}</td>
-            <td style="color: ${statusColor}; font-weight: bold;">${statusText}</td>
-            <td>${order.note || '-'}</td>
-            <td>${actionButtons}</td>
+            <td style="white-space: nowrap;">${actionButtons}</td>
         `;
     });
 
@@ -468,6 +451,12 @@ async function completeOrder(orderId, productId, productName) {
             })
         });
 
+        if (inResponse.status === 401) {
+            alert('セッションが切れました。再度ログインしてください。');
+            window.location.href = '/';
+            return;
+        }
+
         if (!inResponse.ok) {
             throw new Error('入庫処理に失敗しました');
         }
@@ -559,6 +548,7 @@ function updateProductsDisplay() {
             <td>${imageHtml}</td>
             <td>${product.name}</td>
             <td>${product.category || '-'}</td>
+            <td>¥${(product.unit_price || 0).toLocaleString()}</td>
             <td>${product.reorder_point}</td>
             <td>${product.current_stock}</td>
             <td>
@@ -601,13 +591,6 @@ function showAddProductForm() {
             <div class="form-group">
                 <label>商品名</label>
                 <input type="text" id="product-name" required>
-            </div>
-            <div class="form-group">
-                <label>勘定科目</label>
-                <select id="product-account-item" required>
-                    <option value="商品">商品</option>
-                    <option value="貯蔵品">貯蔵品</option>
-                </select>
             </div>
             <div class="form-group">
                 <label>カテゴリ</label>
@@ -706,7 +689,6 @@ function showAddProductForm() {
 
         const formData = new FormData();
         formData.append('name', document.getElementById('product-name').value);
-        formData.append('account_item', document.getElementById('product-account-item').value);
         formData.append('category', category);
         formData.append('unit_price', parseFloat(document.getElementById('product-unit-price').value) || 0);
         formData.append('reorder_point', parseInt(document.getElementById('product-reorder').value));
@@ -769,13 +751,6 @@ async function editProduct(productId) {
             <div class="form-group">
                 <label>商品名</label>
                 <input type="text" id="edit-name" value="${product.name}" required>
-            </div>
-            <div class="form-group">
-                <label>勘定科目</label>
-                <select id="edit-account-item" required>
-                    <option value="商品" ${(product.account_item || '商品') === '商品' ? 'selected' : ''}>商品</option>
-                    <option value="貯蔵品" ${product.account_item === '貯蔵品' ? 'selected' : ''}>貯蔵品</option>
-                </select>
             </div>
             <div class="form-group">
                 <label>カテゴリ</label>
@@ -876,7 +851,6 @@ async function editProduct(productId) {
 
         const formData = new FormData();
         formData.append('name', document.getElementById('edit-name').value);
-        formData.append('account_item', document.getElementById('edit-account-item').value);
         formData.append('category', category);
         formData.append('unit_price', parseFloat(document.getElementById('edit-unit-price').value) || 0);
         formData.append('reorder_point', parseInt(document.getElementById('edit-reorder').value));
@@ -950,399 +924,6 @@ function formatDate(date) {
     return `${year}-${month}-${day}`;
 }
 
-// 1週間前の期間を自動設定
-function setDefaultWeekRange() {
-    const today = new Date();
-    const oneWeekAgo = new Date(today);
-    oneWeekAgo.setDate(today.getDate() - 7);
-
-    document.getElementById('week-start').value = formatDate(oneWeekAgo);
-    document.getElementById('week-end').value = formatDate(today);
-}
-
-// 開始日変更時のイベント（終了日を7日後に自動設定）
-function onWeekStartChange(e) {
-    const startDate = new Date(e.target.value);
-    if (!isNaN(startDate.getTime())) {
-        const endDate = new Date(startDate);
-        endDate.setDate(startDate.getDate() + 6); // 7日間（開始日含む）
-        document.getElementById('week-end').value = formatDate(endDate);
-    }
-}
-
-// 終了日変更時のイベント（開始日を7日前に自動設定）
-function onWeekEndChange(e) {
-    const endDate = new Date(e.target.value);
-    if (!isNaN(endDate.getTime())) {
-        const startDate = new Date(endDate);
-        startDate.setDate(endDate.getDate() - 6); // 7日間（終了日含む）
-        document.getElementById('week-start').value = formatDate(startDate);
-    }
-}
-
-// 週次入力用カテゴリフィルター読み込み
-function loadWeeklyCategoryFilter() {
-    const categoryFilter = document.getElementById('weekly-category-filter');
-    const categories = [...new Set(products.map(p => p.category).filter(c => c))];
-
-    categoryFilter.innerHTML = '<option value="">すべてのカテゴリ</option>';
-    categories.forEach(category => {
-        categoryFilter.innerHTML += `<option value="${category}">${category}</option>`;
-    });
-}
-
-// 週次商品一覧読み込み（日付別対応、カテゴリフィルター対応）
-function loadWeeklyProducts() {
-    const weekStart = document.getElementById('week-start').value;
-    const weekEnd = document.getElementById('week-end').value;
-
-    if (!weekStart || !weekEnd) {
-        alert('期間を指定してください');
-        return;
-    }
-
-    const startDate = new Date(weekStart);
-    const endDate = new Date(weekEnd);
-
-    if (startDate > endDate) {
-        alert('期間の指定が正しくありません');
-        return;
-    }
-
-    // カテゴリフィルターで商品を絞り込み
-    const selectedCategory = document.getElementById('weekly-category-filter').value;
-    const filteredProducts = selectedCategory
-        ? products.filter(p => p.category === selectedCategory)
-        : products;
-
-    if (filteredProducts.length === 0) {
-        alert('該当する商品がありません');
-        return;
-    }
-
-    // 日付タブを生成
-    const dateTabs = document.getElementById('date-tabs');
-    const tablesContainer = document.getElementById('daily-tables-container');
-    dateTabs.innerHTML = '';
-    tablesContainer.innerHTML = '';
-
-    const dates = [];
-    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-        dates.push(new Date(d));
-    }
-
-    dates.forEach((date, index) => {
-        const dateStr = date.toISOString().split('T')[0];
-        const dayOfWeek = ['日', '月', '火', '水', '木', '金', '土'][date.getDay()];
-        const displayDate = `${date.getMonth() + 1}/${date.getDate()}(${dayOfWeek})`;
-
-        // タブを作成
-        const tab = document.createElement('div');
-        tab.className = 'date-tab' + (index === 0 ? ' active' : '');
-        tab.textContent = displayDate;
-        tab.dataset.date = dateStr;
-        tab.onclick = () => switchDateTab(dateStr);
-        dateTabs.appendChild(tab);
-
-        // 日付ごとのテーブルコンテナを作成
-        const dailyContent = document.createElement('div');
-        dailyContent.className = 'daily-content' + (index === 0 ? ' active' : '');
-        dailyContent.id = `content-${dateStr}`;
-        dailyContent.innerHTML = `
-            <h3>${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 (${dayOfWeek})</h3>
-            <table class="daily-table">
-                <thead>
-                    <tr>
-                        <th>画像</th>
-                        <th>商品名</th>
-                        <th>カテゴリ</th>
-                        <th>現在庫</th>
-                        <th>出庫数</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${filteredProducts.map(product => `
-                        <tr>
-                            <td>
-                                ${product.image_url
-                                    ? `<img src="${product.image_url}"
-                                           alt="${product.name}"
-                                           class="product-thumbnail weekly-thumbnail"
-                                           style="width: 50px; height: 50px; object-fit: cover; border-radius: 5px; cursor: pointer;"
-                                           onclick="openImagePopup('${product.image_url}')">`
-                                    : '<span style="color: #999;">画像なし</span>'}
-                            </td>
-                            <td>${product.name}</td>
-                            <td>${product.category || '-'}</td>
-                            <td>${product.current_stock}</td>
-                            <td>
-                                <input type="number"
-                                       name="quantity_${dateStr}_${product.id}"
-                                       min="0"
-                                       value="0"
-                                       data-date="${dateStr}"
-                                       data-product-id="${product.id}">
-                            </td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        `;
-        tablesContainer.appendChild(dailyContent);
-    });
-
-    document.getElementById('daily-input-container').style.display = 'block';
-}
-
-// 日付タブ切り替え
-function switchDateTab(dateStr) {
-    // タブのアクティブ状態を切り替え
-    document.querySelectorAll('.date-tab').forEach(tab => {
-        tab.classList.toggle('active', tab.dataset.date === dateStr);
-    });
-
-    // コンテンツの表示を切り替え
-    document.querySelectorAll('.daily-content').forEach(content => {
-        content.classList.toggle('active', content.id === `content-${dateStr}`);
-    });
-}
-
-// 週次入力送信（日付別対応）
-async function submitWeeklyInput(e) {
-    e.preventDefault();
-
-    const weekStart = document.getElementById('week-start').value;
-    const weekEnd = document.getElementById('week-end').value;
-
-    if (!weekStart || !weekEnd) {
-        alert('期間を入力してください');
-        return;
-    }
-
-    // 日付ごとのデータを収集
-    const dailyItems = {};
-    document.querySelectorAll('.daily-table input[type="number"]').forEach(input => {
-        const quantity = parseInt(input.value);
-        if (quantity > 0) {
-            const date = input.dataset.date;
-            const productId = parseInt(input.dataset.productId);
-
-            if (!dailyItems[date]) {
-                dailyItems[date] = [];
-            }
-
-            dailyItems[date].push({
-                productId: productId,
-                quantity: quantity
-            });
-        }
-    });
-
-    if (Object.keys(dailyItems).length === 0) {
-        alert('出庫数を入力してください');
-        return;
-    }
-
-    try {
-        const response = await fetch('/api/inventory/weekly', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                weekStart: weekStart,
-                weekEnd: weekEnd,
-                dailyItems: dailyItems
-            })
-        });
-
-        if (response.ok) {
-            alert('週次入力を登録しました');
-            await loadProducts();
-        }
-    } catch (error) {
-        alert('登録に失敗しました');
-    }
-}
-
-// 入庫用カテゴリフィルター読み込み
-function loadInStockCategoryFilter() {
-    const categoryFilter = document.getElementById('in-category-filter');
-    const categories = [...new Set(products.map(p => p.category).filter(c => c))];
-
-    categoryFilter.innerHTML = '<option value="">すべてのカテゴリ</option>';
-    categories.forEach(category => {
-        categoryFilter.innerHTML += `<option value="${category}">${category}</option>`;
-    });
-}
-
-// 入庫商品選択肢読み込み（カテゴリフィルター対応）
-function loadInStockProducts() {
-    const select = document.getElementById('in-product');
-    const selectedCategory = document.getElementById('in-category-filter').value;
-
-    // カテゴリフィルターで商品を絞り込み
-    const filteredProducts = selectedCategory
-        ? products.filter(p => p.category === selectedCategory)
-        : products;
-
-    select.innerHTML = '<option value="">商品を選択してください</option>';
-
-    if (filteredProducts.length === 0) {
-        select.innerHTML += '<option value="">該当する商品がありません</option>';
-        return;
-    }
-
-    filteredProducts.forEach(product => {
-        select.innerHTML += `<option value="${product.id}">${product.name}${product.category ? ` (${product.category})` : ''}</option>`;
-    });
-
-    // 画像コンテナを非表示にする
-    document.getElementById('in-product-image-container').style.display = 'none';
-}
-
-// 入庫商品選択時に画像を表示
-function showInStockProductImage() {
-    const productId = document.getElementById('in-product').value;
-    const imageContainer = document.getElementById('in-product-image-container');
-    const imageElement = document.getElementById('in-product-image');
-
-    if (!productId) {
-        imageContainer.style.display = 'none';
-        return;
-    }
-
-    const product = products.find(p => p.id === parseInt(productId));
-
-    if (product && product.image_url) {
-        imageElement.src = product.image_url;
-        imageElement.alt = product.name;
-        imageContainer.style.display = 'block';
-    } else {
-        imageContainer.style.display = 'none';
-    }
-}
-
-// 入庫処理送信
-async function submitInStock(e) {
-    e.preventDefault();
-
-    const data = {
-        productId: parseInt(document.getElementById('in-product').value),
-        quantity: parseInt(document.getElementById('in-quantity').value),
-        note: document.getElementById('in-note').value
-    };
-
-    try {
-        const response = await fetch('/api/inventory/in', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        });
-
-        if (response.ok) {
-            alert('入庫を登録しました');
-            document.getElementById('in-stock-form').reset();
-            await loadProducts();
-        }
-    } catch (error) {
-        alert('登録に失敗しました');
-    }
-}
-
-// 出庫日のデフォルト設定（今日の日付）
-function setDefaultOutDate() {
-    const today = new Date();
-    const dateStr = today.toISOString().split('T')[0];
-    document.getElementById('out-date').value = dateStr;
-}
-
-// 出庫用カテゴリフィルター読み込み
-function loadOutStockCategoryFilter() {
-    const categoryFilter = document.getElementById('out-category-filter');
-    const categories = [...new Set(products.map(p => p.category).filter(c => c))];
-
-    categoryFilter.innerHTML = '<option value="">すべてのカテゴリ</option>';
-    categories.forEach(category => {
-        categoryFilter.innerHTML += `<option value="${category}">${category}</option>`;
-    });
-}
-
-// 出庫商品選択肢読み込み（カテゴリフィルター対応）
-function loadOutStockProducts() {
-    const select = document.getElementById('out-product');
-    const selectedCategory = document.getElementById('out-category-filter').value;
-
-    // カテゴリフィルターで商品を絞り込み
-    const filteredProducts = selectedCategory
-        ? products.filter(p => p.category === selectedCategory)
-        : products;
-
-    select.innerHTML = '<option value="">商品を選択してください</option>';
-
-    if (filteredProducts.length === 0) {
-        select.innerHTML += '<option value="">該当する商品がありません</option>';
-        return;
-    }
-
-    filteredProducts.forEach(product => {
-        select.innerHTML += `<option value="${product.id}">${product.name}${product.category ? ` (${product.category})` : ''}</option>`;
-    });
-
-    // 画像コンテナを非表示にする
-    document.getElementById('out-product-image-container').style.display = 'none';
-}
-
-// 出庫商品選択時に画像を表示
-function showOutStockProductImage() {
-    const productId = document.getElementById('out-product').value;
-    const imageContainer = document.getElementById('out-product-image-container');
-    const imageElement = document.getElementById('out-product-image');
-
-    if (!productId) {
-        imageContainer.style.display = 'none';
-        return;
-    }
-
-    const product = products.find(p => p.id === parseInt(productId));
-
-    if (product && product.image_url) {
-        imageElement.src = product.image_url;
-        imageElement.alt = product.name;
-        imageContainer.style.display = 'block';
-    } else {
-        imageContainer.style.display = 'none';
-    }
-}
-
-// 出庫処理送信
-async function submitOutStock(e) {
-    e.preventDefault();
-
-    const outDate = document.getElementById('out-date').value;
-    const data = {
-        productId: parseInt(document.getElementById('out-product').value),
-        quantity: parseInt(document.getElementById('out-quantity').value),
-        date: outDate,
-        note: document.getElementById('out-note').value
-    };
-
-    try {
-        const response = await fetch('/api/inventory/out', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        });
-
-        if (response.ok) {
-            alert('出庫を登録しました');
-            document.getElementById('out-stock-form').reset();
-            setDefaultOutDate(); // 日付を再設定
-            await loadProducts();
-        }
-    } catch (error) {
-        alert('登録に失敗しました');
-    }
-}
-
 // 履歴用カテゴリフィルター読み込み
 function loadHistoryCategoryFilter() {
     const categories = [...new Set(products.map(p => p.category).filter(c => c))];
@@ -1381,6 +962,7 @@ async function loadHistory() {
     const productId = document.getElementById('history-filter').value;
     const startDate = document.getElementById('history-start-date').value;
     const endDate = document.getElementById('history-end-date').value;
+    const groupEnabled = document.getElementById('group-history-toggle').checked;
 
     let url = '/api/inventory/history?';
     const params = [];
@@ -1406,30 +988,159 @@ async function loadHistory() {
         const tbody = document.querySelector('#history-table tbody');
         tbody.innerHTML = '';
 
-        history.forEach(item => {
-            const row = tbody.insertRow();
-            const typeText = item.type === 'in' ? '入庫' : item.type === 'out' ? '出庫' : '調整';
-
-            // 取引日付と作成日時を分けて表示
-            const transactionDate = item.transaction_date ?
-                new Date(item.transaction_date).toLocaleDateString('ja-JP') : '-';
-            const createdTime = new Date(item.created_at).toLocaleTimeString('ja-JP');
-
-            row.innerHTML = `
-                <td>${transactionDate} ${createdTime}</td>
-                <td>${item.product_name}</td>
-                <td>${item.category || '-'}</td>
-                <td>${typeText}</td>
-                <td>${item.quantity}</td>
-                <td>${item.note || '-'}</td>
-                <td>${item.username}</td>
-                <td>
-                    <button class="btn btn-secondary" onclick="editHistory(${item.id})">修正</button>
-                </td>
-            `;
-        });
+        if (groupEnabled) {
+            // グループ化表示
+            renderGroupedHistory(history, tbody);
+        } else {
+            // 通常表示
+            renderNormalHistory(history, tbody);
+        }
     } catch (error) {
         console.error('履歴取得エラー:', error);
+    }
+}
+
+// 通常の履歴表示
+function renderNormalHistory(history, tbody) {
+    history.forEach(item => {
+        const row = tbody.insertRow();
+        const typeText = item.type === 'in' ? '入庫' : item.type === 'out' ? '出庫' : '調整';
+
+        // UTCから日本時間に変換（+9時間）
+        const createdAtUTC = new Date(item.created_at + 'Z'); // Zを追加してUTCとして解釈
+        const transactionDate = item.transaction_date ?
+            new Date(item.transaction_date).toLocaleDateString('ja-JP') : '-';
+        const createdTime = createdAtUTC.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo' });
+
+        row.innerHTML = `
+            <td>${transactionDate} ${createdTime}</td>
+            <td>${item.product_name}</td>
+            <td>${item.category || '-'}</td>
+            <td>${typeText}</td>
+            <td>${item.quantity}</td>
+            <td>${item.username}</td>
+            <td>
+                <button class="btn btn-secondary" onclick="editHistory(${item.id})">修正</button>
+            </td>
+        `;
+    });
+}
+
+// グループ化された履歴表示
+function renderGroupedHistory(history, tbody) {
+    // グループ化: 商品ID + 日付 + ユーザー名 + 種別 をキーにする
+    const groups = {};
+
+    history.forEach(item => {
+        // UTCから日本時間に変換
+        const createdAtUTC = new Date(item.created_at + 'Z');
+        const date = item.transaction_date ?
+            new Date(item.transaction_date).toLocaleDateString('ja-JP') :
+            createdAtUTC.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo' });
+
+        const key = `${item.product_id}_${date}_${item.username}_${item.type}`;
+
+        if (!groups[key]) {
+            groups[key] = {
+                items: [],
+                product_name: item.product_name,
+                category: item.category,
+                date: date,
+                type: item.type,
+                username: item.username,
+                total_quantity: 0
+            };
+        }
+
+        groups[key].items.push(item);
+        groups[key].total_quantity += parseInt(item.quantity);
+    });
+
+    // グループをソート（日付の新しい順）
+    const sortedGroups = Object.values(groups).sort((a, b) => {
+        const dateA = new Date(a.items[0].created_at);
+        const dateB = new Date(b.items[0].created_at);
+        return dateB - dateA;
+    });
+
+    sortedGroups.forEach((group, index) => {
+        const row = tbody.insertRow();
+        const typeText = group.type === 'in' ? '入庫' : group.type === 'out' ? '出庫' : '調整';
+        const isMultiple = group.items.length > 1;
+        const groupId = `group-${index}`;
+
+        row.className = 'history-group-row';
+        row.innerHTML = `
+            <td>${group.date}</td>
+            <td>${group.product_name}</td>
+            <td>${group.category || '-'}</td>
+            <td>${typeText}</td>
+            <td style="font-weight: ${isMultiple ? 'bold' : 'normal'};">
+                ${group.total_quantity}
+                ${isMultiple ? `<span style="color: #667eea; font-size: 12px;"> (${group.items.length}件)</span>` : ''}
+            </td>
+            <td>${group.username}</td>
+            <td>
+                ${isMultiple ? `<button class="btn btn-secondary" onclick="toggleGroupDetails('${groupId}')">詳細</button>` : `<button class="btn btn-secondary" onclick="editHistory(${group.items[0].id})">修正</button>`}
+            </td>
+        `;
+
+        // 複数件の場合、詳細行を追加（初期状態は非表示）
+        if (isMultiple) {
+            const detailRow = tbody.insertRow();
+            detailRow.id = groupId;
+            detailRow.className = 'history-detail-row';
+            detailRow.style.display = 'none';
+
+            let detailHtml = `
+                <td colspan="7">
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 5px;">
+                        <strong>詳細 (${group.items.length}件の記録)</strong>
+                        <table style="width: 100%; margin-top: 10px; font-size: 13px;">
+                            <thead>
+                                <tr style="background: #e9ecef;">
+                                    <th style="padding: 5px;">時刻</th>
+                                    <th style="padding: 5px;">数量</th>
+                                    <th style="padding: 5px;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+            `;
+
+            group.items.forEach(item => {
+                // UTCから日本時間に変換
+                const createdAtUTC = new Date(item.created_at + 'Z');
+                const time = createdAtUTC.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo' });
+                detailHtml += `
+                    <tr>
+                        <td style="padding: 5px;">${time}</td>
+                        <td style="padding: 5px;">${item.quantity}</td>
+                        <td style="padding: 5px;">
+                            <button class="btn-small btn-secondary" onclick="editHistory(${item.id})">修正</button>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            detailHtml += `
+                            </tbody>
+                        </table>
+                    </div>
+                </td>
+            `;
+
+            detailRow.innerHTML = detailHtml;
+        }
+    });
+}
+
+// グループの詳細を展開/折りたたみ
+function toggleGroupDetails(groupId) {
+    const detailRow = document.getElementById(groupId);
+    if (detailRow.style.display === 'none') {
+        detailRow.style.display = '';
+    } else {
+        detailRow.style.display = 'none';
     }
 }
 
@@ -1500,15 +1211,6 @@ function setupImagePopup() {
 
     // 背景クリックで閉じる（画像クリックでも閉じる）
     popup.addEventListener('click', closeImagePopup);
-}
-
-// 全入力クリア
-function clearAllInputs() {
-    if (confirm('すべての入力をクリアしますか？')) {
-        document.querySelectorAll('.daily-table input[type="number"]').forEach(input => {
-            input.value = '0';
-        });
-    }
 }
 
 // グラフ用カテゴリフィルター読み込み
@@ -2295,6 +1997,85 @@ async function exportCountCSV() {
         console.error('CSV出力エラー:', error);
         alert('CSV出力に失敗しました');
     }
+}
+
+// ========== ワンタップ登録機能 ==========
+
+// ワンタップで在庫変更
+async function quickStockChange(productId, change) {
+    const product = products.find(p => p.id === productId);
+    if (!product) return;
+
+    // 出庫の場合は在庫不足チェック
+    if (change < 0 && product.current_stock + change < 0) {
+        alert('在庫が不足しています');
+        return;
+    }
+
+    try {
+        const type = change < 0 ? 'out' : 'in';
+        const quantity = Math.abs(change);
+
+        const response = await fetch(`/api/inventory/${type}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                productId: productId,
+                quantity: quantity,
+                date: new Date().toISOString().split('T')[0],
+                note: 'クイック操作'
+            })
+        });
+
+        if (response.status === 401) {
+            alert('セッションが切れました。再度ログインしてください。');
+            window.location.href = '/';
+            return;
+        }
+
+        if (response.ok) {
+            // 成功時のフィードバック（短い通知）
+            showQuickFeedback(product.name, change);
+
+            // 商品データを再読み込み
+            await loadProducts();
+            updateDashboardDisplay();
+
+            // 発注依頼済み商品リストも更新
+            await loadPendingOrders();
+        } else {
+            alert('登録に失敗しました');
+        }
+    } catch (error) {
+        console.error('クイック操作エラー:', error);
+        alert('登録に失敗しました');
+    }
+}
+
+// クイック操作のフィードバック表示
+function showQuickFeedback(productName, change) {
+    const feedback = document.createElement('div');
+    feedback.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: ${change < 0 ? '#f44336' : '#4caf50'};
+        color: white;
+        padding: 15px 20px;
+        border-radius: 5px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        z-index: 10000;
+        font-weight: bold;
+        animation: slideIn 0.3s ease-out;
+    `;
+    feedback.textContent = `${productName}: ${change > 0 ? '+' : ''}${change}`;
+
+    document.body.appendChild(feedback);
+
+    setTimeout(() => {
+        feedback.style.animation = 'slideOut 0.3s ease-out';
+        setTimeout(() => feedback.remove(), 300);
+    }, 1500);
 }
 
 // 出庫ページQRコード表示

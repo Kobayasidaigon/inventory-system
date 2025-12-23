@@ -1,6 +1,7 @@
 const express = require('express');
 const { getLocationDatabase, mainDb } = require('../db/database-admin');
 const { requireAuth } = require('../middleware/auth');
+const { sendOrderNotification } = require('../services/line-notify');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 const path = require('path');
 const fs = require('fs');
@@ -25,8 +26,61 @@ router.post('/in', requireAuth, async (req, res) => {
             [quantity, productId]
         );
 
+        // 更新後の商品情報を取得
+        const product = await db.get('SELECT * FROM products WHERE id = ?', [productId]);
+
+        // 在庫が発注点を下回っている場合、自動的に発注依頼を作成
+        if (product && product.current_stock <= product.reorder_point) {
+            // すでに未処理の発注依頼があるか確認
+            const existingOrder = await db.get(
+                `SELECT id FROM order_requests
+                 WHERE product_id = ? AND (status = 'pending' OR status = 'ordered')`,
+                [productId]
+            );
+
+            // 未処理の発注依頼がなければ新規作成
+            if (!existingOrder) {
+                const orderQuantity = Math.max(
+                    product.reorder_point * 2 - product.current_stock,
+                    product.reorder_point
+                );
+
+                await db.run(
+                    `INSERT INTO order_requests (product_id, requested_quantity, user_id, note, status)
+                     VALUES (?, ?, ?, ?, 'pending')`,
+                    [productId, orderQuantity, req.session.userId, '在庫が発注点を下回ったため自動発注']
+                );
+
+                console.log(`商品ID ${productId} (${product.name}) の在庫が発注点を下回りました。自動発注依頼を作成しました。`);
+
+                // LINE通知を送信
+                try {
+                    const location = await mainDb.get(
+                        'SELECT location_name, location_code FROM locations WHERE location_code = ?',
+                        [req.session.locationCode]
+                    );
+
+                    const groupId = await mainDb.get('SELECT value FROM settings WHERE key = "line_group_id"');
+
+                    if (groupId && groupId.value) {
+                        await sendOrderNotification(groupId.value, {
+                            locationName: location ? location.location_name : '不明',
+                            locationCode: req.session.locationCode,
+                            productName: product.name,
+                            currentStock: product.current_stock,
+                            reorderPoint: product.reorder_point,
+                            orderQuantity: orderQuantity
+                        });
+                    }
+                } catch (lineError) {
+                    console.error('LINE通知エラー:', lineError);
+                }
+            }
+        }
+
         res.json({ success: true });
     } catch (err) {
+        console.error('入庫処理エラー:', err);
         res.status(500).json({ error: '入庫処理に失敗しました' });
     }
 });
@@ -50,6 +104,59 @@ router.post('/out', requireAuth, async (req, res) => {
             [quantity, productId]
         );
 
+        // 更新後の商品情報を取得
+        const product = await db.get('SELECT * FROM products WHERE id = ?', [productId]);
+
+        // 在庫が発注点を下回った場合、自動的に発注依頼を作成
+        if (product && product.current_stock <= product.reorder_point) {
+            // すでに未処理の発注依頼があるか確認
+            const existingOrder = await db.get(
+                `SELECT id FROM order_requests
+                 WHERE product_id = ? AND (status = 'pending' OR status = 'ordered')`,
+                [productId]
+            );
+
+            // 未処理の発注依頼がなければ新規作成
+            if (!existingOrder) {
+                const orderQuantity = Math.max(
+                    product.reorder_point * 2 - product.current_stock,
+                    product.reorder_point
+                );
+
+                await db.run(
+                    `INSERT INTO order_requests (product_id, requested_quantity, user_id, note, status)
+                     VALUES (?, ?, ?, ?, 'pending')`,
+                    [productId, orderQuantity, req.session.userId, '在庫が発注点を下回ったため自動発注']
+                );
+
+                console.log(`商品ID ${productId} (${product.name}) の在庫が発注点を下回りました。自動発注依頼を作成しました。`);
+
+                // LINE通知を送信
+                try {
+                    const location = await mainDb.get(
+                        'SELECT location_name, location_code FROM locations WHERE location_code = ?',
+                        [req.session.locationCode]
+                    );
+
+                    const groupId = await mainDb.get('SELECT value FROM settings WHERE key = "line_group_id"');
+
+                    if (groupId && groupId.value) {
+                        await sendOrderNotification(groupId.value, {
+                            locationName: location ? location.location_name : '不明',
+                            locationCode: req.session.locationCode,
+                            productName: product.name,
+                            currentStock: product.current_stock,
+                            reorderPoint: product.reorder_point,
+                            orderQuantity: orderQuantity
+                        });
+                    }
+                } catch (lineError) {
+                    console.error('LINE通知エラー:', lineError);
+                    // LINE通知に失敗してもエラーとしない
+                }
+            }
+        }
+
         res.json({ success: true });
     } catch (err) {
         console.error('出庫処理エラー:', err);
@@ -71,6 +178,7 @@ router.post('/weekly', requireAuth, async (req, res) => {
         );
 
         const entryId = entryResult.lastID;
+        const updatedProductIds = new Set();
 
         // 日付ごとの出庫処理
         for (const date of Object.keys(dailyItems)) {
@@ -86,12 +194,67 @@ router.post('/weekly', requireAuth, async (req, res) => {
                         'UPDATE products SET current_stock = current_stock - ? WHERE id = ?',
                         [item.quantity, item.productId]
                     );
+                    updatedProductIds.add(item.productId);
+                }
+            }
+        }
+
+        // 在庫が発注点を下回った商品をチェックして自動発注
+        const location = await mainDb.get(
+            'SELECT location_name, location_code FROM locations WHERE location_code = ?',
+            [req.session.locationCode]
+        );
+        const groupId = await mainDb.get('SELECT value FROM settings WHERE key = "line_group_id"');
+
+        for (const productId of updatedProductIds) {
+            const product = await db.get('SELECT * FROM products WHERE id = ?', [productId]);
+
+            if (product && product.current_stock <= product.reorder_point) {
+                // すでに未処理の発注依頼があるか確認
+                const existingOrder = await db.get(
+                    `SELECT id FROM order_requests
+                     WHERE product_id = ? AND status = 'pending'`,
+                    [productId]
+                );
+
+                // 未処理の発注依頼がなければ新規作成
+                if (!existingOrder) {
+                    const orderQuantity = Math.max(
+                        product.reorder_point * 2 - product.current_stock,
+                        product.reorder_point
+                    );
+
+                    await db.run(
+                        `INSERT INTO order_requests (product_id, requested_quantity, user_id, note, status)
+                         VALUES (?, ?, ?, ?, 'pending')`,
+                        [productId, orderQuantity, req.session.userId, '在庫が発注点を下回ったため自動発注']
+                    );
+
+                    console.log(`商品ID ${productId} (${product.name}) の在庫が発注点を下回りました。自動発注依頼を作成しました。`);
+
+                    // LINE通知を送信
+                    try {
+                        if (groupId && groupId.value) {
+                            await sendOrderNotification(groupId.value, {
+                                locationName: location ? location.location_name : '不明',
+                                locationCode: req.session.locationCode,
+                                productName: product.name,
+                                currentStock: product.current_stock,
+                                reorderPoint: product.reorder_point,
+                                orderQuantity: orderQuantity
+                            });
+                        }
+                    } catch (lineError) {
+                        console.error('LINE通知エラー:', lineError);
+                        // LINE通知に失敗してもエラーとしない
+                    }
                 }
             }
         }
 
         res.json({ success: true });
     } catch (err) {
+        console.error('週次入力エラー:', err);
         res.status(500).json({ error: '週次入力の記録に失敗しました' });
     }
 });

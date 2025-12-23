@@ -58,7 +58,17 @@ async function optimizeImage(buffer, filename) {
 router.get('/', requireAuth, async (req, res) => {
     try {
         const db = getLocationDatabase(req.session.locationCode);
-        const products = await db.all('SELECT * FROM products ORDER BY category, name', []);
+        // 過去30日間の出庫・入庫頻度でソート（頻度が高い順）
+        const products = await db.all(`
+            SELECT
+                p.*,
+                COALESCE(COUNT(ih.id), 0) as transaction_count
+            FROM products p
+            LEFT JOIN inventory_history ih ON p.id = ih.product_id
+                AND ih.created_at >= datetime('now', '-30 days')
+            GROUP BY p.id
+            ORDER BY transaction_count DESC, p.category, p.name
+        `, []);
         res.json(products);
     } catch (err) {
         console.error('Get products error:', err);

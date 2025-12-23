@@ -31,8 +31,8 @@ module.exports = (db) => {
 
             const countId = result.lastID;
 
-            // 全商品の現在庫を取得して棚卸明細を作成
-            const products = await db.all('SELECT id, current_stock FROM products ORDER BY id');
+            // 棚卸対象商品の現在庫を取得して棚卸明細を作成
+            const products = await db.all('SELECT id, current_stock FROM products WHERE include_in_count = 1 ORDER BY id');
 
             for (const product of products) {
                 await db.run(

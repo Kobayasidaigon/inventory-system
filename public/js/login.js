@@ -63,6 +63,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
     const locationCode = document.getElementById('location-select').value;
     const userId = document.getElementById('user-id').value;
     const password = document.getElementById('password').value;
+    const rememberMe = document.getElementById('remember-me').checked;
     const errorMessage = document.getElementById('error-message');
 
     try {
@@ -71,7 +72,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ locationCode, userId, password })
+            body: JSON.stringify({ locationCode, userId, password, rememberMe })
         });
 
         const data = await response.json();
@@ -94,6 +95,7 @@ document.getElementById('admin-login-form').addEventListener('submit', async (e)
 
     const username = document.getElementById('admin-username').value;
     const password = document.getElementById('admin-password').value;
+    const rememberMe = document.getElementById('admin-remember-me').checked;
     const errorMessage = document.getElementById('error-message');
 
     try {
@@ -102,7 +104,7 @@ document.getElementById('admin-login-form').addEventListener('submit', async (e)
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify({ username, password, rememberMe })
         });
 
         const data = await response.json();

@@ -81,9 +81,32 @@ async function initMainDatabase() {
         )
     `);
 
+    // 設定テーブル（LINE通知用など）
+    await mainDb.run(`
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
+    // Remember Meトークンテーブル
+    await mainDb.run(`
+        CREATE TABLE IF NOT EXISTS remember_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            token TEXT UNIQUE NOT NULL,
+            expires_at DATETIME NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    `);
+
     // インデックス作成
     await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_users_location ON users(location_id)`);
     await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id)`);
+    await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_remember_tokens_token ON remember_tokens(token)`);
+    await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_remember_tokens_user_id ON remember_tokens(user_id)`);
 }
 
 // 拠点データベースのテーブル作成SQL

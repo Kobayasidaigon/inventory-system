@@ -1238,3 +1238,362 @@ table tbody tr:hover {
 #count-detail-header h2 {
     margin: 0;
 }
+
+/* ワンタップ登録ボタン */
+.btn-quick {
+    padding: 8px 12px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.2s;
+    min-width: 50px;
+}
+
+.btn-quick-out {
+    background: #ff6b6b;
+    color: white;
+}
+
+.btn-quick-out:hover {
+    background: #ff5252;
+    transform: scale(1.05);
+}
+
+.btn-quick-in {
+    background: #51cf66;
+    color: white;
+}
+
+.btn-quick-in:hover {
+    background: #40c057;
+    transform: scale(1.05);
+}
+
+.btn-quick:active {
+    transform: scale(0.95);
+}
+
+/* フィードバック通知のアニメーション */
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes slideOut {
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+    to {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+}
+
+/* モバイル対応 */
+@media (max-width: 768px) {
+    .btn-quick {
+        padding: 6px 10px;
+        font-size: 12px;
+        min-width: 40px;
+    }
+}
+
+/* 履歴グループ化表示 */
+.history-group-row {
+    background: #fff;
+}
+
+.history-group-row:hover {
+    background: #f8f9fa;
+}
+
+.history-detail-row {
+    background: #f8f9fa !important;
+}
+
+.history-detail-row td {
+    padding: 0 !important;
+}
+
+.btn-small {
+    padding: 4px 8px;
+    font-size: 12px;
+}
+
+/* カード型在庫表示 - 超コンパクト版 */
+.stock-cards-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 10px;
+    padding: 10px 0;
+}
+
+.stock-card {
+    background: white;
+    border-radius: 6px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    padding: 10px;
+    transition: all 0.2s ease;
+    border: 1px solid #e8e8e8;
+}
+
+.stock-card:hover {
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.15);
+    border-color: #667eea;
+}
+
+.stock-card.low-stock {
+    border-left: 3px solid #ff6b6b;
+    background: linear-gradient(to bottom, #fff 0%, #fff9f9 100%);
+}
+
+.stock-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.stock-card-image {
+    width: 36px;
+    height: 36px;
+    border-radius: 4px;
+    object-fit: cover;
+    flex-shrink: 0;
+    cursor: pointer;
+    background: #f8f8f8;
+}
+
+.stock-card-image-placeholder {
+    width: 36px;
+    height: 36px;
+    border-radius: 4px;
+    background: #f8f8f8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #ccc;
+    font-size: 9px;
+    flex-shrink: 0;
+}
+
+.stock-card-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1a1a1a;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+
+.stock-card-category {
+    font-size: 10px;
+    color: #999;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.stock-card-stats {
+    display: flex;
+    gap: 6px;
+    margin: 8px 0;
+    padding: 6px;
+    background: #fafafa;
+    border-radius: 4px;
+}
+
+.stock-stat {
+    flex: 1;
+    text-align: center;
+}
+
+.stock-stat-label {
+    font-size: 9px;
+    color: #aaa;
+    margin-bottom: 2px;
+}
+
+.stock-stat-value {
+    font-size: 15px;
+    font-weight: 700;
+    color: #1a1a1a;
+    line-height: 1;
+}
+
+.stock-stat-value.low {
+    color: #ff6b6b;
+}
+
+.stock-stat-value.ok {
+    color: #51cf66;
+}
+
+.stock-card-status {
+    margin: 8px 0;
+    padding: 8px 12px;
+    border-radius: 20px;
+    text-align: center;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    transition: all 0.3s ease;
+}
+
+.stock-card-status.status-ok {
+    background: linear-gradient(135deg, #51cf66 0%, #40c057 100%);
+    color: white;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.stock-card-status.status-low {
+    background: linear-gradient(135deg, #ff922b 0%, #ff6b6b 100%);
+    color: white;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        box-shadow: 0 2px 8px rgba(255, 107, 107, 0.3);
+    }
+    50% {
+        box-shadow: 0 4px 16px rgba(255, 107, 107, 0.5);
+    }
+}
+
+.stock-card-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 4px;
+}
+
+.stock-card .btn-quick {
+    padding: 7px 4px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 4px;
+    border: none;
+    transition: all 0.15s ease;
+}
+
+.stock-card .btn-quick:active {
+    transform: scale(0.95);
+}
+
+.stock-card .btn-quick-out {
+    background: #ff6b6b;
+    color: white;
+}
+
+.stock-card .btn-quick-out:hover {
+    background: #ff5252;
+}
+
+.stock-card .btn-quick-in {
+    background: #51cf66;
+    color: white;
+}
+
+.stock-card .btn-quick-in:hover {
+    background: #40c057;
+}
+
+/* レスポンシブ対応 */
+@media (max-width: 768px) {
+    .stock-cards-container {
+        grid-template-columns: 1fr;
+        gap: 15px;
+    }
+
+    .stock-card {
+        padding: 15px;
+    }
+
+    .stock-card-header {
+        flex-direction: row;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .stock-card-stats {
+        gap: 10px;
+    }
+
+    .stock-stat-value {
+        font-size: 20px;
+    }
+}
+
+/* タブレット対応（iPad等） */
+@media (min-width: 769px) and (max-width: 1024px) {
+    .stock-cards-container {
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 12px;
+    }
+
+    .stock-card {
+        padding: 12px;
+    }
+
+    .stock-card-header {
+        gap: 8px;
+    }
+
+    .stock-card-image,
+    .stock-card-image-placeholder {
+        width: 40px;
+        height: 40px;
+    }
+
+    .stock-card-name {
+        font-size: 14px;
+    }
+
+    .stock-card-stats {
+        gap: 8px;
+    }
+
+    .stock-stat-value {
+        font-size: 16px;
+    }
+
+    .stock-card .btn-quick {
+        padding: 8px 6px;
+        font-size: 13px;
+    }
+}
+
+@media (min-width: 1400px) {
+    .stock-cards-container {
+        grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+    }
+}
+
+/* 発注依頼済み商品テーブル */
+#pending-orders-table th:last-child,
+#pending-orders-table td:last-child {
+    width: 1%;
+    white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+    #pending-orders-table th:last-child,
+    #pending-orders-table td:last-child {
+        width: auto;
+        min-width: 200px;
+    }
+}

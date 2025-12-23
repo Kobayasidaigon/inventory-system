@@ -17,8 +17,6 @@
 
     <nav>
         <button class="nav-btn active" data-page="dashboard">ダッシュボード</button>
-        <button class="nav-btn" data-page="weekly-input">出庫処理</button>
-        <button class="nav-btn" data-page="in-stock">入庫処理</button>
         <button class="nav-btn" data-page="products">商品管理</button>
         <button class="nav-btn" data-page="history">履歴確認</button>
         <button class="nav-btn" data-page="chart">在庫推移グラフ</button>
@@ -31,23 +29,14 @@
             <h2>在庫状況</h2>
             <div class="actions">
                 <div class="form-group" style="display: inline-block; margin-right: 15px;">
-                    <label for="dashboard-account-filter">勘定科目</label>
-                    <select id="dashboard-account-filter">
-                        <option value="">すべて</option>
-                        <option value="商品">商品</option>
-                        <option value="貯蔵品">貯蔵品</option>
-                    </select>
-                </div>
-                <div class="form-group" style="display: inline-block; margin-right: 15px;">
                     <label for="dashboard-category-filter">カテゴリフィルター</label>
                     <select id="dashboard-category-filter">
                         <option value="">すべてのカテゴリ</option>
                     </select>
                 </div>
-                <button id="export-current" class="btn btn-primary">現在庫CSV出力</button>
                 <button id="show-qrcode-btn" class="btn btn-secondary">📱 出庫QRコード</button>
             </div>
-            <div id="stock-alerts" class="alert-box"></div>
+
 
             <!-- 発注依頼済み商品 -->
             <div id="pending-orders-section" class="dashboard-section" style="display: none;">
@@ -57,10 +46,7 @@
                         <thead>
                             <tr>
                                 <th>商品名</th>
-                                <th>依頼者</th>
                                 <th>依頼日時</th>
-                                <th>ステータス</th>
-                                <th>備考</th>
                                 <th>操作</th>
                             </tr>
                         </thead>
@@ -75,21 +61,8 @@
             <!-- 現在庫一覧 -->
             <div class="dashboard-section">
                 <h3>現在庫一覧 <span id="stock-count" class="badge"></span></h3>
-                <div class="table-container">
-                    <table id="stock-table">
-                        <thead>
-                            <tr>
-                                <th>商品名</th>
-                                <th>カテゴリ</th>
-                                <th>単価</th>
-                                <th>現在庫</th>
-                                <th>発注点</th>
-                                <th>状態</th>
-                                <th>操作</th>
-                            </tr>
-                        </thead>
-                        <tbody></tbody>
-                    </table>
+                <div id="stock-cards-container" class="stock-cards-container">
+                    <!-- カードがJavaScriptで動的に追加されます -->
                 </div>
             </div>
         </div>
@@ -105,6 +78,7 @@
                     </select>
                 </div>
                 <button id="add-product-btn" class="btn btn-primary">新規商品登録</button>
+                <button id="export-current" class="btn btn-primary">現在庫CSV出力</button>
             </div>
             <table id="products-table">
                 <thead>
@@ -112,6 +86,7 @@
                         <th>画像</th>
                         <th>商品名</th>
                         <th>カテゴリ</th>
+                        <th>単価</th>
                         <th>発注点</th>
                         <th>現在庫</th>
                         <th>操作</th>
@@ -121,81 +96,16 @@
             </table>
         </div>
 
-        <!-- 出庫処理 -->
-        <div id="weekly-input" class="page">
-            <h2>出庫処理</h2>
-            <form id="out-stock-form">
-                <div class="form-group">
-                    <label for="out-date">出庫日</label>
-                    <input type="date" id="out-date" required>
-                </div>
-                <div class="form-group">
-                    <label for="out-category-filter">カテゴリ</label>
-                    <select id="out-category-filter">
-                        <option value="">すべてのカテゴリ</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="out-product">商品</label>
-                    <select id="out-product" required></select>
-                </div>
-                <div id="out-product-image-container" style="display: none; margin-bottom: 20px;">
-                    <label>商品画像</label>
-                    <div style="text-align: center;">
-                        <img id="out-product-image" src="" alt="商品画像"
-                             style="max-width: 200px; max-height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor: pointer;"
-                             onclick="openImagePopup(this.src)">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="out-quantity">出庫数</label>
-                    <input type="number" id="out-quantity" min="1" required>
-                </div>
-                <div class="form-group">
-                    <label for="out-note">備考</label>
-                    <input type="text" id="out-note">
-                </div>
-                <button type="submit" class="btn btn-primary">出庫登録</button>
-            </form>
-        </div>
-
-        <!-- 入庫処理 -->
-        <div id="in-stock" class="page">
-            <h2>入庫処理</h2>
-            <form id="in-stock-form">
-                <div class="form-group">
-                    <label for="in-category-filter">カテゴリ</label>
-                    <select id="in-category-filter">
-                        <option value="">すべてのカテゴリ</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="in-product">商品</label>
-                    <select id="in-product" required></select>
-                </div>
-                <div id="in-product-image-container" style="display: none; margin-bottom: 20px;">
-                    <label>商品画像</label>
-                    <div style="text-align: center;">
-                        <img id="in-product-image" src="" alt="商品画像"
-                             style="max-width: 200px; max-height: 200px; object-fit: contain; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor: pointer;"
-                             onclick="openImagePopup(this.src)">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="in-quantity">入庫数</label>
-                    <input type="number" id="in-quantity" min="1" required>
-                </div>
-                <div class="form-group">
-                    <label for="in-note">備考</label>
-                    <input type="text" id="in-note">
-                </div>
-                <button type="submit" class="btn btn-primary">入庫登録</button>
-            </form>
-        </div>
 
         <!-- 履歴確認 -->
         <div id="history" class="page">
             <h2>入出庫履歴</h2>
+            <div style="margin-bottom: 15px;">
+                <label style="display: inline-flex; align-items: center; cursor: pointer; background: #f0f7ff; padding: 10px 15px; border-radius: 5px;">
+                    <input type="checkbox" id="group-history-toggle" checked style="width: 18px; height: 18px; margin-right: 8px; cursor: pointer; accent-color: #667eea;">
+                    <span>同じ商品・日付・担当者の履歴をまとめて表示</span>
+                </label>
+            </div>
             <div class="filter-group">
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <label for="history-category-filter">カテゴリ:</label>
@@ -226,7 +136,6 @@
                         <th>カテゴリ</th>
                         <th>種別</th>
                         <th>数量</th>
-                        <th>備考</th>
                         <th>担当者</th>
                         <th>操作</th>
                     </tr>

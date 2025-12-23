@@ -1,15 +1,11 @@
 let selectedLocationId = null;
-let viewLocationId = null;
-let currentChartProductId = null;
-let currentChart = null;
 
 // 初期化
 document.addEventListener('DOMContentLoaded', async () => {
     await checkAdminAuth();
     await loadLocations();
-    await loadViewLocationSelect();
+    await loadAllInventoryAndOrders();
     initTabs();
-    initChartModal();
 });
 
 // タブ切り替え機能
@@ -441,53 +437,17 @@ async function deleteUser(userId, userIdName) {
     }
 }
 
-// 拠点選択プルダウンの読み込み
-async function loadViewLocationSelect() {
-    try {
-        const response = await fetch('/api/auth/admin/locations');
-        const locations = await response.json();
-
-        const select = document.getElementById('view-location-select');
-        select.innerHTML = '<option value="">拠点を選択してください</option>';
-
-        locations.forEach(location => {
-            const option = document.createElement('option');
-            option.value = location.id;
-            option.textContent = `${location.location_name} (${location.location_code})`;
-            select.appendChild(option);
-        });
-    } catch (error) {
-        console.error('拠点選択読み込みエラー:', error);
-    }
-}
-
-// 拠点選択イベント
-document.getElementById('view-location-select').addEventListener('change', async (e) => {
-    viewLocationId = e.target.value;
-
-    if (viewLocationId) {
-        await loadLocationData(viewLocationId);
-    } else {
-        document.getElementById('inventory-section').style.display = 'none';
-        document.getElementById('orders-section').style.display = 'none';
-    }
-});
-
 // 更新ボタン
 document.getElementById('refresh-data-btn').addEventListener('click', async () => {
-    if (viewLocationId) {
-        await loadLocationData(viewLocationId);
-    } else {
-        alert('拠点を選択してください');
-    }
+    await loadAllInventoryAndOrders();
 });
 
-// 拠点データの読み込み
-async function loadLocationData(locationId) {
+// 全店舗のデータを読み込み
+async function loadAllInventoryAndOrders() {
     try {
         await Promise.all([
-            loadInventoryData(locationId),
-            loadOrdersData(locationId)
+            loadAllInventoryData(),
+            loadAllOrdersData()
         ]);
     } catch (error) {
         console.error('データ読み込みエラー:', error);
@@ -495,54 +455,52 @@ async function loadLocationData(locationId) {
     }
 }
 
-// 在庫データの読み込み
-async function loadInventoryData(locationId) {
+// 全店舗の在庫データの読み込み
+async function loadAllInventoryData() {
     try {
-        const response = await fetch(`/api/auth/admin/locations/${locationId}/inventory`);
+        const response = await fetch('/api/auth/admin/all-inventory');
         const data = await response.json();
 
         if (!response.ok) {
             throw new Error(data.error || '在庫データの取得に失敗しました');
         }
 
-        // セクションを表示
-        document.getElementById('inventory-section').style.display = 'block';
-        document.getElementById('inventory-location-name').textContent = data.locationName;
-
         const tbody = document.getElementById('inventory-list');
         tbody.innerHTML = '';
 
         if (data.products.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #666;">商品が登録されていません</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #666;">商品が登録されていません</td></tr>';
             return;
         }
 
         data.products.forEach(product => {
             const row = document.createElement('tr');
 
-            // 状態判定
-            let status = '';
-            let statusColor = '';
-            if (product.current_stock <= 0) {
-                status = '在庫切れ';
-                statusColor = '#d32f2f';
+            // 発注状況の判定
+            let orderStatus = '';
+            let orderStatusColor = '';
+
+            if (product.has_pending_order) {
+                orderStatus = `発注依頼済 (${product.pending_order_quantity}個)`;
+                orderStatusColor = '#1976d2';
+            } else if (product.current_stock <= 0) {
+                orderStatus = '在庫切れ';
+                orderStatusColor = '#d32f2f';
             } else if (product.current_stock <= product.reorder_point) {
-                status = '発注必要';
-                statusColor = '#f57c00';
+                orderStatus = '発注必要';
+                orderStatusColor = '#f57c00';
             } else {
-                status = '正常';
-                statusColor = '#388e3c';
+                orderStatus = '正常';
+                orderStatusColor = '#388e3c';
             }
 
             row.innerHTML = `
+                <td><strong>${product.location_name}</strong> (${product.location_code})</td>
                 <td>${product.name}</td>
                 <td>${product.category || '-'}</td>
                 <td>${product.current_stock}</td>
                 <td>${product.reorder_point}</td>
-                <td style="color: ${statusColor}; font-weight: bold;">${status}</td>
-                <td>
-                    <button class="btn btn-small btn-secondary" onclick="showProductChart(${product.id}, '${product.name.replace(/'/g, "\\'")}')">在庫履歴</button>
-                </td>
+                <td style="color: ${orderStatusColor}; font-weight: bold;">${orderStatus}</td>
             `;
 
             tbody.appendChild(row);
@@ -553,25 +511,21 @@ async function loadInventoryData(locationId) {
     }
 }
 
-// 発注データの読み込み
-async function loadOrdersData(locationId) {
+// 全店舗の発注データの読み込み
+async function loadAllOrdersData() {
     try {
-        const response = await fetch(`/api/auth/admin/locations/${locationId}/orders`);
+        const response = await fetch('/api/auth/admin/all-orders');
         const data = await response.json();
 
         if (!response.ok) {
             throw new Error(data.error || '発注データの取得に失敗しました');
         }
 
-        // セクションを表示
-        document.getElementById('orders-section').style.display = 'block';
-        document.getElementById('orders-location-name').textContent = data.locationName;
-
         const tbody = document.getElementById('orders-list');
         tbody.innerHTML = '';
 
         if (data.orders.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #666;">発注依頼がありません</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: #666;">発注依頼がありません</td></tr>';
             return;
         }
 
@@ -598,6 +552,7 @@ async function loadOrdersData(locationId) {
             const requestedAt = new Date(order.requested_at).toLocaleString('ja-JP');
 
             row.innerHTML = `
+                <td><strong>${order.location_name}</strong> (${order.location_code})</td>
                 <td>${order.product_name}</td>
                 <td>${order.requested_quantity}</td>
                 <td>${order.current_stock}</td>
@@ -606,7 +561,7 @@ async function loadOrdersData(locationId) {
                 <td>${requestedAt}</td>
                 <td>${order.note || '-'}</td>
                 <td>
-                    ${order.status === 'pending' ? `<button class="btn-small btn-edit" onclick="updateOrderStatus(${order.id}, 'ordered')">発注済み</button>` : '-'}
+                    ${order.status === 'pending' ? `<button class="btn-small btn-edit" onclick="updateOrderStatus(${order.location_id}, ${order.id}, 'ordered')">発注済み</button>` : '-'}
                 </td>
             `;
 
@@ -619,20 +574,12 @@ async function loadOrdersData(locationId) {
 }
 
 // 発注ステータス更新
-async function updateOrderStatus(orderId, newStatus) {
+async function updateOrderStatus(locationId, orderId, newStatus) {
     if (!confirm('発注ステータスを「発注済み」に更新しますか？')) {
         return;
     }
 
     try {
-        const locationSelect = document.getElementById('view-location-select');
-        const locationId = locationSelect.value;
-
-        if (!locationId) {
-            alert('拠点が選択されていません');
-            return;
-        }
-
         const response = await fetch(`/api/auth/admin/locations/${locationId}/orders/${orderId}/status`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -643,8 +590,8 @@ async function updateOrderStatus(orderId, newStatus) {
 
         if (response.ok) {
             alert('発注ステータスを更新しました');
-            // 発注一覧を再読み込み
-            await loadOrdersData(locationId);
+            // 全店舗の発注一覧を再読み込み
+            await loadAllOrdersData();
         } else {
             alert(data.error || '発注ステータスの更新に失敗しました');
         }
@@ -654,135 +601,203 @@ async function updateOrderStatus(orderId, newStatus) {
     }
 }
 
-// グラフモーダルの初期化
-function initChartModal() {
-    const modal = document.getElementById('chart-modal');
-    const closeBtn = document.getElementById('chart-modal-close');
-    const reloadBtn = document.getElementById('chart-reload-btn');
-    const periodSelect = document.getElementById('chart-period-select');
+// ========== バックアップ機能 ==========
 
-    // 閉じるボタン
-    closeBtn.addEventListener('click', () => {
-        modal.classList.remove('show');
-        if (currentChart) {
-            currentChart.destroy();
-            currentChart = null;
-        }
-    });
+// バックアップタブの初期化
+document.addEventListener('DOMContentLoaded', () => {
+    // バックアップタブがアクティブになったときに一覧を読み込む
+    const backupTab = document.querySelector('[data-tab="backup"]');
+    if (backupTab) {
+        backupTab.addEventListener('click', () => {
+            loadBackups();
+        });
+    }
 
-    // モーダル外クリックで閉じる
-    window.addEventListener('click', (e) => {
-        if (e.target === modal) {
-            modal.classList.remove('show');
-            if (currentChart) {
-                currentChart.destroy();
-                currentChart = null;
-            }
-        }
-    });
+    // バックアップ作成ボタン
+    const createBackupBtn = document.getElementById('create-backup-btn');
+    if (createBackupBtn) {
+        createBackupBtn.addEventListener('click', createBackup);
+    }
 
-    // 更新ボタン
-    reloadBtn.addEventListener('click', async () => {
-        if (currentChartProductId && viewLocationId) {
-            const days = periodSelect.value;
-            await loadChartData(viewLocationId, currentChartProductId, days);
-        }
-    });
+    // バックアップ一覧更新ボタン
+    const refreshBackupsBtn = document.getElementById('refresh-backups-btn');
+    if (refreshBackupsBtn) {
+        refreshBackupsBtn.addEventListener('click', loadBackups);
+    }
+});
 
-    // 期間変更時に自動更新
-    periodSelect.addEventListener('change', async () => {
-        if (currentChartProductId && viewLocationId) {
-            const days = periodSelect.value;
-            await loadChartData(viewLocationId, currentChartProductId, days);
+// バックアップを作成
+async function createBackup() {
+    const button = document.getElementById('create-backup-btn');
+    const originalText = button.textContent;
+
+    try {
+        button.disabled = true;
+        button.textContent = '⏳ バックアップ作成中...';
+
+        const response = await fetch('/api/auth/admin/backup', {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            showBackupStatus(`✓ ${data.message}`, 'success');
+            // 一覧を再読み込み
+            await loadBackups();
+        } else {
+            showBackupStatus(`✗ ${data.error || 'バックアップに失敗しました'}`, 'error');
         }
-    });
+    } catch (error) {
+        console.error('バックアップエラー:', error);
+        showBackupStatus('✗ バックアップに失敗しました', 'error');
+    } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+    }
 }
 
-// グラフ表示
-async function showProductChart(productId, productName) {
-    if (!viewLocationId) {
-        alert('拠点を選択してください');
+// バックアップ一覧を読み込み
+async function loadBackups() {
+    try {
+        const response = await fetch('/api/auth/admin/backups');
+        const data = await response.json();
+
+        const tbody = document.getElementById('backups-list');
+
+        if (!data.backups || data.backups.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="4" style="text-align: center; padding: 20px; color: #999;">
+                        バックアップファイルがありません
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        tbody.innerHTML = data.backups.map(backup => {
+            const date = new Date(backup.date);
+            const formattedDate = date.toLocaleString('ja-JP', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+
+            return `
+                <tr>
+                    <td>${formattedDate}</td>
+                    <td style="font-family: monospace; font-size: 12px;">${backup.filename}</td>
+                    <td>${backup.size} MB</td>
+                    <td>
+                        <button class="btn btn-secondary btn-small" onclick="downloadBackup('${backup.filename}')" style="margin-right: 5px;">
+                            📥 ダウンロード
+                        </button>
+                        <button class="btn btn-small" onclick="restoreBackup('${backup.filename}')" style="background: #ff6b6b; color: white;">
+                            🔄 リストア
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    } catch (error) {
+        console.error('バックアップ一覧取得エラー:', error);
+        const tbody = document.getElementById('backups-list');
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="4" style="text-align: center; padding: 20px; color: #dc3545;">
+                    バックアップ一覧の取得に失敗しました
+                </td>
+            </tr>
+        `;
+    }
+}
+
+// バックアップをダウンロード
+function downloadBackup(filename) {
+    window.location.href = `/api/auth/admin/backup/${filename}`;
+}
+
+// バックアップからリストア
+async function restoreBackup(filename) {
+    const confirmed = confirm(
+        `⚠️ 警告: データベースをリストアします\n\n` +
+        `バックアップファイル: ${filename}\n\n` +
+        `現在のデータベースは自動的にバックアップされた後、` +
+        `このバックアップファイルで上書きされます。\n\n` +
+        `リストア後はサーバーを再起動する必要があります。\n\n` +
+        `続行しますか？`
+    );
+
+    if (!confirmed) {
         return;
     }
 
-    currentChartProductId = productId;
-    document.getElementById('chart-product-name').textContent = `${productName} の在庫推移`;
-    document.getElementById('chart-modal').classList.add('show');
-
-    const days = document.getElementById('chart-period-select').value;
-    await loadChartData(viewLocationId, productId, days);
-}
-
-// グラフデータ読み込み
-async function loadChartData(locationId, productId, days) {
     try {
-        const response = await fetch(`/api/auth/admin/locations/${locationId}/chart/${productId}?days=${days}`);
+        showBackupStatus('⏳ リストア中...', 'info');
+
+        const response = await fetch(`/api/auth/admin/restore/${filename}`, {
+            method: 'POST'
+        });
+
         const data = await response.json();
 
-        if (!response.ok) {
-            throw new Error(data.error || 'グラフデータの取得に失敗しました');
-        }
+        if (response.ok && data.success) {
+            showBackupStatus(`✓ ${data.message}`, 'success');
 
-        // 既存のグラフを破棄
-        if (currentChart) {
-            currentChart.destroy();
-        }
+            // リストア成功後、確認ダイアログを表示
+            const restart = confirm(
+                'リストアが完了しました。\n\n' +
+                'データベースの変更を反映するには、サーバーを再起動する必要があります。\n\n' +
+                '今すぐページをリロードしますか？\n' +
+                '（fly.ioの場合は、`flyctl apps restart` コマンドでサーバーを再起動してください）'
+            );
 
-        // グラフを描画
-        const ctx = document.getElementById('admin-stock-chart').getContext('2d');
-        currentChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: data.labels,
-                datasets: [{
-                    label: '在庫数',
-                    data: data.stocks,
-                    borderColor: '#667eea',
-                    backgroundColor: 'rgba(102, 126, 234, 0.1)',
-                    tension: 0.1,
-                    fill: true
-                }, {
-                    label: '発注点',
-                    data: Array(data.labels.length).fill(data.reorderPoint),
-                    borderColor: '#f57c00',
-                    borderDash: [5, 5],
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    fill: false
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        display: true,
-                        position: 'top'
-                    },
-                    tooltip: {
-                        mode: 'index',
-                        intersect: false
-                    }
-                },
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        title: {
-                            display: true,
-                            text: '在庫数'
-                        }
-                    },
-                    x: {
-                        title: {
-                            display: true,
-                            text: '日付'
-                        }
-                    }
-                }
+            if (restart) {
+                window.location.reload();
             }
-        });
+        } else {
+            showBackupStatus(`✗ ${data.error || 'リストアに失敗しました'}`, 'error');
+        }
     } catch (error) {
-        console.error('グラフデータ読み込みエラー:', error);
-        alert('グラフデータの読み込みに失敗しました: ' + error.message);
+        console.error('リストアエラー:', error);
+        showBackupStatus('✗ リストアに失敗しました', 'error');
     }
+}
+
+// バックアップステータスメッセージを表示
+function showBackupStatus(message, type = 'info') {
+    const statusDiv = document.getElementById('backup-status');
+
+    const colors = {
+        success: '#d4edda',
+        error: '#f8d7da',
+        info: '#d1ecf1'
+    };
+
+    const textColors = {
+        success: '#155724',
+        error: '#721c24',
+        info: '#0c5460'
+    };
+
+    statusDiv.innerHTML = `
+        <div style="
+            padding: 12px 16px;
+            background: ${colors[type]};
+            color: ${textColors[type]};
+            border-radius: 5px;
+            border-left: 4px solid ${textColors[type]};
+        ">
+            ${message}
+        </div>
+    `;
+
+    // 5秒後に自動的に消す
+    setTimeout(() => {
+        statusDiv.innerHTML = '';
+    }, 5000);
 }

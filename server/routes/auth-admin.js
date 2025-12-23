@@ -1,12 +1,53 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const { mainDb, getLocationDatabase } = require('../db/database-admin');
+const { backupDatabase, listBackups, restoreDatabase, BACKUP_DIR } = require('../services/backup');
+const path = require('path');
 const router = express.Router();
+
+// Remember Meトークンを生成
+function generateToken() {
+    return crypto.randomBytes(32).toString('hex');
+}
+
+// Remember Meトークンを保存
+async function saveRememberToken(userId) {
+    const token = generateToken();
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 365); // 1年後
+
+    await mainDb.run(
+        'INSERT INTO remember_tokens (user_id, token, expires_at) VALUES (?, ?, ?)',
+        [userId, token, expiresAt.toISOString()]
+    );
+
+    return token;
+}
+
+// Remember Meトークンで認証
+async function authenticateByToken(token) {
+    const tokenData = await mainDb.get(
+        'SELECT * FROM remember_tokens WHERE token = ? AND expires_at > datetime("now")',
+        [token]
+    );
+
+    if (!tokenData) {
+        return null;
+    }
+
+    const user = await mainDb.get(
+        'SELECT * FROM users WHERE id = ?',
+        [tokenData.user_id]
+    );
+
+    return user;
+}
 
 // 管理者ログイン
 router.post('/admin/login', async (req, res) => {
     try {
-        const { username, password } = req.body;
+        const { username, password, rememberMe } = req.body;
 
         // 管理者ユーザーを確認（is_admin = 1）
         const user = await mainDb.get(
@@ -28,6 +69,16 @@ router.post('/admin/login', async (req, res) => {
         req.session.userName = user.user_name;
         req.session.isAdmin = true;
 
+        // Remember Me処理
+        if (rememberMe) {
+            const token = await saveRememberToken(user.id);
+            res.cookie('remember_token', token, {
+                maxAge: 365 * 24 * 60 * 60 * 1000, // 1年
+                httpOnly: true,
+                secure: false // 本番環境ではtrueに設定
+            });
+        }
+
         res.json({ success: true, userName: user.user_name, isAdmin: true });
     } catch (err) {
         console.error('Admin login error:', err);
@@ -38,7 +89,7 @@ router.post('/admin/login', async (req, res) => {
 // 一般ユーザーログイン
 router.post('/login', async (req, res) => {
     try {
-        const { locationCode, userId, password } = req.body;
+        const { locationCode, userId, password, rememberMe } = req.body;
 
         if (!locationCode || !userId || !password) {
             return res.status(400).json({ error: '拠点コード、ユーザーID、パスワードを入力してください' });
@@ -76,6 +127,16 @@ router.post('/login', async (req, res) => {
         req.session.locationCode = location.location_code;
         req.session.isAdmin = false;
 
+        // Remember Me処理
+        if (rememberMe) {
+            const token = await saveRememberToken(user.id);
+            res.cookie('remember_token', token, {
+                maxAge: 365 * 24 * 60 * 60 * 1000, // 1年
+                httpOnly: true,
+                secure: false // 本番環境ではtrueに設定
+            });
+        }
+
         res.json({
             success: true,
             userName: user.user_name,
@@ -88,25 +149,75 @@ router.post('/login', async (req, res) => {
 });
 
 // ログアウト
-router.post('/logout', (req, res) => {
-    req.session.destroy((err) => {
-        if (err) {
-            return res.status(500).json({ error: 'ログアウトに失敗しました' });
+router.post('/logout', async (req, res) => {
+    try {
+        const token = req.cookies.remember_token;
+
+        // Remember Meトークンを削除
+        if (token) {
+            await mainDb.run('DELETE FROM remember_tokens WHERE token = ?', [token]);
+            res.clearCookie('remember_token');
         }
-        res.json({ success: true });
-    });
+
+        req.session.destroy((err) => {
+            if (err) {
+                return res.status(500).json({ error: 'ログアウトに失敗しました' });
+            }
+            res.json({ success: true });
+        });
+    } catch (err) {
+        console.error('Logout error:', err);
+        res.status(500).json({ error: 'ログアウトに失敗しました' });
+    }
 });
 
 // ログイン状態確認
-router.get('/check', (req, res) => {
-    if (req.session.userId) {
-        res.json({
-            loggedIn: true,
-            userName: req.session.userName,
-            isAdmin: req.session.isAdmin || false,
-            locationCode: req.session.locationCode
-        });
-    } else {
+router.get('/check', async (req, res) => {
+    try {
+        // セッションがあればそのまま返す
+        if (req.session.userId) {
+            return res.json({
+                loggedIn: true,
+                userName: req.session.userName,
+                isAdmin: req.session.isAdmin || false,
+                locationCode: req.session.locationCode
+            });
+        }
+
+        // セッションがない場合、Remember Meトークンをチェック
+        const token = req.cookies.remember_token;
+        if (token) {
+            const user = await authenticateByToken(token);
+            if (user) {
+                // ユーザーが見つかった場合、セッションを再作成
+                req.session.userId = user.id;
+                req.session.userName = user.user_name;
+                req.session.isAdmin = user.is_admin === 1;
+
+                // 一般ユーザーの場合は拠点情報も取得
+                if (!req.session.isAdmin) {
+                    const location = await mainDb.get(
+                        'SELECT * FROM locations WHERE id = ?',
+                        [user.location_id]
+                    );
+                    if (location) {
+                        req.session.locationId = location.id;
+                        req.session.locationCode = location.location_code;
+                    }
+                }
+
+                return res.json({
+                    loggedIn: true,
+                    userName: user.user_name,
+                    isAdmin: req.session.isAdmin,
+                    locationCode: req.session.locationCode
+                });
+            }
+        }
+
+        res.json({ loggedIn: false });
+    } catch (err) {
+        console.error('Auth check error:', err);
         res.json({ loggedIn: false });
     }
 });
@@ -609,6 +720,214 @@ router.put('/admin/locations/:locationId/orders/:orderId/status', async (req, re
     } catch (err) {
         console.error('Update order status error:', err);
         res.status(500).json({ error: 'ステータスの更新に失敗しました' });
+    }
+});
+
+// 全拠点の在庫データ取得（管理者のみ）
+router.get('/admin/all-inventory', async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.status(403).json({ error: '管理者権限が必要です' });
+        }
+
+        // すべての拠点を取得
+        const locations = await mainDb.all('SELECT * FROM locations ORDER BY location_code');
+
+        const allProducts = [];
+
+        // 各拠点の在庫データを取得
+        for (const location of locations) {
+            const db = getLocationDatabase(location.location_code);
+
+            const products = await db.all(`
+                SELECT id, name, category, current_stock, reorder_point, created_at, updated_at
+                FROM products
+                ORDER BY category, name
+            `);
+
+            // 各商品に拠点情報と発注状況を追加
+            for (const product of products) {
+                // 未処理の発注依頼があるかチェック
+                const pendingOrder = await db.get(
+                    `SELECT id, requested_quantity, requested_at
+                     FROM order_requests
+                     WHERE product_id = ? AND status = 'pending'
+                     ORDER BY requested_at DESC
+                     LIMIT 1`,
+                    [product.id]
+                );
+
+                allProducts.push({
+                    ...product,
+                    location_id: location.id,
+                    location_name: location.location_name,
+                    location_code: location.location_code,
+                    has_pending_order: !!pendingOrder,
+                    pending_order_quantity: pendingOrder ? pendingOrder.requested_quantity : null
+                });
+            }
+        }
+
+        res.json({
+            products: allProducts
+        });
+    } catch (err) {
+        console.error('Get all inventory error:', err);
+        res.status(500).json({ error: 'データ取得エラー' });
+    }
+});
+
+// 全拠点の発注データ取得（管理者のみ）
+router.get('/admin/all-orders', async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.status(403).json({ error: '管理者権限が必要です' });
+        }
+
+        // すべての拠点を取得
+        const locations = await mainDb.all('SELECT * FROM locations ORDER BY location_code');
+
+        const allOrders = [];
+
+        // 各拠点の発注データを取得
+        for (const location of locations) {
+            const db = getLocationDatabase(location.location_code);
+
+            const orders = await db.all(`
+                SELECT o.*, p.name as product_name, p.current_stock, p.reorder_point
+                FROM order_requests o
+                JOIN products p ON o.product_id = p.id
+                ORDER BY o.requested_at DESC
+            `);
+
+            // ユーザー名をメインDBから取得して追加
+            for (const order of orders) {
+                const user = await mainDb.get('SELECT user_name FROM users WHERE id = ?', [order.user_id]);
+                allOrders.push({
+                    ...order,
+                    username: user ? user.user_name : '不明',
+                    location_id: location.id,
+                    location_name: location.location_name,
+                    location_code: location.location_code
+                });
+            }
+        }
+
+        res.json({
+            orders: allOrders
+        });
+    } catch (err) {
+        console.error('Get all orders error:', err);
+        res.status(500).json({ error: 'データ取得エラー' });
+    }
+});
+
+// データベースバックアップ（管理者のみ）
+router.post('/admin/backup', async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.status(403).json({ error: '管理者権限が必要です' });
+        }
+
+        console.log('管理者によるバックアップ要求');
+        const result = await backupDatabase();
+
+        if (result.success) {
+            res.json({
+                success: true,
+                message: result.message,
+                backupFile: result.backupFile,
+                size: result.size
+            });
+        } else {
+            res.status(500).json({ error: result.message });
+        }
+    } catch (err) {
+        console.error('Backup error:', err);
+        res.status(500).json({ error: 'バックアップに失敗しました' });
+    }
+});
+
+// バックアップ一覧取得（管理者のみ）
+router.get('/admin/backups', async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.status(403).json({ error: '管理者権限が必要です' });
+        }
+
+        const backups = listBackups();
+        res.json({ backups });
+    } catch (err) {
+        console.error('Get backups error:', err);
+        res.status(500).json({ error: 'バックアップ一覧の取得に失敗しました' });
+    }
+});
+
+// バックアップダウンロード（管理者のみ）
+router.get('/admin/backup/:filename', async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.status(403).json({ error: '管理者権限が必要です' });
+        }
+
+        const { filename } = req.params;
+
+        // セキュリティチェック: ファイル名にパストラバーサルがないか確認
+        if (filename.includes('..') || filename.includes('/')) {
+            return res.status(400).json({ error: '不正なファイル名です' });
+        }
+
+        // バックアップファイル名のフォーマットチェック
+        if (!filename.startsWith('backup_') || !filename.endsWith('.tar.gz')) {
+            return res.status(400).json({ error: '不正なファイル名です' });
+        }
+
+        const filePath = path.join(BACKUP_DIR, filename);
+
+        // ファイルの存在確認
+        const fs = require('fs');
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({ error: 'バックアップファイルが見つかりません' });
+        }
+
+        // ファイルをダウンロード
+        res.download(filePath, filename, (err) => {
+            if (err) {
+                console.error('Download error:', err);
+                if (!res.headersSent) {
+                    res.status(500).json({ error: 'ダウンロードに失敗しました' });
+                }
+            }
+        });
+    } catch (err) {
+        console.error('Backup download error:', err);
+        res.status(500).json({ error: 'ダウンロードに失敗しました' });
+    }
+});
+
+// バックアップから復元（管理者のみ）
+router.post('/admin/restore/:filename', async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.status(403).json({ error: '管理者権限が必要です' });
+        }
+
+        const { filename } = req.params;
+
+        console.log(`管理者によるリストア要求: ${filename}`);
+        const result = await restoreDatabase(filename);
+
+        if (result.success) {
+            res.json({
+                success: true,
+                message: result.message
+            });
+        } else {
+            res.status(500).json({ error: result.message });
+        }
+    } catch (err) {
+        console.error('Restore error:', err);
+        res.status(500).json({ error: 'リストアに失敗しました' });
     }
 });
 

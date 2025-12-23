@@ -1641,9 +1641,17 @@ table tbody tr:hover {
 .usage-guide {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
-    padding: 10px 15px;
+    padding: 10px;
     border-radius: 8px;
     margin-bottom: 20px;
+    overflow: hidden;
+}
+
+/* PC表示時のみパディングを増やす */
+@media (min-width: 768px) {
+    .usage-guide {
+        padding: 10px 15px;
+    }
 }
 
 .usage-guide-content {
@@ -1666,13 +1674,36 @@ table tbody tr:hover {
 
 .usage-guide-item {
     background: rgba(255, 255, 255, 0.1);
-    padding: 15px;
+    padding: 10px;
     border-radius: 6px;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+/* PC表示時のみパディングを増やす */
+@media (min-width: 768px) {
+    .usage-guide-item {
+        padding: 15px;
+    }
 }
 
 .usage-guide-item strong {
     display: block;
     margin-bottom: 8px;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+.usage-guide-item ul,
+.usage-guide-item p {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    max-width: 100%;
+}
+
+.usage-guide-item li {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
 }
 
 .usage-guide-item ul {

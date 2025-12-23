@@ -1759,8 +1759,9 @@ table tbody tr:hover {
 
     .usage-guide-item li {
         margin-bottom: 4px;
-        word-break: keep-all;
-        overflow-wrap: break-word;
+        word-break: break-word;
+        overflow-wrap: anywhere;
         white-space: normal;
+        max-width: 100%;
     }
 }

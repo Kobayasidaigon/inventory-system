@@ -524,12 +524,21 @@ async function loadAllOrdersData() {
         const tbody = document.getElementById('orders-list');
         tbody.innerHTML = '';
 
-        if (data.orders.length === 0) {
+        // テストの連保を除外
+        const filteredOrders = data.orders.filter(order =>
+            !order.location_name.includes('テスト') &&
+            !order.location_code.includes('test')
+        );
+
+        // 依頼日時で降順ソート（新しい順）
+        filteredOrders.sort((a, b) => new Date(b.requested_at) - new Date(a.requested_at));
+
+        if (filteredOrders.length === 0) {
             tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: #666;">発注依頼がありません</td></tr>';
             return;
         }
 
-        data.orders.forEach(order => {
+        filteredOrders.forEach(order => {
             const row = document.createElement('tr');
 
             // ステータスの表示
@@ -549,7 +558,16 @@ async function loadAllOrdersData() {
             const statusText = statusMap[order.status] || order.status;
             const statusColor = statusColorMap[order.status] || '#000';
 
-            const requestedAt = new Date(order.requested_at).toLocaleString('ja-JP');
+            // UTC時間を日本時間に変換
+            const requestedAt = new Date(order.requested_at).toLocaleString('ja-JP', {
+                timeZone: 'Asia/Tokyo',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
 
             row.innerHTML = `
                 <td><strong>${order.location_name}</strong> (${order.location_code})</td>

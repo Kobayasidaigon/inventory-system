@@ -558,15 +558,12 @@ async function loadAllOrdersData() {
             const statusText = statusMap[order.status] || order.status;
             const statusColor = statusColorMap[order.status] || '#000';
 
-            // UTC時間を日本時間に変換
-            const requestedAt = new Date(order.requested_at).toLocaleString('ja-JP', {
+            // UTC時間を日本時間に変換（日付のみ）
+            const requestedAt = new Date(order.requested_at).toLocaleDateString('ja-JP', {
                 timeZone: 'Asia/Tokyo',
                 year: 'numeric',
                 month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit'
+                day: '2-digit'
             });
 
             row.innerHTML = `

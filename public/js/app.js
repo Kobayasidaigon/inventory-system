@@ -2038,6 +2038,21 @@ async function quickStockChange(productId, change) {
         return;
     }
 
+    // 入庫操作(+1, +5)の場合、該当商品の発注依頼済みがあるかチェック
+    if (change > 0) {
+        const hasPendingOrder = allActiveOrders.some(order => order.product_id === productId);
+        if (hasPendingOrder) {
+            const shouldProceed = confirm(
+                `${product.name}は発注依頼済みです。\n\n` +
+                `商品が届いた場合は「入庫完了」ボタンを押してください。\n\n` +
+                `このまま在庫を増やしますか？`
+            );
+            if (!shouldProceed) {
+                return;
+            }
+        }
+    }
+
     try {
         const type = change < 0 ? 'out' : 'in';
         const quantity = Math.abs(change);

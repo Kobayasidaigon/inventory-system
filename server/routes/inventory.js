@@ -29,52 +29,51 @@ router.post('/in', requireAuth, async (req, res) => {
         // 更新後の商品情報を取得
         const product = await db.get('SELECT * FROM products WHERE id = ?', [productId]);
 
-        // 在庫が発注点を下回っている場合、自動的に発注依頼を作成
-        if (product && product.current_stock <= product.reorder_point) {
-            // すでに未処理の発注依頼があるか確認
-            const existingOrder = await db.get(
-                `SELECT id FROM order_requests
-                 WHERE product_id = ? AND (status = 'pending' OR status = 'ordered')`,
-                [productId]
+        // すでに未処理の発注依頼があるか確認
+        const existingOrder = await db.get(
+            `SELECT id FROM order_requests
+             WHERE product_id = ? AND (status = 'pending' OR status = 'ordered')`,
+            [productId]
+        );
+
+        // 入庫操作で発注依頼済みの商品の場合は、発注依頼作成とLINE通知をスキップ
+        // （商品が届いた際の入庫操作の可能性があるため）
+        if (!existingOrder && product && product.current_stock <= product.reorder_point) {
+            // 在庫が発注点を下回っている場合、自動的に発注依頼を作成
+            const orderQuantity = Math.max(
+                product.reorder_point * 2 - product.current_stock,
+                product.reorder_point
             );
 
-            // 未処理の発注依頼がなければ新規作成
-            if (!existingOrder) {
-                const orderQuantity = Math.max(
-                    product.reorder_point * 2 - product.current_stock,
-                    product.reorder_point
+            await db.run(
+                `INSERT INTO order_requests (product_id, requested_quantity, user_id, note, status)
+                 VALUES (?, ?, ?, ?, 'pending')`,
+                [productId, orderQuantity, req.session.userId, '在庫が発注点を下回ったため自動発注']
+            );
+
+            console.log(`商品ID ${productId} (${product.name}) の在庫が発注点を下回りました。自動発注依頼を作成しました。`);
+
+            // LINE通知を送信
+            try {
+                const location = await mainDb.get(
+                    'SELECT location_name, location_code FROM locations WHERE location_code = ?',
+                    [req.session.locationCode]
                 );
 
-                await db.run(
-                    `INSERT INTO order_requests (product_id, requested_quantity, user_id, note, status)
-                     VALUES (?, ?, ?, ?, 'pending')`,
-                    [productId, orderQuantity, req.session.userId, '在庫が発注点を下回ったため自動発注']
-                );
+                const groupId = await mainDb.get('SELECT value FROM settings WHERE key = "line_group_id"');
 
-                console.log(`商品ID ${productId} (${product.name}) の在庫が発注点を下回りました。自動発注依頼を作成しました。`);
-
-                // LINE通知を送信
-                try {
-                    const location = await mainDb.get(
-                        'SELECT location_name, location_code FROM locations WHERE location_code = ?',
-                        [req.session.locationCode]
-                    );
-
-                    const groupId = await mainDb.get('SELECT value FROM settings WHERE key = "line_group_id"');
-
-                    if (groupId && groupId.value) {
-                        await sendOrderNotification(groupId.value, {
-                            locationName: location ? location.location_name : '不明',
-                            locationCode: req.session.locationCode,
-                            productName: product.name,
-                            currentStock: product.current_stock,
-                            reorderPoint: product.reorder_point,
-                            orderQuantity: orderQuantity
-                        });
-                    }
-                } catch (lineError) {
-                    console.error('LINE通知エラー:', lineError);
+                if (groupId && groupId.value) {
+                    await sendOrderNotification(groupId.value, {
+                        locationName: location ? location.location_name : '不明',
+                        locationCode: req.session.locationCode,
+                        productName: product.name,
+                        currentStock: product.current_stock,
+                        reorderPoint: product.reorder_point,
+                        orderQuantity: orderQuantity
+                    });
                 }
+            } catch (lineError) {
+                console.error('LINE通知エラー:', lineError);
             }
         }
 

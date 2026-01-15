@@ -355,20 +355,21 @@ router.put('/history/:id', requireAuth, async (req, res) => {
 // CSVエクスポート
 router.get('/export', requireAuth, async (req, res) => {
     const db = getLocationDatabase(req.session.locationCode);
-    const { type = 'current' } = req.query;
+    const { type = 'current', sort = 'id' } = req.query;
 
     try {
         if (type === 'current') {
             // 現在在庫をエクスポート
-            const products = await db.all('SELECT * FROM products ORDER BY category, name');
+            // sort: 'id' (ID順) または 'category' (カテゴリ順)
+            const orderBy = sort === 'category' ? 'category, id' : 'id';
+            const products = await db.all(`SELECT * FROM products ORDER BY ${orderBy}`);
 
             const csvData = products.map(p => ({
                 ID: p.id,
                 商品名: p.name,
-                カテゴリ: p.category || '',
-                現在庫: p.current_stock,
-                発注点: p.reorder_point,
-                発注要否: p.current_stock <= p.reorder_point ? '要発注' : ''
+                朝: '',
+                昼: '',
+                晩: ''
             }));
 
             res.setHeader('Content-Type', 'text/csv; charset=utf-8');

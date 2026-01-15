@@ -83,7 +83,8 @@ function setupEventListeners() {
 
     // 各種ボタンのイベント
     document.getElementById('add-product-btn').addEventListener('click', showAddProductForm);
-    document.getElementById('export-current').addEventListener('click', exportCurrentStock);
+    document.getElementById('export-current-id').addEventListener('click', () => exportCurrentStock('id'));
+    document.getElementById('export-current-category').addEventListener('click', () => exportCurrentStock('category'));
     document.getElementById('export-history').addEventListener('click', exportHistory);
     document.getElementById('refresh-history').addEventListener('click', loadHistory);
     document.getElementById('load-chart-btn').addEventListener('click', loadStockChart);
@@ -1198,8 +1199,8 @@ async function editHistory(historyId) {
 }
 
 // CSVエクスポート
-function exportCurrentStock() {
-    window.location.href = '/api/inventory/export?type=current';
+function exportCurrentStock(sort = 'id') {
+    window.location.href = `/api/inventory/export?type=current&sort=${sort}`;
 }
 
 function exportHistory() {

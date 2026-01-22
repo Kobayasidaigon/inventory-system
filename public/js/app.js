@@ -140,6 +140,7 @@ async function showPage(pageName) {
             await loadProducts();
             loadChartCategoryFilter();
             loadChartProductList();
+            await loadFastConsumption();
             break;
         case 'inventory-count':
             await loadInventoryCounts();
@@ -151,7 +152,6 @@ async function showPage(pageName) {
 async function showDashboard() {
     await loadProducts(true); // ダッシュボード表示時は順序を更新
     await loadPendingOrders();
-    await loadFastConsumption();
     loadDashboardCategoryFilter();
 
     // カテゴリフィルターのイベントリスナーを設定（重複を避けるため一度削除）

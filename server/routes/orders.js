@@ -198,4 +198,67 @@ router.get('/analysis/:productId', requireAuth, async (req, res) => {
     }
 });
 
+// 消費が早い商品一覧（直近7日 vs 過去30日の平均比較）
+router.get('/fast-consumption', requireAuth, async (req, res) => {
+    const db = getLocationDatabase(req.session.locationCode);
+
+    try {
+        // 全商品を取得
+        const products = await db.all('SELECT id, name, category, current_stock FROM products');
+
+        const results = [];
+
+        for (const product of products) {
+            // 過去30日間の出庫履歴を取得
+            const history = await db.all(`
+                SELECT
+                    COALESCE(h.date, DATE(h.created_at)) as date,
+                    SUM(CASE WHEN h.type = 'out' THEN h.quantity ELSE 0 END) as out_quantity
+                FROM inventory_history h
+                WHERE h.product_id = ?
+                AND DATE(COALESCE(h.date, h.created_at)) >= DATE('now', '-30 days')
+                GROUP BY date
+                ORDER BY date ASC
+            `, [product.id]);
+
+            if (history.length < 7) continue; // データが少ない場合はスキップ
+
+            // 全期間（30日）の平均消費量
+            const totalConsumption = history.reduce((sum, item) => sum + item.out_quantity, 0);
+            const avgDaily = totalConsumption / 30;
+
+            if (avgDaily === 0) continue; // 消費がない場合はスキップ
+
+            // 直近7日間の平均消費量
+            const recent7Days = history.slice(-7);
+            const recentConsumption = recent7Days.reduce((sum, item) => sum + item.out_quantity, 0);
+            const recentAvg = recentConsumption / 7;
+
+            // 増加率を計算（直近が平均より何%多いか）
+            const increaseRate = ((recentAvg - avgDaily) / avgDaily) * 100;
+
+            // 20%以上増加している場合のみリストに追加
+            if (increaseRate >= 20) {
+                results.push({
+                    productId: product.id,
+                    productName: product.name,
+                    category: product.category,
+                    currentStock: product.current_stock,
+                    avgDaily: Math.round(avgDaily * 100) / 100,
+                    recentAvg: Math.round(recentAvg * 100) / 100,
+                    increaseRate: Math.round(increaseRate)
+                });
+            }
+        }
+
+        // 増加率が高い順にソート
+        results.sort((a, b) => b.increaseRate - a.increaseRate);
+
+        res.json(results);
+    } catch (err) {
+        console.error('消費トレンド取得エラー:', err);
+        res.status(500).json({ error: 'データ取得エラー' });
+    }
+});
+
 module.exports = router;

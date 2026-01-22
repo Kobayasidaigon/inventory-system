@@ -151,6 +151,7 @@ async function showPage(pageName) {
 async function showDashboard() {
     await loadProducts(true); // ダッシュボード表示時は順序を更新
     await loadPendingOrders();
+    await loadFastConsumption();
     loadDashboardCategoryFilter();
 
     // カテゴリフィルターのイベントリスナーを設定（重複を避けるため一度削除）
@@ -160,6 +161,39 @@ async function showDashboard() {
     newFilter.addEventListener('change', updateDashboardDisplay);
 
     updateDashboardDisplay();
+}
+
+// 消費が早い商品を読み込み
+async function loadFastConsumption() {
+    try {
+        const response = await fetch('/api/orders/fast-consumption');
+        const data = await response.json();
+
+        const section = document.getElementById('fast-consumption-section');
+        const tbody = document.querySelector('#fast-consumption-table tbody');
+        const countBadge = document.getElementById('fast-consumption-count');
+
+        if (data.length > 0) {
+            section.style.display = 'block';
+            countBadge.textContent = data.length;
+            tbody.innerHTML = '';
+
+            data.forEach(item => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td><strong>${item.productName}</strong></td>
+                    <td>${item.avgDaily}個/日</td>
+                    <td style="color: #e53e3e; font-weight: bold;">${item.recentAvg}個/日</td>
+                    <td><span style="background: #fed7d7; color: #c53030; padding: 2px 8px; border-radius: 10px; font-weight: bold;">+${item.increaseRate}%</span></td>
+                `;
+                tbody.appendChild(row);
+            });
+        } else {
+            section.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('消費トレンド取得エラー:', error);
+    }
 }
 
 // ダッシュボード用カテゴリフィルター読み込み

@@ -69,6 +69,25 @@
                 </div>
             </div>
 
+            <!-- 消費が早い商品 -->
+            <div id="fast-consumption-section" class="dashboard-section" style="display: none;">
+                <h3>⚡ 消費が早い商品 <span id="fast-consumption-count" class="badge"></span></h3>
+                <p style="font-size: 13px; color: #666; margin-bottom: 10px;">直近7日間の消費が通常より20%以上多い商品です</p>
+                <div class="table-container">
+                    <table id="fast-consumption-table">
+                        <thead>
+                            <tr>
+                                <th>商品名</th>
+                                <th>通常平均</th>
+                                <th>直近7日</th>
+                                <th>増加率</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
             <!-- 発注依頼済み商品 -->
             <div id="pending-orders-section" class="dashboard-section" style="display: none;">
                 <h3>発注依頼済み商品 <span id="pending-count" class="badge"></span></h3>

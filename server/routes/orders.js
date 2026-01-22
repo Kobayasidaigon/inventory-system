@@ -65,10 +65,12 @@ router.put('/:id', requireAuth, async (req, res) => {
     }
 });
 
-// 商品ごとの発注分析（90日間の消費トレンド）
+// 商品ごとの発注分析（期間指定可能な消費トレンド）
 router.get('/analysis/:productId', requireAuth, async (req, res) => {
     const db = getLocationDatabase(req.session.locationCode);
     const productId = req.params.productId;
+    // 期間パラメータ（デフォルト90日）
+    const days = parseInt(req.query.days) || 90;
 
     try {
         // 商品情報を取得
@@ -78,7 +80,7 @@ router.get('/analysis/:productId', requireAuth, async (req, res) => {
             return res.status(404).json({ error: '商品が見つかりません' });
         }
 
-        // 過去90日間の出庫履歴を取得
+        // 指定期間の出庫履歴を取得
         const query = `
             SELECT
                 COALESCE(h.date, DATE(h.created_at)) as date,
@@ -86,12 +88,12 @@ router.get('/analysis/:productId', requireAuth, async (req, res) => {
                 SUM(CASE WHEN h.type = 'out' THEN h.quantity ELSE 0 END) as out_quantity
             FROM inventory_history h
             WHERE h.product_id = ?
-            AND DATE(COALESCE(h.date, h.created_at)) >= DATE('now', '-90 days')
+            AND DATE(COALESCE(h.date, h.created_at)) >= DATE('now', '-' || ? || ' days')
             GROUP BY date
             ORDER BY date ASC
         `;
 
-        const history = await db.all(query, [productId]);
+        const history = await db.all(query, [productId, days]);
 
         if (history.length === 0) {
             return res.json({
@@ -100,8 +102,8 @@ router.get('/analysis/:productId', requireAuth, async (req, res) => {
             });
         }
 
-        // 全体の平均消費量を計算
-        const totalDays = history.length;
+        // 全体の平均消費量を計算（指定期間の実日数で割る）
+        const totalDays = days;
         const totalConsumption = history.reduce((sum, item) => sum + item.out_quantity, 0);
         const avgDailyConsumption = totalConsumption / totalDays;
 

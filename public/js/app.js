@@ -1285,7 +1285,7 @@ async function loadStockChart() {
         // グラフデータと発注分析を並行取得
         const [chartResponse, analysisResponse] = await Promise.all([
             fetch(`/api/inventory/chart?productId=${productId}&days=${period}`),
-            fetch(`/api/orders/analysis/${productId}`)
+            fetch(`/api/orders/analysis/${productId}?days=${period}`)
         ]);
 
         const data = await chartResponse.json();
@@ -1299,26 +1299,25 @@ async function loadStockChart() {
             chartInstance.destroy();
         }
 
-        // データセットを準備
+        // データセットを準備（一日あたりの消費量の棒グラフ）
         const datasets = [{
-            label: '在庫数',
-            data: data.stocks,
+            label: '一日あたりの消費量',
+            data: data.dailyConsumption,
+            backgroundColor: 'rgba(102, 126, 234, 0.7)',
             borderColor: '#667eea',
-            backgroundColor: 'rgba(102, 126, 234, 0.1)',
-            borderWidth: 2,
-            fill: true,
-            tension: 0.4,
+            borderWidth: 1,
             yAxisID: 'y'
         }];
 
-        // 発注点の横線を追加
-        if (product && product.reorder_point > 0) {
+        // 平均消費量の横線を追加
+        if (analysis.hasData && analysis.avgDailyConsumption > 0) {
             datasets.push({
-                label: '発注点',
-                data: Array(data.labels.length).fill(product.reorder_point),
+                label: '平均消費量',
+                data: Array(data.labels.length).fill(analysis.avgDailyConsumption),
                 borderColor: '#ff6b6b',
                 borderWidth: 2,
                 borderDash: [5, 5],
+                type: 'line',
                 fill: false,
                 pointRadius: 0,
                 yAxisID: 'y'
@@ -1327,7 +1326,7 @@ async function loadStockChart() {
 
         const ctx = document.getElementById('stock-chart').getContext('2d');
         chartInstance = new Chart(ctx, {
-            type: 'line',
+            type: 'bar',
             data: {
                 labels: data.labels,
                 datasets: datasets
@@ -1338,7 +1337,7 @@ async function loadStockChart() {
                 plugins: {
                     title: {
                         display: true,
-                        text: data.productName + ' の在庫推移',
+                        text: data.productName + ' の一日あたり消費量',
                         font: { size: 16 }
                     },
                     legend: {
@@ -1358,6 +1357,16 @@ async function loadStockChart() {
                         beginAtZero: true,
                         ticks: {
                             stepSize: 1
+                        },
+                        title: {
+                            display: true,
+                            text: '消費量（個）'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: '日付'
                         }
                     }
                 }

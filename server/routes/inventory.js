@@ -459,13 +459,25 @@ router.get('/chart', requireAuth, async (req, res) => {
         // 現在の在庫を取得
         const currentProduct = await db.get('SELECT current_stock FROM products WHERE id = ?', [productId]);
 
-        // 日付ごとに在庫を計算
+        // 日付ごとに在庫と消費量を計算
         const today = new Date();
         const startDate = new Date(today);
         startDate.setDate(today.getDate() - days);
 
         const dateMap = {};
+        const consumptionMap = {};  // 各日の消費量（出庫量）
         let stock = currentProduct.current_stock;
+
+        // 各日の消費量を集計
+        for (const item of history) {
+            const date = item.date;
+            if (!consumptionMap[date]) {
+                consumptionMap[date] = 0;
+            }
+            if (item.type === 'out') {
+                consumptionMap[date] += item.quantity;
+            }
+        }
 
         // 履歴を逆順に処理して各日の在庫を復元
         for (let i = history.length - 1; i >= 0; i--) {
@@ -487,6 +499,7 @@ router.get('/chart', requireAuth, async (req, res) => {
         // 日付配列とデータを生成
         const labels = [];
         const stocks = [];
+        const dailyConsumption = [];  // 一日あたりの消費量
 
         for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
             const dateStr = d.toISOString().split('T')[0];
@@ -498,12 +511,16 @@ router.get('/chart', requireAuth, async (req, res) => {
             } else {
                 stocks.push(stock);
             }
+
+            // 消費量（なければ0）
+            dailyConsumption.push(consumptionMap[dateStr] || 0);
         }
 
         res.json({
             productName: product.name,
             labels: labels,
-            stocks: stocks
+            stocks: stocks,
+            dailyConsumption: dailyConsumption
         });
     } catch (err) {
         res.status(500).json({ error: 'データ取得エラー' });

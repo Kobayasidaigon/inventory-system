@@ -154,10 +154,6 @@ router.get('/analysis/:productId', requireAuth, async (req, res) => {
         const minReorderPoint = Math.floor(product.reorder_point * 0.5);
         const optimizedReorderPoint = Math.max(calculatedReorderPoint, minReorderPoint);
 
-        // 発注点を更新すべきかチェック（現在の発注点と20%以上差がある場合）
-        const shouldUpdateReorderPoint = product.reorder_point > 0 &&
-            Math.abs(optimizedReorderPoint - product.reorder_point) / product.reorder_point > 0.2;
-
         // 発注が必要かどうか（最適化された発注点を使用）
         const needsOrder = product.current_stock <= optimizedReorderPoint;
 
@@ -174,18 +170,8 @@ router.get('/analysis/:productId', requireAuth, async (req, res) => {
             ? ((recentAvg - avgDailyConsumption) / avgDailyConsumption * 100)
             : 0;
 
-        // 発注点の自動更新
-        if (shouldUpdateReorderPoint) {
-            try {
-                await db.run(
-                    'UPDATE products SET reorder_point = ? WHERE id = ?',
-                    [optimizedReorderPoint, productId]
-                );
-                console.log(`商品ID ${productId} の発注点を ${product.reorder_point} → ${optimizedReorderPoint} に自動更新しました`);
-            } catch (updateErr) {
-                console.error('発注点の自動更新エラー:', updateErr);
-            }
-        }
+        // 発注点の自動更新は無効化（手動で更新する）
+        // optimizedReorderPointは参考値として表示のみ
 
         res.json({
             hasData: true,
@@ -193,7 +179,7 @@ router.get('/analysis/:productId', requireAuth, async (req, res) => {
             currentStock: product.current_stock,
             reorderPoint: product.reorder_point,
             optimizedReorderPoint: optimizedReorderPoint,
-            reorderPointUpdated: shouldUpdateReorderPoint,
+            reorderPointUpdated: false,  // 自動更新しない
             avgDailyConsumption: Math.round(avgDailyConsumption * 100) / 100,
             daysUntilStockout: daysUntilStockout,
             needsOrder: needsOrder,

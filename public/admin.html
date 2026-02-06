@@ -238,6 +238,9 @@
             <!-- 発注情報セクション -->
             <div class="admin-section" id="orders-section">
                 <h2>発注依頼一覧（全店舗）</h2>
+                <div style="margin-bottom: 10px;">
+                    <button class="btn btn-primary" onclick="exportOrdersToExcel()">📥 エクセル出力</button>
+                </div>
                 <table>
                     <thead>
                         <tr>
@@ -420,6 +423,7 @@
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="/js/csrf.js"></script>
     <script src="/js/admin.js"></script>
 </body>

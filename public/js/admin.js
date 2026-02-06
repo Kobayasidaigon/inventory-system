@@ -588,6 +588,60 @@ async function loadAllOrdersData() {
     }
 }
 
+// 発注依頼一覧をエクセル出力
+async function exportOrdersToExcel() {
+    try {
+        const response = await fetch('/api/auth/admin/all-orders');
+        const data = await response.json();
+
+        const filteredOrders = data.orders.filter(order =>
+            !order.location_name.includes('テスト') &&
+            !order.location_code.includes('test')
+        );
+
+        filteredOrders.sort((a, b) => new Date(b.requested_at) - new Date(a.requested_at));
+
+        const statusMap = {
+            'pending': '発注依頼中',
+            'ordered': '発注済',
+            'received': '受領済',
+            'cancelled': 'キャンセル'
+        };
+
+        const rows = filteredOrders.map(order => ({
+            '店舗': `${order.location_name} (${order.location_code})`,
+            '商品名': order.product_name,
+            '現在庫': order.current_stock,
+            '発注点': order.reorder_point,
+            'ステータス': statusMap[order.status] || order.status,
+            '依頼者': order.username,
+            '依頼日時': new Date(order.requested_at).toLocaleDateString('ja-JP', {
+                timeZone: 'Asia/Tokyo',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit'
+            }),
+            '備考': order.note || ''
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, '発注依頼一覧');
+
+        const today = new Date().toLocaleDateString('ja-JP', {
+            timeZone: 'Asia/Tokyo',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+        }).replace(/\//g, '');
+
+        XLSX.writeFile(wb, `発注依頼一覧_${today}.xlsx`);
+    } catch (error) {
+        console.error('エクセル出力エラー:', error);
+        alert('エクセル出力に失敗しました');
+    }
+}
+
 // 発注ステータス更新
 async function updateOrderStatus(locationId, orderId, newStatus) {
     if (!confirm('発注ステータスを「発注済み」に更新しますか？')) {

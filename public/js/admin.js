@@ -571,6 +571,7 @@ async function loadAllOrdersData() {
                 <td>${order.product_name}</td>
                 <td>${order.requested_quantity}</td>
                 <td>${order.current_stock}</td>
+                <td>${order.reorder_point}</td>
                 <td style="color: ${statusColor}; font-weight: bold;">${statusText}</td>
                 <td>${order.username}</td>
                 <td>${requestedAt}</td>

@@ -569,7 +569,6 @@ async function loadAllOrdersData() {
             row.innerHTML = `
                 <td><strong>${order.location_name}</strong> (${order.location_code})</td>
                 <td>${order.product_name}</td>
-                <td>${order.requested_quantity}</td>
                 <td>${order.current_stock}</td>
                 <td>${order.reorder_point}</td>
                 <td style="color: ${statusColor}; font-weight: bold;">${statusText}</td>

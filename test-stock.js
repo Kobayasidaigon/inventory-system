@@ -1,0 +1,509 @@
+/**
+ * 在庫計算テストスクリプト
+ *
+ * 在庫は products.current_stock と inventory_history の 2 か所に書かれる。
+ * この 2 つが食い違わないこと、そして不正な入力で在庫が壊れないことを確認する。
+ *
+ * 使い方: node test-stock.js
+ * 一時ディレクトリに専用のデータベースを作り、サーバーを別プロセスで起動して
+ * 実際の HTTP API を叩く。既存のデータには一切触れない。
+ */
+
+const { spawn } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const PORT = 3987;
+const BASE_URL = `http://localhost:${PORT}`;
+const DB_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'inventory-test-'));
+const MIGRATION_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'inventory-migration-'));
+
+const results = { passed: 0, failed: 0 };
+
+function addResult(name, passed, message) {
+    if (passed) {
+        results.passed++;
+        console.log(`✅ ${name}: ${message}`);
+    } else {
+        results.failed++;
+        console.log(`❌ ${name}: ${message}`);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HTTP クライアント（Cookie と CSRF トークンを保持する）
+// ---------------------------------------------------------------------------
+
+let cookie = '';
+let csrfToken = '';
+
+async function request(method, urlPath, body) {
+    const headers = {};
+    if (cookie) headers['Cookie'] = cookie;
+    if (method !== 'GET') headers['X-CSRF-Token'] = csrfToken;
+
+    let payload;
+    if (body !== undefined) {
+        headers['Content-Type'] = 'application/json';
+        // 商品 API は multer を通るためヘッダーではなくボディの _csrf を見る
+        payload = JSON.stringify({ ...body, _csrf: csrfToken });
+    }
+
+    const res = await fetch(`${BASE_URL}${urlPath}`, {
+        method,
+        headers,
+        body: payload
+    });
+
+    const setCookie = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
+    for (const raw of setCookie) {
+        cookie = raw.split(';')[0];
+    }
+
+    const text = await res.text();
+    let json = null;
+    try {
+        json = JSON.parse(text);
+    } catch (err) {
+        json = { raw: text };
+    }
+
+    return { status: res.status, body: json };
+}
+
+async function refreshCsrfToken() {
+    const res = await request('GET', '/api/csrf-token');
+    csrfToken = res.body.csrfToken;
+}
+
+// ---------------------------------------------------------------------------
+// マイグレーション（稼働中のデータベースへの列追加）
+// ---------------------------------------------------------------------------
+
+/**
+ * 運用中のデータベースには CREATE TABLE IF NOT EXISTS で列が増えない。
+ * 古い形のテーブルを用意して、起動時に列が追加されることを確かめる。
+ */
+async function testMigration() {
+    const sqlite3 = require('sqlite3');
+
+    // 列が足りない状態の拠点データベースを作る
+    const oldDbPath = path.join(MIGRATION_DIR, 'location_9.db');
+    await new Promise((resolve, reject) => {
+        const db = new sqlite3.Database(oldDbPath);
+        db.run(`CREATE TABLE products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            category TEXT,
+            reorder_point INTEGER DEFAULT 0,
+            current_stock INTEGER DEFAULT 0,
+            image_url TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`, (err) => {
+            if (err) return reject(err);
+            db.run(
+                "INSERT INTO products (name, category, current_stock) VALUES ('既存商品', '既存', 7)",
+                (insertErr) => {
+                    db.close();
+                    if (insertErr) return reject(insertErr);
+                    resolve();
+                }
+            );
+        });
+    });
+
+    process.env.DB_DIR = MIGRATION_DIR;
+    const admin = require('./server/db/database-admin');
+    const db = admin.getLocationDatabase('9');
+    await db.ready;
+
+    const columns = await db.all('PRAGMA table_info(products)');
+    const names = columns.map(c => c.name);
+
+    addResult(
+        'マイグレーション: 既存DBに include_in_count が追加される',
+        names.includes('include_in_count'),
+        `列: ${names.join(', ')}`
+    );
+    addResult(
+        'マイグレーション: 既存DBに unit_price が追加される',
+        names.includes('unit_price'),
+        `列: ${names.join(', ')}`
+    );
+
+    const existing = await db.get('SELECT * FROM products WHERE name = ?', ['既存商品']);
+    addResult(
+        'マイグレーション: 既存データが壊れない',
+        existing && existing.current_stock === 7 && existing.include_in_count === 1,
+        `現在庫 ${existing && existing.current_stock} / 棚卸対象 ${existing && existing.include_in_count}`
+    );
+
+    // 接続は閉じない。require 時に走る初期化がまだ流れている途中で閉じると
+    // SQLITE_MISUSE になる。プロセス終了時にまとめて解放される。
+}
+
+// ---------------------------------------------------------------------------
+// サーバーの起動と停止
+// ---------------------------------------------------------------------------
+
+// サーバーが自分から落ちたときの理由。起動待ちのループが黙って
+// タイムアウトしないよう、ここに残しておく。
+let serverExit = null;
+let serverStderr = '';
+
+function startServer() {
+    const server = spawn('node', [path.join(__dirname, 'server', 'app.js')], {
+        env: {
+            ...process.env,
+            PORT: String(PORT),
+            DB_DIR,
+            NODE_ENV: 'test',
+            // テスト中に定期バックアップを走らせない
+            BACKUP_INTERVAL_HOURS: '24',
+            // テストは短時間に大量のリクエストを投げるのでレート制限を緩める
+            API_RATE_LIMIT_MAX: '100000'
+        },
+        stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    server.stdout.on('data', () => {});
+    server.stderr.on('data', (chunk) => {
+        serverStderr += String(chunk);
+    });
+    server.on('exit', (code, signal) => {
+        serverExit = { code, signal };
+    });
+
+    return server;
+}
+
+async function waitForServer() {
+    for (let i = 0; i < 60; i++) {
+        if (serverExit && serverExit.signal === null) {
+            throw new Error(
+                `サーバーが起動直後に終了しました (code ${serverExit.code})\n${serverStderr.trim()}`
+            );
+        }
+
+        try {
+            const res = await fetch(`${BASE_URL}/api/csrf-token`);
+            if (res.ok) return;
+        } catch (err) {
+            // まだ起動していない
+        }
+        await new Promise(resolve => setTimeout(resolve, 250));
+    }
+
+    throw new Error(`サーバーが起動しませんでした\n${serverStderr.trim()}`);
+}
+
+// ---------------------------------------------------------------------------
+// テスト本体
+// ---------------------------------------------------------------------------
+
+/** 商品の現在庫と、履歴を足し上げた在庫が一致するか確かめる */
+async function assertStockMatchesHistory(productId, productName, label) {
+    const products = await request('GET', '/api/products');
+    const product = products.body.find(p => p.id === productId);
+
+    const history = await request('GET', `/api/inventory/history?productId=${productId}&limit=1000`);
+    const total = history.body.reduce((sum, h) => {
+        const quantity = Number(h.quantity) || 0;
+        return sum + (h.type === 'out' ? -quantity : quantity);
+    }, 0);
+
+    addResult(
+        label,
+        product.current_stock === total,
+        `現在庫 ${product.current_stock} / 履歴の合計 ${total}（${productName}）`
+    );
+}
+
+async function run() {
+    await refreshCsrfToken();
+
+    // --- 準備: 管理者 → 拠点 → 一般ユーザー → ログイン ---
+    await request('POST', '/api/auth/admin/init', { username: 'admin', password: 'test-password-1234' });
+    await refreshCsrfToken();
+    await request('POST', '/api/auth/admin/login', { username: 'admin', password: 'test-password-1234' });
+    await refreshCsrfToken();
+
+    const location = await request('POST', '/api/auth/admin/locations', { locationName: 'テスト店' });
+    await request('POST', '/api/auth/admin/users', {
+        locationId: location.body.locationId,
+        userId: 'tester',
+        userName: 'テスト担当',
+        password: 'test-password-1234'
+    });
+
+    await request('POST', '/api/auth/logout');
+    cookie = '';
+    await refreshCsrfToken();
+    const login = await request('POST', '/api/auth/login', {
+        locationCode: location.body.locationCode,
+        userId: 'tester',
+        password: 'test-password-1234'
+    });
+    await refreshCsrfToken();
+
+    if (login.status !== 200) {
+        throw new Error(`ログインに失敗しました: ${JSON.stringify(login.body)}`);
+    }
+
+    // --- 商品を用意 ---
+    const created = await request('POST', '/api/products', {
+        name: 'テスト用トイレットペーパー',
+        category: '衛生用品',
+        reorder_point: 10,
+        current_stock: 100,
+        unit_price: 88.5,
+        include_in_count: 1
+    });
+    if (created.status !== 200 || !created.body.productId) {
+        throw new Error(`商品の登録に失敗しました: status ${created.status} / ${JSON.stringify(created.body)}`);
+    }
+    const productId = created.body.productId;
+
+    // --- 1. 単価と棚卸対象フラグが保存されるか ---
+    const afterCreate = await request('GET', '/api/products');
+    const createdProduct = afterCreate.body.find(p => p.id === productId);
+    addResult(
+        '商品登録: 単価が保存される',
+        Number(createdProduct.unit_price) === 88.5,
+        `unit_price = ${createdProduct.unit_price}（期待値 88.5）`
+    );
+    addResult(
+        '商品登録: 棚卸対象フラグが保存される',
+        Number(createdProduct.include_in_count) === 1,
+        `include_in_count = ${createdProduct.include_in_count}`
+    );
+
+    // --- 2. 不正な数量を弾く ---
+    const invalidQuantities = [
+        ['文字列', 'abc'],
+        ['負数', -5],
+        ['小数', 1.5],
+        ['ゼロ', 0],
+        ['null', null],
+        ['巨大な数', 99999999]
+    ];
+
+    for (const [label, quantity] of invalidQuantities) {
+        const res = await request('POST', '/api/inventory/out', { productId, quantity, note: 'テスト' });
+        addResult(
+            `入力検証: 数量に ${label} を渡すと拒否される`,
+            res.status === 400,
+            `status ${res.status} / ${res.body.error || ''}`
+        );
+    }
+
+    const afterInvalid = await request('GET', '/api/products');
+    const untouched = afterInvalid.body.find(p => p.id === productId);
+    addResult(
+        '入力検証: 拒否された入力で在庫が動いていない',
+        untouched.current_stock === 100,
+        `現在庫 ${untouched.current_stock}（期待値 100）`
+    );
+
+    // --- 3. 出庫・入庫が履歴と一致する ---
+    await request('POST', '/api/inventory/out', { productId, quantity: 30, date: '2026-08-01', note: '出庫テスト' });
+    await request('POST', '/api/inventory/in', { productId, quantity: 5, date: '2026-08-02', note: '入庫テスト' });
+    await assertStockMatchesHistory(productId, 'テスト用トイレットペーパー', '整合性: 入出庫の後で現在庫と履歴が一致する');
+
+    // --- 4. 在庫を超える出庫を拒否する ---
+    const tooMuch = await request('POST', '/api/inventory/out', { productId, quantity: 1000, note: '在庫超過' });
+    addResult(
+        '在庫ガード: 在庫を超える出庫を拒否する',
+        tooMuch.status === 400 && String(tooMuch.body.error).includes('在庫が不足'),
+        `status ${tooMuch.status} / ${tooMuch.body.error || ''}`
+    );
+    await assertStockMatchesHistory(productId, 'テスト用トイレットペーパー', '在庫ガード: 拒否後も現在庫と履歴が一致する');
+
+    // --- 5. 同時に大量の出庫を投げても数が合う ---
+    const concurrentProduct = await request('POST', '/api/products', {
+        name: '同時実行テスト商品',
+        category: 'テスト',
+        reorder_point: 0,
+        current_stock: 200
+    });
+    const concurrentId = concurrentProduct.body.productId;
+
+    await Promise.all(
+        Array.from({ length: 40 }, () =>
+            request('POST', '/api/inventory/out', { productId: concurrentId, quantity: 1, note: '同時実行' })
+        )
+    );
+
+    const afterConcurrent = await request('GET', '/api/products');
+    const concurrentAfter = afterConcurrent.body.find(p => p.id === concurrentId);
+    addResult(
+        '同時実行: 40 件の同時出庫が 1 件も欠けない',
+        concurrentAfter.current_stock === 160,
+        `現在庫 ${concurrentAfter.current_stock}（期待値 160）`
+    );
+    await assertStockMatchesHistory(concurrentId, '同時実行テスト商品', '同時実行: 現在庫と履歴が一致する');
+
+    // --- 6. 商品編集で在庫を書き換えても履歴に残る ---
+    const beforeEdit = await request('GET', `/api/inventory/history?productId=${concurrentId}&limit=1000`);
+    await request('POST', '/api/products/initialize', { productId: concurrentId, initialStock: 50 });
+    const afterEdit = await request('GET', `/api/inventory/history?productId=${concurrentId}&limit=1000`);
+    addResult(
+        '履歴: 初期在庫設定が履歴に残る',
+        afterEdit.body.length === beforeEdit.body.length + 1,
+        `履歴件数 ${beforeEdit.body.length} → ${afterEdit.body.length}`
+    );
+    await assertStockMatchesHistory(concurrentId, '同時実行テスト商品', '履歴: 初期在庫設定の後も現在庫と履歴が一致する');
+
+    // --- 7. 調整履歴は履歴修正から触らせない ---
+    const adjustRow = afterEdit.body.find(h => h.type === 'adjust');
+    const editAdjust = await request('PUT', `/api/inventory/history/${adjustRow.id}`, { quantity: 5, note: '書き換え' });
+    addResult(
+        '履歴修正: 調整履歴の修正を拒否する',
+        editAdjust.status === 400,
+        `status ${editAdjust.status} / ${editAdjust.body.error || ''}`
+    );
+
+    // --- 8. 出庫履歴の修正が在庫に正しく反映される ---
+    const outRow = afterEdit.body.find(h => h.type === 'out');
+    await request('PUT', `/api/inventory/history/${outRow.id}`, { quantity: 3, note: '数量を修正' });
+    await assertStockMatchesHistory(concurrentId, '同時実行テスト商品', '履歴修正: 修正後も現在庫と履歴が一致する');
+
+    // --- 9. 自動発注が重複しない ---
+    const orderProduct = await request('POST', '/api/products', {
+        name: '発注テスト商品',
+        category: 'テスト',
+        reorder_point: 10,
+        current_stock: 12
+    });
+    const orderProductId = orderProduct.body.productId;
+
+    await request('POST', '/api/inventory/out', { productId: orderProductId, quantity: 5, note: '発注点割れ' });
+    await request('POST', '/api/inventory/out', { productId: orderProductId, quantity: 1, note: 'さらに減らす' });
+
+    const orders = await request('GET', '/api/orders');
+    const autoOrders = orders.body.filter(
+        o => o.product_id === orderProductId && o.status === 'pending'
+    );
+    addResult(
+        '自動発注: 発注点を下回っても依頼は 1 件だけ',
+        autoOrders.length === 1,
+        `発注依頼 ${autoOrders.length} 件（期待値 1）`
+    );
+
+    // --- 10. 棚卸で期間中の入出庫が消えない ---
+    const countCreate = await request('POST', '/api/inventory-count/create', { count_date: '2026-08-10' });
+    addResult(
+        '棚卸: 棚卸を開始できる',
+        countCreate.status === 200,
+        `status ${countCreate.status} / ${countCreate.body.error || countCreate.body.message || ''}`
+    );
+
+    if (countCreate.status === 200) {
+        const countId = countCreate.body.count_id;
+        const detail = await request('GET', `/api/inventory-count/${countId}`);
+
+        // 全商品の実在庫を「システム上の数 + 1」として入力する
+        for (const item of detail.body.items) {
+            await request('POST', `/api/inventory-count/${countId}/items/${item.id}/count`, {
+                actual_quantity: item.system_quantity + 1,
+                note: 'テスト'
+            });
+        }
+
+        // 棚卸してから承認するまでのあいだに 1 個出庫する
+        const countedItem = detail.body.items.find(i => i.product_id === concurrentId);
+        const stockBeforeOut = (await request('GET', '/api/products')).body
+            .find(p => p.id === concurrentId).current_stock;
+        await request('POST', '/api/inventory/out', { productId: concurrentId, quantity: 1, note: '棚卸中の出庫' });
+
+        await request('POST', `/api/inventory-count/${countId}/complete`);
+        const approve = await request('POST', `/api/inventory-count/${countId}/approve`);
+
+        const afterApprove = (await request('GET', '/api/products')).body
+            .find(p => p.id === concurrentId).current_stock;
+
+        // 棚卸の差異 +1、途中の出庫 -1 の両方が反映されているはず
+        addResult(
+            '棚卸: 承認までのあいだの出庫が消えない',
+            afterApprove === stockBeforeOut + 1 - 1,
+            `承認後の在庫 ${afterApprove}（棚卸前 ${stockBeforeOut} + 差異 1 - 出庫 1 = ${stockBeforeOut}）`
+                + ` / status ${approve.status}`
+        );
+        await assertStockMatchesHistory(concurrentId, '同時実行テスト商品', '棚卸: 承認後も現在庫と履歴が一致する');
+        addResult(
+            '棚卸: 明細に含まれる商品がある',
+            countedItem !== undefined,
+            `棚卸対象 ${detail.body.items.length} 件`
+        );
+    }
+
+    // --- 11. 商品が 0 件でも CSV 出力が落ちない ---
+    const emptyExport = await fetch(`${BASE_URL}/api/inventory/export?type=history`, {
+        headers: { Cookie: cookie }
+    });
+    addResult(
+        'CSV: 履歴のエクスポートが成功する',
+        emptyExport.status === 200,
+        `status ${emptyExport.status}`
+    );
+
+    // --- 12. 在庫推移グラフが調整も含めて計算される ---
+    const chart = await request('GET', `/api/inventory/chart?productId=${concurrentId}&days=30`);
+    const currentStock = (await request('GET', '/api/products')).body
+        .find(p => p.id === concurrentId).current_stock;
+    addResult(
+        'グラフ: 最終日の在庫が現在庫と一致する',
+        chart.body.stocks[chart.body.stocks.length - 1] === currentStock,
+        `グラフ最終日 ${chart.body.stocks[chart.body.stocks.length - 1]} / 現在庫 ${currentStock}`
+    );
+
+    // --- 13. 管理画面のグラフも同じ値になる ---
+    await request('POST', '/api/auth/logout');
+    cookie = '';
+    await refreshCsrfToken();
+    await request('POST', '/api/auth/admin/login', { username: 'admin', password: 'test-password-1234' });
+    await refreshCsrfToken();
+
+    const adminChart = await request(
+        'GET',
+        `/api/auth/admin/locations/${location.body.locationId}/chart/${concurrentId}?days=30`
+    );
+
+    addResult(
+        'グラフ: 管理画面のグラフが利用者画面と一致する',
+        adminChart.status === 200 &&
+            JSON.stringify(adminChart.body.stocks) === JSON.stringify(chart.body.stocks),
+        `status ${adminChart.status} / 最終日 ${adminChart.body.stocks && adminChart.body.stocks[adminChart.body.stocks.length - 1]}`
+    );
+}
+
+// ---------------------------------------------------------------------------
+
+(async () => {
+    console.log('========================================');
+    console.log('在庫計算テスト開始');
+    console.log('========================================\n');
+
+    const server = startServer();
+
+    try {
+        await testMigration();
+        await waitForServer();
+        await run();
+    } catch (err) {
+        results.failed++;
+        console.error('\n❌ テストの実行中にエラーが発生しました:', err.message);
+    } finally {
+        server.kill();
+        fs.rmSync(DB_DIR, { recursive: true, force: true });
+        fs.rmSync(MIGRATION_DIR, { recursive: true, force: true });
+    }
+
+    console.log('\n========================================');
+    console.log(`成功: ${results.passed} 件 / 失敗: ${results.failed} 件`);
+    console.log('========================================');
+
+    process.exit(results.failed > 0 ? 1 : 0);
+})();

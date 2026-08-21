@@ -12,10 +12,12 @@ const { generateCsrfToken, verifyCsrfToken, getCsrfToken } = require('./middlewa
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// API全体のレート制限（1分間に100リクエストまで）
+// API全体のレート制限（既定は 1 分間に 100 リクエストまで）。
+// 上限は環境変数 API_RATE_LIMIT_MAX で変更できる。既定値は変えていないので、
+// 設定しなければこれまでと同じ動きになる。
 const apiLimiter = rateLimit({
     windowMs: 1 * 60 * 1000, // 1分
-    max: 100, // 最大100リクエスト
+    max: parseInt(process.env.API_RATE_LIMIT_MAX, 10) || 100,
     message: {
         success: false,
         error: 'リクエストが多すぎます。しばらく待ってから再試行してください。'

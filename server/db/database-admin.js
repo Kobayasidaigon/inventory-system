@@ -147,7 +147,9 @@ const locationTablesSql = [
         category TEXT,
         reorder_point INTEGER DEFAULT 0,
         current_stock INTEGER DEFAULT 0,
+        unit_price REAL NOT NULL DEFAULT 0,
         image_url TEXT,
+        include_in_count INTEGER NOT NULL DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`,
@@ -221,6 +223,31 @@ async function createLocationTables(db) {
     }
 }
 
+// 運用開始後に追加した列。
+//
+// CREATE TABLE IF NOT EXISTS は既にあるテーブルには何もしないので、
+// 稼働中のデータベースには列が増えない。SQLite には「なければ追加」の構文が
+// ないため、PRAGMA で現在の列を調べてから ALTER TABLE する。
+const locationColumnMigrations = [
+    // 棚卸の対象にするかどうか。商品登録画面のチェックボックスに対応する。
+    { table: 'products', column: 'include_in_count', definition: 'INTEGER NOT NULL DEFAULT 1' },
+    // 仕入れ単価。商品一覧の「単価」列に表示する。
+    { table: 'products', column: 'unit_price', definition: 'REAL NOT NULL DEFAULT 0' }
+];
+
+async function migrateLocationTables(db) {
+    for (const { table, column, definition } of locationColumnMigrations) {
+        const columns = await db.all(`PRAGMA table_info(${table})`);
+
+        if (columns.some(info => info.name === column)) {
+            continue;
+        }
+
+        await db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+        console.log(`列を追加しました: ${table}.${column}`);
+    }
+}
+
 // 拠点のデータベースを取得または作成
 function getLocationDatabase(locationCode) {
     if (dbConnections.has(locationCode)) {
@@ -233,10 +260,14 @@ function getLocationDatabase(locationCode) {
 
     const db = addPromiseMethods(new sqlite3.Database(dbPath));
 
-    // テーブル作成
-    createLocationTables(db).catch(err => {
-        console.error(`Error creating tables for location ${locationCode}:`, err);
-    });
+    // テーブル作成とマイグレーション。
+    // 完了を待てるように Promise を db.ready に持たせる。在庫を書き換える処理は
+    // utils/stock.js の withTransaction がこれを待ってから始める。
+    db.ready = createLocationTables(db)
+        .then(() => migrateLocationTables(db))
+        .catch(err => {
+            console.error(`Error preparing tables for location ${locationCode}:`, err);
+        });
 
     dbConnections.set(locationCode, db);
     return db;

@@ -6,6 +6,11 @@ primary_region = "nrt" # Tokyo region
 
 [build]
 
+[env]
+  # コンテナの既定は UTC。日付は日本時間で扱うので合わせておく。
+  # 在庫履歴の日付や在庫推移グラフの目盛りが 1 日ずれるのを防ぐ。
+  TZ = "Asia/Tokyo"
+
 [http_service]
   internal_port = 3000
   force_https = true

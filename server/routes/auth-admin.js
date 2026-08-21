@@ -6,6 +6,7 @@ const { mainDb, getLocationDatabase } = require('../db/database-admin');
 const { backupDatabase, listBackups, restoreDatabase, BACKUP_DIR } = require('../services/backup');
 const { sanitizeHtml } = require('../utils/xss-protection');
 const path = require('path');
+const { buildStockChartData, parseChartDays } = require('../utils/stock');
 const router = express.Router();
 
 // ログイン用のレート制限（15分間に5回まで）
@@ -627,70 +628,14 @@ router.get('/admin/locations/:locationId/chart/:productId', async (req, res) => 
             return res.status(404).json({ error: '商品が見つかりません' });
         }
 
-        // 指定日数分の在庫履歴を取得
-        const query = `
-            SELECT
-                COALESCE(h.date, DATE(h.created_at)) as date,
-                h.type,
-                h.quantity,
-                h.created_at
-            FROM inventory_history h
-            WHERE h.product_id = ?
-            AND DATE(COALESCE(h.date, h.created_at)) >= DATE('now', '-' || ? || ' days')
-            ORDER BY h.created_at ASC
-        `;
-
-        const history = await db.all(query, [productId, days]);
-
-        // 現在の在庫を取得
-        const currentProduct = await db.get('SELECT current_stock FROM products WHERE id = ?', [productId]);
-
-        // 日付ごとに在庫を計算
-        const today = new Date();
-        const startDate = new Date(today);
-        startDate.setDate(today.getDate() - days);
-
-        const dateMap = {};
-        let stock = currentProduct.current_stock;
-
-        // 履歴を逆順に処理して各日の在庫を復元
-        for (let i = history.length - 1; i >= 0; i--) {
-            const item = history[i];
-            const date = item.date;
-
-            if (!dateMap[date]) {
-                dateMap[date] = stock;
-            }
-
-            // 履歴を遡って在庫を戻す
-            if (item.type === 'in') {
-                stock -= item.quantity;
-            } else if (item.type === 'out') {
-                stock += item.quantity;
-            }
-        }
-
-        // 日付配列とデータを生成
-        const labels = [];
-        const stocks = [];
-
-        for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
-            const dateStr = d.toISOString().split('T')[0];
-            labels.push(dateStr);
-
-            if (dateMap[dateStr] !== undefined) {
-                stocks.push(dateMap[dateStr]);
-                stock = dateMap[dateStr];
-            } else {
-                stocks.push(stock);
-            }
-        }
+        // 在庫の復元は利用者画面のグラフと同じ計算を使う（utils/stock.js）
+        const chart = await buildStockChartData(db, productId, parseChartDays(days));
 
         res.json({
             productName: product.name,
             reorderPoint: product.reorder_point,
-            labels: labels,
-            stocks: stocks
+            labels: chart.labels,
+            stocks: chart.stocks
         });
     } catch (err) {
         console.error('Get chart error:', err);

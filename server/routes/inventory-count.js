@@ -1,13 +1,21 @@
 const express = require('express');
 const router = express.Router();
 const { mainDb } = require('../db/database-admin');
+const {
+    StockError,
+    parseStockLevel,
+    parseTransactionDate,
+    withTransaction,
+    applyStockChange,
+    respondWithStockError
+} = require('../utils/stock');
 
 module.exports = (db) => {
     // 新規棚卸作成
     router.post('/create', async (req, res) => {
         try {
-            const { count_date } = req.body;
             const userId = req.session.userId;
+            const count_date = parseTransactionDate(req.body.count_date);
 
             if (!count_date) {
                 return res.status(400).json({ error: '棚卸日を指定してください' });
@@ -126,11 +134,11 @@ module.exports = (db) => {
     router.post('/:id/items/:itemId/count', async (req, res) => {
         try {
             const { itemId } = req.params;
-            const { actual_quantity, note } = req.body;
+            const { note } = req.body;
 
-            if (actual_quantity === null || actual_quantity === undefined) {
-                return res.status(400).json({ error: '実在庫数を入力してください' });
-            }
+            // 文字列や小数がそのまま入ると差異が NaN になり、
+            // 承認時に在庫を壊すのでここで弾く
+            const actual_quantity = parseStockLevel(req.body.actual_quantity, '実在庫数');
 
             // 棚卸明細を取得
             const item = await db.get(
@@ -143,7 +151,7 @@ module.exports = (db) => {
             }
 
             // 差異を計算
-            const difference = actual_quantity - item.system_quantity;
+            const difference = actual_quantity - (Number(item.system_quantity) || 0);
 
             // 更新
             await db.run(`
@@ -154,8 +162,7 @@ module.exports = (db) => {
 
             res.json({ success: true });
         } catch (err) {
-            console.error('Error updating count item:', err);
-            res.status(500).json({ error: 'サーバーエラーが発生しました' });
+            respondWithStockError(res, err, '実在庫数の登録に失敗しました');
         }
     });
 
@@ -214,48 +221,49 @@ module.exports = (db) => {
             const countId = req.params.id;
             const userId = req.session.userId;
 
-            const count = await db.get(
-                'SELECT * FROM inventory_counts WHERE id = ?',
-                [countId]
-            );
+            const result = await withTransaction(db, async () => {
+                // 状態の確認もトランザクションの中で行う。外で確認すると、
+                // 承認ボタンを二度押ししたときに両方が確認を通過して、
+                // 同じ差異が 2 回在庫に反映される。
+                const count = await db.get(
+                    'SELECT * FROM inventory_counts WHERE id = ?',
+                    [countId]
+                );
 
-            if (!count) {
-                return res.status(404).json({ error: '棚卸が見つかりません' });
-            }
+                if (!count) {
+                    throw new StockError('棚卸が見つかりません', 404);
+                }
 
-            if (count.status !== 'completed') {
-                return res.status(400).json({ error: '棚卸が完了していません' });
-            }
+                if (count.status !== 'completed') {
+                    throw new StockError('棚卸が完了していません');
+                }
 
-            // 差異のある商品を取得
-            const items = await db.all(`
-                SELECT * FROM inventory_count_items
-                WHERE count_id = ? AND difference != 0
-            `, [countId]);
+                // 差異のある商品を取得（difference が NULL の未カウント分は対象外）
+                const items = await db.all(`
+                    SELECT * FROM inventory_count_items
+                    WHERE count_id = ? AND difference != 0
+                `, [countId]);
 
-            // トランザクション開始
-            await db.run('BEGIN TRANSACTION');
+                const negativeStockItems = [];
 
-            try {
                 for (const item of items) {
-                    // 在庫を更新
-                    await db.run(
-                        'UPDATE products SET current_stock = ? WHERE id = ?',
-                        [item.actual_quantity, item.product_id]
-                    );
+                    // 実在庫をそのまま代入すると、棚卸してから承認するまでのあいだに
+                    // 入出庫があった場合にその分が消えてしまう。差異を「増減量」として
+                    // 足し込むことで、途中の入出庫を残したまま棚の実数に合わせる。
+                    const updated = await applyStockChange(db, {
+                        productId: item.product_id,
+                        type: 'adjust',
+                        quantity: item.difference,
+                        date: count.count_date,
+                        note: `棚卸調整: ${item.reason || '差異調整'}`,
+                        userId: userId,
+                        // 実際に数えた数が正なので、マイナスになっても受け入れて表に出す
+                        allowNegative: true
+                    });
 
-                    // 履歴に記録（調整として）
-                    await db.run(`
-                        INSERT INTO inventory_history
-                        (product_id, type, quantity, date, note, user_id)
-                        VALUES (?, 'adjust', ?, ?, ?, ?)
-                    `, [
-                        item.product_id,
-                        item.difference,
-                        count.count_date,
-                        `棚卸調整: ${item.reason || '差異調整'}`,
-                        userId
-                    ]);
+                    if (updated.current_stock < 0) {
+                        negativeStockItems.push(updated.name);
+                    }
                 }
 
                 // 棚卸を承認済みに
@@ -265,20 +273,21 @@ module.exports = (db) => {
                     WHERE id = ?
                 `, [userId, countId]);
 
-                await db.run('COMMIT');
+                return { adjustedItems: items.length, negativeStockItems };
+            });
 
-                res.json({
-                    success: true,
-                    message: '棚卸差異を在庫に反映しました',
-                    adjusted_items: items.length
-                });
-            } catch (err) {
-                await db.run('ROLLBACK');
-                throw err;
-            }
+            const message = result.negativeStockItems.length > 0
+                ? `棚卸差異を在庫に反映しました。在庫がマイナスになった商品があります（${result.negativeStockItems.join('、')}）。入出庫の記録漏れがないか確認してください`
+                : '棚卸差異を在庫に反映しました';
+
+            res.json({
+                success: true,
+                message: message,
+                adjusted_items: result.adjustedItems,
+                negative_stock_items: result.negativeStockItems
+            });
         } catch (err) {
-            console.error('Error approving inventory count:', err);
-            res.status(500).json({ error: 'サーバーエラーが発生しました' });
+            respondWithStockError(res, err, '棚卸の承認に失敗しました');
         }
     });
 

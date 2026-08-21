@@ -2,166 +2,111 @@ const express = require('express');
 const { getLocationDatabase, mainDb } = require('../db/database-admin');
 const { requireAuth } = require('../middleware/auth');
 const { sendOrderNotification } = require('../services/line-notify');
-const createCsvWriter = require('csv-writer').createObjectCsvWriter;
-const path = require('path');
-const fs = require('fs');
+const { sanitizeHtml } = require('../utils/xss-protection');
+const {
+    StockError,
+    parseQuantity,
+    parsePositiveInt,
+    parseProductId,
+    parseTransactionDate,
+    withTransaction,
+    applyStockChange,
+    createAutoOrderIfNeeded,
+    buildStockChartData,
+    parseChartDays,
+    respondWithStockError
+} = require('../utils/stock');
 const router = express.Router();
 
-// 在庫入力（入庫）
-router.post('/in', requireAuth, async (req, res) => {
-    const db = getLocationDatabase(req.session.locationCode);
-    const { productId, quantity, note } = req.body;
-
+/**
+ * 自動発注が作られたことを LINE へ通知する。
+ *
+ * 必ずトランザクションの外から呼ぶこと。LINE は外部 API なので、応答を待つあいだ
+ * SQLite の書き込みロックを握り続けると他の入力が止まる。通知の失敗で在庫登録を
+ * 巻き戻したくはないので、エラーはログに残すだけにする。
+ */
+async function notifyAutoOrder({ locationCode, product, orderQuantity }) {
     try {
-        // 在庫履歴に記録
-        await db.run(
-            `INSERT INTO inventory_history (product_id, type, quantity, note, user_id)
-             VALUES (?, 'in', ?, ?, ?)`,
-            [productId, quantity, note || '', req.session.userId]
+        const location = await mainDb.get(
+            'SELECT location_name, location_code FROM locations WHERE location_code = ?',
+            [locationCode]
         );
 
-        // 現在庫を更新
-        await db.run(
-            'UPDATE products SET current_stock = current_stock + ? WHERE id = ?',
-            [quantity, productId]
-        );
+        const groupId = await mainDb.get("SELECT value FROM settings WHERE key = 'line_group_id'");
 
-        // 更新後の商品情報を取得
-        const product = await db.get('SELECT * FROM products WHERE id = ?', [productId]);
-
-        // すでに未処理の発注依頼があるか確認
-        const existingOrder = await db.get(
-            `SELECT id FROM order_requests
-             WHERE product_id = ? AND (status = 'pending' OR status = 'ordered')`,
-            [productId]
-        );
-
-        // 入庫操作で発注依頼済みの商品の場合は、発注依頼作成とLINE通知をスキップ
-        // （商品が届いた際の入庫操作の可能性があるため）
-        if (!existingOrder && product && product.current_stock <= product.reorder_point) {
-            // 在庫が発注点を下回っている場合、自動的に発注依頼を作成
-            const orderQuantity = Math.max(
-                product.reorder_point * 2 - product.current_stock,
-                product.reorder_point
-            );
-
-            await db.run(
-                `INSERT INTO order_requests (product_id, requested_quantity, user_id, note, status)
-                 VALUES (?, ?, ?, ?, 'pending')`,
-                [productId, orderQuantity, req.session.userId, '在庫が発注点を下回ったため自動発注']
-            );
-
-            console.log(`商品ID ${productId} (${product.name}) の在庫が発注点を下回りました。自動発注依頼を作成しました。`);
-
-            // LINE通知を送信
-            try {
-                const location = await mainDb.get(
-                    'SELECT location_name, location_code FROM locations WHERE location_code = ?',
-                    [req.session.locationCode]
-                );
-
-                const groupId = await mainDb.get('SELECT value FROM settings WHERE key = "line_group_id"');
-
-                if (groupId && groupId.value) {
-                    await sendOrderNotification(groupId.value, {
-                        locationName: location ? location.location_name : '不明',
-                        locationCode: req.session.locationCode,
-                        productName: product.name,
-                        currentStock: product.current_stock,
-                        reorderPoint: product.reorder_point,
-                        orderQuantity: orderQuantity
-                    });
-                }
-            } catch (lineError) {
-                console.error('LINE通知エラー:', lineError);
-            }
+        if (!groupId || !groupId.value) {
+            return;
         }
 
-        res.json({ success: true });
-    } catch (err) {
-        console.error('入庫処理エラー:', err);
-        res.status(500).json({ error: '入庫処理に失敗しました' });
+        await sendOrderNotification(groupId.value, {
+            locationName: location ? location.location_name : '不明',
+            locationCode: locationCode,
+            productName: product.name,
+            currentStock: product.current_stock,
+            reorderPoint: product.reorder_point,
+            orderQuantity: orderQuantity
+        });
+    } catch (lineError) {
+        console.error('LINE通知エラー:', lineError);
     }
-});
+}
+
+/**
+ * 入庫と出庫の処理。在庫が動く向き以外は同じなのでまとめている。
+ */
+async function handleStockChange(req, res, type) {
+    const db = getLocationDatabase(req.session.locationCode);
+    const failureMessage = type === 'in' ? '入庫処理に失敗しました' : '出庫処理に失敗しました';
+
+    try {
+        const productId = parseProductId(req.body.productId);
+        const quantity = parseQuantity(req.body.quantity);
+        const date = parseTransactionDate(req.body.date);
+        const note = sanitizeHtml(req.body.note || '');
+
+        const { product, autoOrder } = await withTransaction(db, async () => {
+            const updated = await applyStockChange(db, {
+                productId,
+                type,
+                quantity,
+                date,
+                note,
+                userId: req.session.userId
+            });
+
+            // 発注依頼済みの商品には自動発注を作らない（createAutoOrderIfNeeded が
+            // 未入荷の依頼を見て判断する）。届いた商品を入庫したタイミングで
+            // 同じ依頼をもう一度作ってしまうのを防ぐため。
+            const order = await createAutoOrderIfNeeded(db, {
+                product: updated,
+                userId: req.session.userId
+            });
+
+            return { product: updated, autoOrder: order };
+        });
+
+        if (autoOrder) {
+            console.log(
+                `商品ID ${product.id} (${product.name}) の在庫が発注点を下回りました。自動発注依頼を作成しました。`
+            );
+            await notifyAutoOrder({
+                locationCode: req.session.locationCode,
+                product,
+                orderQuantity: autoOrder.orderQuantity
+            });
+        }
+
+        res.json({ success: true, currentStock: product.current_stock });
+    } catch (err) {
+        respondWithStockError(res, err, failureMessage);
+    }
+}
+
+// 在庫入力（入庫）
+router.post('/in', requireAuth, (req, res) => handleStockChange(req, res, 'in'));
 
 // 在庫出力（出庫）- 日付指定対応
-router.post('/out', requireAuth, async (req, res) => {
-    const db = getLocationDatabase(req.session.locationCode);
-    const { productId, quantity, date, note } = req.body;
-
-    try {
-        // 在庫履歴に記録（日付を指定）
-        await db.run(
-            `INSERT INTO inventory_history (product_id, type, quantity, date, note, user_id)
-             VALUES (?, 'out', ?, ?, ?, ?)`,
-            [productId, quantity, date, note || '', req.session.userId]
-        );
-
-        // 現在庫を更新
-        await db.run(
-            'UPDATE products SET current_stock = current_stock - ? WHERE id = ?',
-            [quantity, productId]
-        );
-
-        // 更新後の商品情報を取得
-        const product = await db.get('SELECT * FROM products WHERE id = ?', [productId]);
-
-        // 在庫が発注点を下回った場合、自動的に発注依頼を作成
-        if (product && product.current_stock <= product.reorder_point) {
-            // すでに未処理の発注依頼があるか確認
-            const existingOrder = await db.get(
-                `SELECT id FROM order_requests
-                 WHERE product_id = ? AND (status = 'pending' OR status = 'ordered')`,
-                [productId]
-            );
-
-            // 未処理の発注依頼がなければ新規作成
-            if (!existingOrder) {
-                const orderQuantity = Math.max(
-                    product.reorder_point * 2 - product.current_stock,
-                    product.reorder_point
-                );
-
-                await db.run(
-                    `INSERT INTO order_requests (product_id, requested_quantity, user_id, note, status)
-                     VALUES (?, ?, ?, ?, 'pending')`,
-                    [productId, orderQuantity, req.session.userId, '在庫が発注点を下回ったため自動発注']
-                );
-
-                console.log(`商品ID ${productId} (${product.name}) の在庫が発注点を下回りました。自動発注依頼を作成しました。`);
-
-                // LINE通知を送信
-                try {
-                    const location = await mainDb.get(
-                        'SELECT location_name, location_code FROM locations WHERE location_code = ?',
-                        [req.session.locationCode]
-                    );
-
-                    const groupId = await mainDb.get('SELECT value FROM settings WHERE key = "line_group_id"');
-
-                    if (groupId && groupId.value) {
-                        await sendOrderNotification(groupId.value, {
-                            locationName: location ? location.location_name : '不明',
-                            locationCode: req.session.locationCode,
-                            productName: product.name,
-                            currentStock: product.current_stock,
-                            reorderPoint: product.reorder_point,
-                            orderQuantity: orderQuantity
-                        });
-                    }
-                } catch (lineError) {
-                    console.error('LINE通知エラー:', lineError);
-                    // LINE通知に失敗してもエラーとしない
-                }
-            }
-        }
-
-        res.json({ success: true });
-    } catch (err) {
-        console.error('出庫処理エラー:', err);
-        res.status(500).json({ error: '出庫処理に失敗しました' });
-    }
-});
+router.post('/out', requireAuth, (req, res) => handleStockChange(req, res, 'out'));
 
 // 週次在庫入力（出庫）- 日付別対応
 router.post('/weekly', requireAuth, async (req, res) => {
@@ -169,99 +114,111 @@ router.post('/weekly', requireAuth, async (req, res) => {
     const { weekStart, weekEnd, dailyItems } = req.body;
 
     try {
-        // 週次入力記録を作成
-        const entryResult = await db.run(
-            `INSERT INTO weekly_entries (week_start, week_end, user_id)
-             VALUES (?, ?, ?)`,
-            [weekStart, weekEnd, req.session.userId]
-        );
+        const start = parseTransactionDate(weekStart);
+        const end = parseTransactionDate(weekEnd);
 
-        const entryId = entryResult.lastID;
-        const updatedProductIds = new Set();
+        if (!start || !end) {
+            throw new StockError('対象期間を指定してください');
+        }
+        if (start > end) {
+            throw new StockError('対象期間の開始日が終了日より後になっています');
+        }
+        if (!dailyItems || typeof dailyItems !== 'object') {
+            throw new StockError('入力内容が正しくありません');
+        }
 
-        // 日付ごとの出庫処理
-        for (const date of Object.keys(dailyItems)) {
-            const items = dailyItems[date];
+        // 先に全件を検証する。1 件でも不正なら 1 件も登録しない。
+        // 途中まで登録された状態で 500 を返すと、利用者が再送したときに
+        // 前半が二重計上される。
+        const entries = [];
+        for (const [rawDate, items] of Object.entries(dailyItems)) {
+            const date = parseTransactionDate(rawDate);
+
+            if (!Array.isArray(items)) {
+                throw new StockError(`${rawDate} の入力内容が正しくありません`);
+            }
+
             for (const item of items) {
-                if (item.quantity > 0) {
-                    await db.run(
-                        `INSERT INTO inventory_history (product_id, type, quantity, date, note, user_id)
-                         VALUES (?, 'out', ?, ?, ?, ?)`,
-                        [item.productId, item.quantity, date, `日次出庫`, req.session.userId]
-                    );
-                    await db.run(
-                        'UPDATE products SET current_stock = current_stock - ? WHERE id = ?',
-                        [item.quantity, item.productId]
-                    );
-                    updatedProductIds.add(item.productId);
+                // 空欄と 0 は「その日は出庫なし」の意味なので読み飛ばす
+                if (item.quantity === '' || item.quantity === null || item.quantity === undefined) {
+                    continue;
                 }
+                if (Number(item.quantity) === 0) {
+                    continue;
+                }
+
+                entries.push({
+                    productId: parseProductId(item.productId),
+                    quantity: parseQuantity(item.quantity),
+                    date
+                });
             }
         }
 
-        // 在庫が発注点を下回った商品をチェックして自動発注
-        const location = await mainDb.get(
-            'SELECT location_name, location_code FROM locations WHERE location_code = ?',
-            [req.session.locationCode]
-        );
-        const groupId = await mainDb.get('SELECT value FROM settings WHERE key = "line_group_id"');
-
-        for (const productId of updatedProductIds) {
-            const product = await db.get('SELECT * FROM products WHERE id = ?', [productId]);
-
-            if (product && product.current_stock <= product.reorder_point) {
-                // すでに未処理の発注依頼があるか確認
-                const existingOrder = await db.get(
-                    `SELECT id FROM order_requests
-                     WHERE product_id = ? AND status = 'pending'`,
-                    [productId]
-                );
-
-                // 未処理の発注依頼がなければ新規作成
-                if (!existingOrder) {
-                    const orderQuantity = Math.max(
-                        product.reorder_point * 2 - product.current_stock,
-                        product.reorder_point
-                    );
-
-                    await db.run(
-                        `INSERT INTO order_requests (product_id, requested_quantity, user_id, note, status)
-                         VALUES (?, ?, ?, ?, 'pending')`,
-                        [productId, orderQuantity, req.session.userId, '在庫が発注点を下回ったため自動発注']
-                    );
-
-                    console.log(`商品ID ${productId} (${product.name}) の在庫が発注点を下回りました。自動発注依頼を作成しました。`);
-
-                    // LINE通知を送信
-                    try {
-                        if (groupId && groupId.value) {
-                            await sendOrderNotification(groupId.value, {
-                                locationName: location ? location.location_name : '不明',
-                                locationCode: req.session.locationCode,
-                                productName: product.name,
-                                currentStock: product.current_stock,
-                                reorderPoint: product.reorder_point,
-                                orderQuantity: orderQuantity
-                            });
-                        }
-                    } catch (lineError) {
-                        console.error('LINE通知エラー:', lineError);
-                        // LINE通知に失敗してもエラーとしない
-                    }
-                }
-            }
+        if (entries.length === 0) {
+            throw new StockError('登録する出庫がありません');
         }
 
-        res.json({ success: true });
+        const autoOrders = await withTransaction(db, async () => {
+            await db.run(
+                `INSERT INTO weekly_entries (week_start, week_end, user_id)
+                 VALUES (?, ?, ?)`,
+                [start, end, req.session.userId]
+            );
+
+            const updatedProducts = new Map();
+
+            for (const entry of entries) {
+                const updated = await applyStockChange(db, {
+                    productId: entry.productId,
+                    type: 'out',
+                    quantity: entry.quantity,
+                    date: entry.date,
+                    note: '日次出庫',
+                    userId: req.session.userId
+                });
+                updatedProducts.set(entry.productId, updated);
+            }
+
+            // 同じ商品を何日ぶんも入力するので、発注判定は全部反映してから 1 回だけ行う
+            const created = [];
+            for (const product of updatedProducts.values()) {
+                const order = await createAutoOrderIfNeeded(db, {
+                    product,
+                    userId: req.session.userId
+                });
+
+                if (order) {
+                    created.push({ product, orderQuantity: order.orderQuantity });
+                }
+            }
+
+            return created;
+        });
+
+        for (const { product, orderQuantity } of autoOrders) {
+            console.log(
+                `商品ID ${product.id} (${product.name}) の在庫が発注点を下回りました。自動発注依頼を作成しました。`
+            );
+            await notifyAutoOrder({
+                locationCode: req.session.locationCode,
+                product,
+                orderQuantity
+            });
+        }
+
+        res.json({ success: true, registered: entries.length });
     } catch (err) {
-        console.error('週次入力エラー:', err);
-        res.status(500).json({ error: '週次入力の記録に失敗しました' });
+        respondWithStockError(res, err, '週次入力の記録に失敗しました');
     }
 });
 
 // 在庫履歴取得（日付フィールド対応）
 router.get('/history', requireAuth, async (req, res) => {
     const db = getLocationDatabase(req.session.locationCode);
-    const { productId, limit = 50, startDate, endDate } = req.query;
+    const { productId, startDate, endDate } = req.query;
+    // 件数は 1〜1000 に収める。文字列がそのまま LIMIT に渡ると 500 になる。
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 1000);
 
     let query = `
         SELECT h.*, p.name as product_name, p.category,
@@ -317,40 +274,90 @@ router.get('/history', requireAuth, async (req, res) => {
 // 履歴修正
 router.put('/history/:id', requireAuth, async (req, res) => {
     const db = getLocationDatabase(req.session.locationCode);
-    const { quantity, note } = req.body;
-    const historyId = req.params.id;
 
     try {
-        // 元の履歴を取得
-        const original = await db.get(
-            'SELECT * FROM inventory_history WHERE id = ?',
-            [historyId]
-        );
+        const historyId = parsePositiveInt(req.params.id, '履歴ID');
+        const quantity = parseQuantity(req.body.quantity);
+        const note = sanitizeHtml(req.body.note || '');
 
-        if (!original) {
-            return res.status(404).json({ error: '履歴が見つかりません' });
-        }
+        await withTransaction(db, async () => {
+            const original = await db.get(
+                'SELECT * FROM inventory_history WHERE id = ?',
+                [historyId]
+            );
 
-        const diff = quantity - original.quantity;
-        const updateType = original.type === 'in' ? diff : -diff;
+            if (!original) {
+                throw new StockError('履歴が見つかりません', 404);
+            }
 
-        // 履歴を更新
-        await db.run(
-            'UPDATE inventory_history SET quantity = ?, note = ? WHERE id = ?',
-            [quantity, note, historyId]
-        );
+            // 調整（棚卸・初期在庫）の quantity は符号付きの増減量で、入出庫とは
+            // 意味が違う。ここで入出庫と同じ扱いをすると在庫が逆方向に動くため、
+            // 修正は受け付けず棚卸でやり直してもらう。
+            if (original.type === 'adjust') {
+                throw new StockError(
+                    '調整履歴はここでは修正できません。棚卸で実在庫を登録し直してください'
+                );
+            }
 
-        // 在庫数を調整
-        await db.run(
-            'UPDATE products SET current_stock = current_stock + ? WHERE id = ?',
-            [updateType, original.product_id]
-        );
+            const product = await db.get(
+                'SELECT * FROM products WHERE id = ?',
+                [original.product_id]
+            );
+
+            if (!product) {
+                throw new StockError('商品が見つかりません', 404);
+            }
+
+            const diff = quantity - original.quantity;
+            const delta = original.type === 'in' ? diff : -diff;
+            const currentStock = Number(product.current_stock) || 0;
+            const nextStock = currentStock + delta;
+
+            if (nextStock < 0) {
+                throw new StockError(
+                    `この数量に修正すると在庫がマイナスになります（${product.name}: 現在庫 ${currentStock}）`
+                );
+            }
+
+            await db.run(
+                'UPDATE inventory_history SET quantity = ?, note = ? WHERE id = ?',
+                [quantity, note, historyId]
+            );
+
+            await db.run(
+                'UPDATE products SET current_stock = ? WHERE id = ?',
+                [nextStock, original.product_id]
+            );
+        });
 
         res.json({ success: true });
     } catch (err) {
-        res.status(500).json({ error: '履歴修正に失敗しました' });
+        respondWithStockError(res, err, '履歴修正に失敗しました');
     }
 });
+
+/**
+ * 行の配列を CSV 文字列にする。
+ *
+ * 商品名に「,」や「"」が入っていても列がずれないようにエスケープする。
+ * Excel で開いたときに文字化けしないよう BOM を付ける。
+ *
+ * @param {string[]} headers - 見出し行
+ * @param {Array<Array<*>>} rows - 各行の値（headers と同じ順序）
+ */
+function toCsv(headers, rows) {
+    const escape = (value) => {
+        const text = value === null || value === undefined ? '' : String(value);
+        return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    };
+
+    const lines = [headers.map(escape).join(',')];
+    for (const row of rows) {
+        lines.push(row.map(escape).join(','));
+    }
+
+    return '﻿' + lines.join('\n');
+}
 
 // CSVエクスポート
 router.get('/export', requireAuth, async (req, res) => {
@@ -364,34 +371,23 @@ router.get('/export', requireAuth, async (req, res) => {
             const orderBy = sort === 'category' ? 'category, id' : 'id';
             const products = await db.all(`SELECT * FROM products ORDER BY ${orderBy}`);
 
-            const csvData = products.map(p => ({
-                ID: p.id,
-                商品名: p.name,
-                朝: '',
-                昼: '',
-                晩: ''
-            }));
+            // 朝・昼・晩は紙に手書きするための空欄
+            const csv = toCsv(
+                ['ID', '商品名', '朝', '昼', '晩'],
+                products.map(p => [p.id, p.name, '', '', ''])
+            );
 
             res.setHeader('Content-Type', 'text/csv; charset=utf-8');
             res.setHeader('Content-Disposition', 'attachment; filename="inventory.csv"');
-
-            // BOM付きでUTF-8を出力（Excelで文字化けしないように）
-            const BOM = '\uFEFF';
-            const headers = Object.keys(csvData[0]).join(',');
-            const rows = csvData.map(row => Object.values(row).join(','));
-            const csv = BOM + headers + '\n' + rows.join('\n');
-
             res.send(csv);
         } else if (type === 'history') {
             // 在庫履歴をエクスポート
-            const query = `
+            const history = await db.all(`
                 SELECT h.*, p.name as product_name
                 FROM inventory_history h
                 JOIN products p ON h.product_id = p.id
                 ORDER BY h.created_at DESC
-            `;
-
-            const history = await db.all(query);
+            `);
 
             // ユーザー名をメインDBから取得して追加
             for (let item of history) {
@@ -399,27 +395,29 @@ router.get('/export', requireAuth, async (req, res) => {
                 item.username = user ? user.user_name : '不明';
             }
 
-            const csvData = history.map(h => ({
-                ID: h.id,
-                日時: h.created_at,
-                商品名: h.product_name,
-                種別: h.type === 'in' ? '入庫' : h.type === 'out' ? '出庫' : '調整',
-                数量: h.quantity,
-                備考: h.note || '',
-                担当者: h.username
-            }));
+            const typeLabel = (t) => (t === 'in' ? '入庫' : t === 'out' ? '出庫' : '調整');
+
+            const csv = toCsv(
+                ['ID', '日時', '商品名', '種別', '数量', '備考', '担当者'],
+                history.map(h => [
+                    h.id,
+                    h.created_at,
+                    h.product_name,
+                    typeLabel(h.type),
+                    h.quantity,
+                    h.note || '',
+                    h.username
+                ])
+            );
 
             res.setHeader('Content-Type', 'text/csv; charset=utf-8');
             res.setHeader('Content-Disposition', 'attachment; filename="inventory_history.csv"');
-
-            const BOM = '\uFEFF';
-            const headers = Object.keys(csvData[0]).join(',');
-            const rows = csvData.map(row => Object.values(row).join(','));
-            const csv = BOM + headers + '\n' + rows.join('\n');
-
             res.send(csv);
+        } else {
+            res.status(400).json({ error: '不明なエクスポート種別です' });
         }
     } catch (error) {
+        console.error('エクスポートエラー:', error);
         res.status(500).json({ error: 'エクスポートエラー' });
     }
 });
@@ -427,103 +425,27 @@ router.get('/export', requireAuth, async (req, res) => {
 // 在庫推移グラフデータ取得
 router.get('/chart', requireAuth, async (req, res) => {
     const db = getLocationDatabase(req.session.locationCode);
-    const { productId, days = 30 } = req.query;
-
-    if (!productId) {
-        return res.status(400).json({ error: '商品IDが必要です' });
-    }
 
     try {
-        // 商品名を取得
+        const productId = parseProductId(req.query.productId);
+        const days = parseChartDays(req.query.days);
+
         const product = await db.get('SELECT name FROM products WHERE id = ?', [productId]);
 
         if (!product) {
-            return res.status(404).json({ error: '商品が見つかりません' });
+            throw new StockError('商品が見つかりません', 404);
         }
 
-        // 指定日数分の在庫履歴を取得
-        const query = `
-            SELECT
-                COALESCE(h.date, DATE(h.created_at)) as date,
-                h.type,
-                h.quantity,
-                h.created_at
-            FROM inventory_history h
-            WHERE h.product_id = ?
-            AND DATE(COALESCE(h.date, h.created_at)) >= DATE('now', '-' || ? || ' days')
-            ORDER BY h.created_at ASC
-        `;
-
-        const history = await db.all(query, [productId, days]);
-
-        // 現在の在庫を取得
-        const currentProduct = await db.get('SELECT current_stock FROM products WHERE id = ?', [productId]);
-
-        // 日付ごとに在庫と消費量を計算
-        const today = new Date();
-        const startDate = new Date(today);
-        startDate.setDate(today.getDate() - days);
-
-        const dateMap = {};
-        const consumptionMap = {};  // 各日の消費量（出庫量）
-        let stock = currentProduct.current_stock;
-
-        // 各日の消費量を集計
-        for (const item of history) {
-            const date = item.date;
-            if (!consumptionMap[date]) {
-                consumptionMap[date] = 0;
-            }
-            if (item.type === 'out') {
-                consumptionMap[date] += item.quantity;
-            }
-        }
-
-        // 履歴を逆順に処理して各日の在庫を復元
-        for (let i = history.length - 1; i >= 0; i--) {
-            const item = history[i];
-            const date = item.date;
-
-            if (!dateMap[date]) {
-                dateMap[date] = stock;
-            }
-
-            // 履歴を遡って在庫を戻す
-            if (item.type === 'in') {
-                stock -= item.quantity;
-            } else if (item.type === 'out') {
-                stock += item.quantity;
-            }
-        }
-
-        // 日付配列とデータを生成
-        const labels = [];
-        const stocks = [];
-        const dailyConsumption = [];  // 一日あたりの消費量
-
-        for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
-            const dateStr = d.toISOString().split('T')[0];
-            labels.push(dateStr);
-
-            if (dateMap[dateStr] !== undefined) {
-                stocks.push(dateMap[dateStr]);
-                stock = dateMap[dateStr];
-            } else {
-                stocks.push(stock);
-            }
-
-            // 消費量（なければ0）
-            dailyConsumption.push(consumptionMap[dateStr] || 0);
-        }
+        const chart = await buildStockChartData(db, productId, days);
 
         res.json({
             productName: product.name,
-            labels: labels,
-            stocks: stocks,
-            dailyConsumption: dailyConsumption
+            labels: chart.labels,
+            stocks: chart.stocks,
+            dailyConsumption: chart.dailyConsumption
         });
     } catch (err) {
-        res.status(500).json({ error: 'データ取得エラー' });
+        respondWithStockError(res, err, 'データ取得エラー');
     }
 });
 

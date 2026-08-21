@@ -15,6 +15,8 @@ CREATE TABLE products (
     category NVARCHAR(100),
     reorder_point INT DEFAULT 0,
     current_stock INT DEFAULT 0,
+    unit_price DECIMAL(12, 2) NOT NULL DEFAULT 0,
+    include_in_count BIT NOT NULL DEFAULT 1,
     image_url NVARCHAR(500),
     created_at DATETIME2 DEFAULT GETDATE(),
     updated_at DATETIME2 DEFAULT GETDATE()

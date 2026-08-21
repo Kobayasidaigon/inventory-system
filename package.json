@@ -5,7 +5,8 @@
   "main": "server/app.js",
   "scripts": {
     "start": "node server/app.js",
-    "dev": "nodemon server/app.js"
+    "dev": "nodemon server/app.js",
+    "test": "node test-stock.js"
   },
   "dependencies": {
     "@line/bot-sdk": "^10.5.0",

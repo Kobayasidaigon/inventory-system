@@ -188,6 +188,50 @@ const locationTablesSql = [
         FOREIGN KEY (product_id) REFERENCES products(id)
     )`,
 
+    // シフトの区切りテーブル
+    //
+    // 「朝・昼・晩」のように 1 日を区切り、区切りごとに在庫の登録を確認する。
+    // end_time を過ぎても確認がないと、未確認として LINE に通知する。
+    `CREATE TABLE IF NOT EXISTS shifts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        end_time TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        active_days TEXT NOT NULL DEFAULT '1111111',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`,
+
+    // シフトの確認記録テーブル
+    //
+    // status は確認したときの中身。
+    //   registered = このシフトで在庫の登録があった
+    //   no_change  = 「在庫の変化なし」を押した
+    // 登録が 0 件だったとき、「何も動かなかった」のか「登録を忘れた」のかは
+    // 記録がないと区別できない。この行があることが「確かに見た」の証拠になる。
+    `CREATE TABLE IF NOT EXISTS shift_reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        shift_id INTEGER NOT NULL,
+        report_date DATE NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('registered', 'no_change')),
+        movement_count INTEGER NOT NULL DEFAULT 0,
+        user_id INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(shift_id, report_date),
+        FOREIGN KEY (shift_id) REFERENCES shifts(id)
+    )`,
+
+    // 未確認通知の送信記録テーブル。
+    // 同じ区切りについて何度も通知しないための記録。
+    `CREATE TABLE IF NOT EXISTS shift_alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        shift_id INTEGER NOT NULL,
+        report_date DATE NOT NULL,
+        notified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(shift_id, report_date),
+        FOREIGN KEY (shift_id) REFERENCES shifts(id)
+    )`,
+
     // 棚卸テーブル
     `CREATE TABLE IF NOT EXISTS inventory_counts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -246,6 +290,39 @@ async function migrateLocationTables(db) {
         await db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
         console.log(`列を追加しました: ${table}.${column}`);
     }
+
+    await seedDefaultShifts(db);
+}
+
+// シフトの区切りの初期値。
+// 在庫表の CSV が「朝・昼・晩」の 3 列なので、それに合わせている。
+// 時刻は拠点ごとに管理画面から変更できる。
+const DEFAULT_SHIFTS = [
+    { name: '朝', end_time: '11:00', sort_order: 1 },
+    { name: '昼', end_time: '17:00', sort_order: 2 },
+    { name: '晩', end_time: '22:00', sort_order: 3 }
+];
+
+/**
+ * シフトが 1 つも登録されていない拠点に既定の区切りを入れる。
+ *
+ * 意図的に全部消した拠点へ勝手に戻さないよう、0 件のときだけ入れる。
+ */
+async function seedDefaultShifts(db) {
+    const existing = await db.get('SELECT COUNT(*) as count FROM shifts');
+
+    if (existing && existing.count > 0) {
+        return;
+    }
+
+    for (const shift of DEFAULT_SHIFTS) {
+        await db.run(
+            'INSERT INTO shifts (name, end_time, sort_order) VALUES (?, ?, ?)',
+            [shift.name, shift.end_time, shift.sort_order]
+        );
+    }
+
+    console.log('既定のシフト区切り（朝・昼・晩）を登録しました');
 }
 
 // 拠点のデータベースを取得または作成
@@ -291,8 +368,10 @@ function closeAllDatabases() {
     dbConnections.clear();
 }
 
-// 初期化
-initMainDatabase().catch(err => {
+// 初期化。
+// テーブル作成の完了を待てるように Promise を mainDb.ready に持たせる。
+// 起動直後のリクエストがテーブル作成より先に走るのを防ぐ。
+mainDb.ready = initMainDatabase().catch(err => {
     console.error('Error creating main database tables:', err);
 });
 

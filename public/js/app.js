@@ -152,6 +152,7 @@ async function showPage(pageName) {
 async function showDashboard() {
     await loadProducts(true); // ダッシュボード表示時は順序を更新
     await loadPendingOrders();
+    await loadShiftStatus();
     loadDashboardCategoryFilter();
 
     // カテゴリフィルターのイベントリスナーを設定（重複を避けるため一度削除）
@@ -161,6 +162,165 @@ async function showDashboard() {
     newFilter.addEventListener('change', updateDashboardDisplay);
 
     updateDashboardDisplay();
+}
+
+// ========== シフトの区切りごとの在庫確認 ==========
+
+// 今日の区切りと確認状況を読み込む
+async function loadShiftStatus() {
+    try {
+        const response = await fetch('/api/shifts/today');
+        const data = await response.json();
+
+        if (data.error) {
+            document.getElementById('shift-section').style.display = 'none';
+            return;
+        }
+
+        renderShiftStatus(data.shifts || []);
+    } catch (error) {
+        console.error('シフト状況の取得エラー:', error);
+        document.getElementById('shift-section').style.display = 'none';
+    }
+}
+
+// 区切りの状況を描画する
+function renderShiftStatus(shifts) {
+    const section = document.getElementById('shift-section');
+    const container = document.getElementById('shift-cards');
+    const countBadge = document.getElementById('shift-unconfirmed-count');
+
+    if (shifts.length === 0) {
+        section.style.display = 'none';
+        return;
+    }
+
+    section.style.display = 'block';
+    container.innerHTML = '';
+
+    // 区切りを過ぎたのに確認がないものの数
+    const unconfirmed = shifts.filter(s => s.isPast && !s.confirmed).length;
+    if (unconfirmed > 0) {
+        countBadge.style.display = '';
+        countBadge.textContent = unconfirmed;
+    } else {
+        countBadge.style.display = 'none';
+    }
+
+    shifts.forEach(shift => {
+        const card = document.createElement('div');
+        card.style.cssText =
+            'display: flex; align-items: center; justify-content: space-between; gap: 12px;' +
+            'flex-wrap: wrap; padding: 12px 14px; margin-bottom: 8px; border-radius: 8px;' +
+            'border: 2px solid ' + shiftBorderColor(shift) + '; background: ' + shiftBackground(shift) + ';';
+
+        const movementText = shift.movementCount > 0
+            ? `${shift.movementCount}件 登録済み`
+            : '登録なし';
+
+        card.innerHTML = `
+            <div style="min-width: 0;">
+                <div style="font-weight: bold; font-size: 15px;">
+                    ${shift.name}
+                    <span style="font-weight: normal; color: #666; font-size: 13px;">
+                        (${shift.startTime}〜${shift.endTime})
+                    </span>
+                </div>
+                <div style="font-size: 13px; color: #555; margin-top: 2px;">
+                    ${movementText}${shiftStateText(shift)}
+                </div>
+            </div>
+            <div>${shiftActionHtml(shift)}</div>
+        `;
+
+        container.appendChild(card);
+    });
+}
+
+function shiftBorderColor(shift) {
+    if (shift.confirmed) return '#9ae6b4';
+    if (shift.isPast) return '#fc8181';
+    if (shift.isCurrent) return '#90cdf4';
+    return '#e2e8f0';
+}
+
+function shiftBackground(shift) {
+    if (shift.confirmed) return '#f0fff4';
+    if (shift.isPast) return '#fff5f5';
+    if (shift.isCurrent) return '#ebf8ff';
+    return '#f7fafc';
+}
+
+function shiftStateText(shift) {
+    if (shift.confirmed) {
+        return shift.confirmedStatus === 'no_change'
+            ? ' ・ <span style="color: #2f855a;">確認済み（変化なし）</span>'
+            : ' ・ <span style="color: #2f855a;">確認済み</span>';
+    }
+    if (shift.isPast) {
+        return ' ・ <span style="color: #c53030; font-weight: bold;">未確認</span>';
+    }
+    if (shift.isCurrent) {
+        return ' ・ <span style="color: #2b6cb0;">進行中</span>';
+    }
+    return '';
+}
+
+function shiftActionHtml(shift) {
+    if (shift.confirmed) {
+        return '<span style="color: #2f855a; font-size: 20px;">✅</span>';
+    }
+
+    // まだ始まっていない区切りは押せない
+    if (!shift.isCurrent && !shift.isPast) {
+        return '<span style="color: #a0aec0; font-size: 13px;">これから</span>';
+    }
+
+    const label = shift.movementCount > 0
+        ? `${shift.movementCount}件で確定`
+        : '在庫の変化なし';
+
+    return `<button class="btn btn-primary" style="white-space: nowrap;"
+                onclick="confirmShift(${shift.id}, ${shift.movementCount})">${label}</button>`;
+}
+
+// 区切りの確認を登録する
+async function confirmShift(shiftId, movementCount) {
+    // 登録が 0 件のときは、押すのが「動きがなかった」という申告になる。
+    // 通知を消すためだけに押されないよう、ここで一度立ち止まってもらう。
+    if (movementCount === 0) {
+        const ok = confirm(
+            'この区切りは在庫の動きがなかったものとして記録します。\n\n' +
+            '出した物があれば「キャンセル」を押して、先に登録してください。'
+        );
+        if (!ok) return;
+    }
+
+    try {
+        const response = await fetchWithCsrf(`/api/shifts/${shiftId}/confirm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+
+        if (response.status === 401) {
+            alert('セッションが切れました。再度ログインしてください。');
+            window.location.href = '/';
+            return;
+        }
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            alert(data.error || '確認の登録に失敗しました');
+            return;
+        }
+
+        renderShiftStatus(data.shifts || []);
+    } catch (error) {
+        console.error('シフト確認エラー:', error);
+        alert('確認の登録に失敗しました');
+    }
 }
 
 // 消費が早い商品を読み込み
@@ -2128,6 +2288,9 @@ async function quickStockChange(productId, change) {
 
             // 発注依頼済み商品リストも更新
             await loadPendingOrders();
+
+            // 区切りごとの登録件数も変わるので読み直す
+            await loadShiftStatus();
         } else {
             alert('登録に失敗しました');
         }

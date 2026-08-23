@@ -69,7 +69,48 @@ async function sendOrderNotification(groupId, orderInfo) {
     }
 }
 
+/**
+ * シフトの区切りが未確認のまま過ぎたことを知らせる
+ * @param {string} groupId - LINEグループID
+ * @param {object} shiftInfo - シフト情報
+ * @returns {Promise<boolean>} 送信成功/失敗
+ */
+async function sendShiftReminder(groupId, shiftInfo) {
+    if (!client) {
+        console.log('LINE クライアントが初期化されていません');
+        return false;
+    }
+
+    if (!groupId) {
+        console.log('グループIDが設定されていません');
+        return false;
+    }
+
+    try {
+        const message = {
+            type: 'text',
+            text: `⏰ 在庫の確認がまだです\n\n` +
+                  `店舗: ${shiftInfo.locationName}\n` +
+                  `区切り: ${shiftInfo.shiftName}（${shiftInfo.endTime}）\n\n` +
+                  `在庫が減っていれば登録を、動きがなければ\n` +
+                  `「在庫の変化なし」を押してください。`
+        };
+
+        await client.pushMessage({
+            to: groupId,
+            messages: [message]
+        });
+
+        console.log(`シフト確認の通知を送信しました: ${shiftInfo.locationName} - ${shiftInfo.shiftName}`);
+        return true;
+    } catch (error) {
+        console.error('シフト確認通知の送信エラー:', error);
+        return false;
+    }
+}
+
 module.exports = {
     sendOrderNotification,
+    sendShiftReminder,
     isEnabled: () => !!client
 };

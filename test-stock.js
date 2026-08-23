@@ -9,73 +9,24 @@
  * 実際の HTTP API を叩く。既存のデータには一切触れない。
  */
 
-const { spawn } = require('child_process');
 const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const {
+    createResults,
+    createTempDbDir,
+    createClient,
+    startServer,
+    setupLocationUser
+} = require('./test-helpers');
 
 const PORT = 3987;
 const BASE_URL = `http://localhost:${PORT}`;
-const DB_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'inventory-test-'));
-const MIGRATION_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'inventory-migration-'));
+const DB_DIR = createTempDbDir('inventory-test');
+const MIGRATION_DIR = createTempDbDir('inventory-migration');
 
-const results = { passed: 0, failed: 0 };
+const { results, addResult, printSummary } = createResults();
 
-function addResult(name, passed, message) {
-    if (passed) {
-        results.passed++;
-        console.log(`✅ ${name}: ${message}`);
-    } else {
-        results.failed++;
-        console.log(`❌ ${name}: ${message}`);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// HTTP クライアント（Cookie と CSRF トークンを保持する）
-// ---------------------------------------------------------------------------
-
-let cookie = '';
-let csrfToken = '';
-
-async function request(method, urlPath, body) {
-    const headers = {};
-    if (cookie) headers['Cookie'] = cookie;
-    if (method !== 'GET') headers['X-CSRF-Token'] = csrfToken;
-
-    let payload;
-    if (body !== undefined) {
-        headers['Content-Type'] = 'application/json';
-        // 商品 API は multer を通るためヘッダーではなくボディの _csrf を見る
-        payload = JSON.stringify({ ...body, _csrf: csrfToken });
-    }
-
-    const res = await fetch(`${BASE_URL}${urlPath}`, {
-        method,
-        headers,
-        body: payload
-    });
-
-    const setCookie = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
-    for (const raw of setCookie) {
-        cookie = raw.split(';')[0];
-    }
-
-    const text = await res.text();
-    let json = null;
-    try {
-        json = JSON.parse(text);
-    } catch (err) {
-        json = { raw: text };
-    }
-
-    return { status: res.status, body: json };
-}
-
-async function refreshCsrfToken() {
-    const res = await request('GET', '/api/csrf-token');
-    csrfToken = res.body.csrfToken;
-}
+const client = createClient(BASE_URL);
+const { request, refreshCsrfToken } = client;
 
 // ---------------------------------------------------------------------------
 // マイグレーション（稼働中のデータベースへの列追加）
@@ -89,7 +40,7 @@ async function testMigration() {
     const sqlite3 = require('sqlite3');
 
     // 列が足りない状態の拠点データベースを作る
-    const oldDbPath = path.join(MIGRATION_DIR, 'location_9.db');
+    const oldDbPath = require('path').join(MIGRATION_DIR, 'location_9.db');
     await new Promise((resolve, reject) => {
         const db = new sqlite3.Database(oldDbPath);
         db.run(`CREATE TABLE products (
@@ -116,6 +67,7 @@ async function testMigration() {
 
     process.env.DB_DIR = MIGRATION_DIR;
     const admin = require('./server/db/database-admin');
+    await admin.mainDb.ready;
     const db = admin.getLocationDatabase('9');
     await db.ready;
 
@@ -145,61 +97,6 @@ async function testMigration() {
 }
 
 // ---------------------------------------------------------------------------
-// サーバーの起動と停止
-// ---------------------------------------------------------------------------
-
-// サーバーが自分から落ちたときの理由。起動待ちのループが黙って
-// タイムアウトしないよう、ここに残しておく。
-let serverExit = null;
-let serverStderr = '';
-
-function startServer() {
-    const server = spawn('node', [path.join(__dirname, 'server', 'app.js')], {
-        env: {
-            ...process.env,
-            PORT: String(PORT),
-            DB_DIR,
-            NODE_ENV: 'test',
-            // テスト中に定期バックアップを走らせない
-            BACKUP_INTERVAL_HOURS: '24',
-            // テストは短時間に大量のリクエストを投げるのでレート制限を緩める
-            API_RATE_LIMIT_MAX: '100000'
-        },
-        stdio: ['ignore', 'pipe', 'pipe']
-    });
-
-    server.stdout.on('data', () => {});
-    server.stderr.on('data', (chunk) => {
-        serverStderr += String(chunk);
-    });
-    server.on('exit', (code, signal) => {
-        serverExit = { code, signal };
-    });
-
-    return server;
-}
-
-async function waitForServer() {
-    for (let i = 0; i < 60; i++) {
-        if (serverExit && serverExit.signal === null) {
-            throw new Error(
-                `サーバーが起動直後に終了しました (code ${serverExit.code})\n${serverStderr.trim()}`
-            );
-        }
-
-        try {
-            const res = await fetch(`${BASE_URL}/api/csrf-token`);
-            if (res.ok) return;
-        } catch (err) {
-            // まだ起動していない
-        }
-        await new Promise(resolve => setTimeout(resolve, 250));
-    }
-
-    throw new Error(`サーバーが起動しませんでした\n${serverStderr.trim()}`);
-}
-
-// ---------------------------------------------------------------------------
 // テスト本体
 // ---------------------------------------------------------------------------
 
@@ -222,35 +119,8 @@ async function assertStockMatchesHistory(productId, productName, label) {
 }
 
 async function run() {
-    await refreshCsrfToken();
-
     // --- 準備: 管理者 → 拠点 → 一般ユーザー → ログイン ---
-    await request('POST', '/api/auth/admin/init', { username: 'admin', password: 'test-password-1234' });
-    await refreshCsrfToken();
-    await request('POST', '/api/auth/admin/login', { username: 'admin', password: 'test-password-1234' });
-    await refreshCsrfToken();
-
-    const location = await request('POST', '/api/auth/admin/locations', { locationName: 'テスト店' });
-    await request('POST', '/api/auth/admin/users', {
-        locationId: location.body.locationId,
-        userId: 'tester',
-        userName: 'テスト担当',
-        password: 'test-password-1234'
-    });
-
-    await request('POST', '/api/auth/logout');
-    cookie = '';
-    await refreshCsrfToken();
-    const login = await request('POST', '/api/auth/login', {
-        locationCode: location.body.locationCode,
-        userId: 'tester',
-        password: 'test-password-1234'
-    });
-    await refreshCsrfToken();
-
-    if (login.status !== 200) {
-        throw new Error(`ログインに失敗しました: ${JSON.stringify(login.body)}`);
-    }
+    const location = await setupLocationUser(client);
 
     // --- 商品を用意 ---
     const created = await request('POST', '/api/products', {
@@ -441,7 +311,7 @@ async function run() {
 
     // --- 11. 商品が 0 件でも CSV 出力が落ちない ---
     const emptyExport = await fetch(`${BASE_URL}/api/inventory/export?type=history`, {
-        headers: { Cookie: cookie }
+        headers: { Cookie: client.state.cookie }
     });
     addResult(
         'CSV: 履歴のエクスポートが成功する',
@@ -461,14 +331,14 @@ async function run() {
 
     // --- 13. 管理画面のグラフも同じ値になる ---
     await request('POST', '/api/auth/logout');
-    cookie = '';
+    client.resetSession();
     await refreshCsrfToken();
     await request('POST', '/api/auth/admin/login', { username: 'admin', password: 'test-password-1234' });
     await refreshCsrfToken();
 
     const adminChart = await request(
         'GET',
-        `/api/auth/admin/locations/${location.body.locationId}/chart/${concurrentId}?days=30`
+        `/api/auth/admin/locations/${location.locationId}/chart/${concurrentId}?days=30`
     );
 
     addResult(
@@ -486,11 +356,11 @@ async function run() {
     console.log('在庫計算テスト開始');
     console.log('========================================\n');
 
-    const server = startServer();
+    const { server, waitUntilReady } = startServer({ port: PORT, dbDir: DB_DIR });
 
     try {
         await testMigration();
-        await waitForServer();
+        await waitUntilReady(BASE_URL);
         await run();
     } catch (err) {
         results.failed++;
@@ -501,9 +371,6 @@ async function run() {
         fs.rmSync(MIGRATION_DIR, { recursive: true, force: true });
     }
 
-    console.log('\n========================================');
-    console.log(`成功: ${results.passed} 件 / 失敗: ${results.failed} 件`);
-    console.log('========================================');
-
+    printSummary();
     process.exit(results.failed > 0 ? 1 : 0);
 })();

@@ -28,6 +28,15 @@
         <!-- ダッシュボード -->
         <div id="dashboard" class="page active">
             <h2>在庫状況</h2>
+
+            <!-- シフトの区切りごとの在庫確認 -->
+            <div id="shift-section" class="dashboard-section" style="display: none;">
+                <h3>在庫登録の確認 <span id="shift-unconfirmed-count" class="badge" style="display: none;"></span></h3>
+                <p style="margin: 0 0 12px; font-size: 13px; color: #666;">
+                    区切りごとに、登録した内容を確定してください。動きがなかった場合も「在庫の変化なし」で残します。
+                </p>
+                <div id="shift-cards"></div>
+            </div>
             <!-- 使い方ガイド -->
             <div class="dashboard-section usage-guide">
                 <div style="display: flex; justify-content: space-between; align-items: center;">

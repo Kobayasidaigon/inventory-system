@@ -7,6 +7,7 @@ const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const { startScheduledBackup } = require('./services/backup');
+const { startShiftMonitor } = require('./services/shift-monitor');
 const { generateCsrfToken, verifyCsrfToken, getCsrfToken } = require('./middleware/csrf');
 
 const app = express();
@@ -57,6 +58,7 @@ const inventoryRoutes = require('./routes/inventory');
 const orderRoutes = require('./routes/orders');
 const qrcodeRoutes = require('./routes/qrcode');
 const feedbackRoutes = require('./routes/feedback');
+const shiftRoutes = require('./routes/shifts');
 const { getLocationDatabase } = require('./db/database-admin');
 const { requireAuth } = require('./middleware/auth');
 const inventoryCountRoutes = require('./routes/inventory-count');
@@ -73,6 +75,7 @@ app.use('/api/products', productRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/qrcode', qrcodeRoutes);
+app.use('/api/shifts', shiftRoutes);
 app.use('/api', feedbackRoutes);
 app.use('/api/inventory-count', requireAuth, (req, res, next) => {
     const db = getLocationDatabase(req.session.locationCode);
@@ -193,4 +196,11 @@ app.listen(PORT, () => {
     // 環境変数で間隔を設定可能（時間単位）
     const backupInterval = parseInt(process.env.BACKUP_INTERVAL_HOURS) || 24;
     startScheduledBackup(backupInterval);
+
+    // シフトの区切りが未確認のまま過ぎていないか見張る。
+    // 注意: この手の定期処理は、マシンが動いている間しか走らない。
+    // Fly.io では min_machines_running = 1 が必要（fly.toml のコメント参照）。
+    if (process.env.SHIFT_MONITOR !== 'off') {
+        startShiftMonitor(parseInt(process.env.SHIFT_CHECK_INTERVAL_MINUTES, 10) || 5);
+    }
 });

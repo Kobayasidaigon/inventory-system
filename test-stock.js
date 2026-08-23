@@ -94,6 +94,123 @@ async function testMigration() {
 
     // 接続は閉じない。require 時に走る初期化がまだ流れている途中で閉じると
     // SQLITE_MISUSE になる。プロセス終了時にまとめて解放される。
+    return admin;
+}
+
+// ---------------------------------------------------------------------------
+// 現在庫と履歴のズレを埋める（過去データの手当て）
+// ---------------------------------------------------------------------------
+
+/**
+ * 在庫の更新と履歴の追記が別々だった頃のデータを再現して、
+ * 調整スクリプトがズレを埋められるか確かめる。
+ *
+ * testMigration() のあとに呼ぶこと（DB_DIR の設定を引き継ぐ）。
+ */
+async function testReconcile(admin) {
+    const { findDiscrepancies, reconcileLocation, RECONCILE_NOTE } =
+        require('./server/services/stock-reconcile');
+
+    const db = admin.getLocationDatabase('8');
+    await db.ready;
+
+    // 1) 履歴のない商品（昔は商品登録時の初期在庫が履歴に残らなかった）
+    const noHistory = await db.run(
+        "INSERT INTO products (name, category, current_stock) VALUES ('履歴なし商品', '旧データ', 50)"
+    );
+
+    // 2) 履歴が一部しかない商品（在庫だけ書き換えられた分がある）
+    const partial = await db.run(
+        "INSERT INTO products (name, category, current_stock) VALUES ('履歴不足商品', '旧データ', 10)"
+    );
+    await db.run(
+        `INSERT INTO inventory_history (product_id, type, quantity, date, note, user_id)
+         VALUES (?, 'out', 5, '2026-01-10', '旧データ', 1)`,
+        [partial.lastID]
+    );
+
+    // 3) すでに辻褄が合っている商品（触ってはいけない）
+    const consistent = await db.run(
+        "INSERT INTO products (name, category, current_stock) VALUES ('整合済み商品', '旧データ', 7)"
+    );
+    await db.run(
+        `INSERT INTO inventory_history (product_id, type, quantity, date, note, user_id)
+         VALUES (?, 'adjust', 7, '2026-01-10', '初期在庫', 1)`,
+        [consistent.lastID]
+    );
+
+    const found = await findDiscrepancies(db);
+    const foundIds = found.map(f => f.productId);
+
+    addResult(
+        '整合調整: ズレのある商品だけを見つける',
+        found.length === 2 &&
+            foundIds.includes(noHistory.lastID) &&
+            foundIds.includes(partial.lastID) &&
+            !foundIds.includes(consistent.lastID),
+        `検出 ${found.length} 件（${found.map(f => `${f.productName}:${f.diff}`).join(', ')}）`
+    );
+
+    const partialItem = found.find(f => f.productId === partial.lastID);
+    addResult(
+        '整合調整: 調整履歴を過去の日付に置く',
+        partialItem && partialItem.adjustDate === '2026-01-10',
+        `調整日 ${partialItem && partialItem.adjustDate}（最初の履歴と同じ日）`
+    );
+
+    // 確認だけのモードでは書き換えない
+    const dryRun = await reconcileLocation(db, { apply: false });
+    const afterDryRun = await findDiscrepancies(db);
+    addResult(
+        '整合調整: --apply なしでは書き換えない',
+        dryRun.applied === 0 && afterDryRun.length === 2,
+        `適用 ${dryRun.applied} 件 / 残るズレ ${afterDryRun.length} 件`
+    );
+
+    // 実行する
+    const applied = await reconcileLocation(db, { apply: true });
+    addResult(
+        '整合調整: ズレの件数ぶん調整履歴を追加する',
+        applied.applied === 2,
+        `追加 ${applied.applied} 件`
+    );
+
+    // 現在庫は動かさない
+    const afterStock = await db.all(
+        'SELECT id, current_stock FROM products WHERE id IN (?, ?, ?)',
+        [noHistory.lastID, partial.lastID, consistent.lastID]
+    );
+    const stockById = {};
+    for (const row of afterStock) {
+        stockById[row.id] = row.current_stock;
+    }
+    addResult(
+        '整合調整: 現在庫は動かさない',
+        stockById[noHistory.lastID] === 50 &&
+            stockById[partial.lastID] === 10 &&
+            stockById[consistent.lastID] === 7,
+        `50→${stockById[noHistory.lastID]} / 10→${stockById[partial.lastID]} / 7→${stockById[consistent.lastID]}`
+    );
+
+    // 「現在庫 = 履歴の合計」が成り立つようになる
+    const remaining = await findDiscrepancies(db);
+    addResult(
+        '整合調整: 実行後は現在庫と履歴が一致する',
+        remaining.length === 0,
+        `残るズレ ${remaining.length} 件`
+    );
+
+    // 二度実行しても増えない
+    const secondRun = await reconcileLocation(db, { apply: true });
+    const notes = await db.all(
+        'SELECT COUNT(*) as count FROM inventory_history WHERE note = ?',
+        [RECONCILE_NOTE]
+    );
+    addResult(
+        '整合調整: 二度実行しても重ねて記録しない',
+        secondRun.applied === 0 && notes[0].count === 2,
+        `2 回目の適用 ${secondRun.applied} 件 / 調整履歴の総数 ${notes[0].count} 件`
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -359,7 +476,8 @@ async function run() {
     const { server, waitUntilReady } = startServer({ port: PORT, dbDir: DB_DIR });
 
     try {
-        await testMigration();
+        const admin = await testMigration();
+        await testReconcile(admin);
         await waitUntilReady(BASE_URL);
         await run();
     } catch (err) {

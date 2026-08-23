@@ -19,9 +19,11 @@ const router = express.Router();
 
 // Multer設定（画像アップロード）
 const fs = require('fs');
-const uploadsDir = process.env.NODE_ENV === 'production'
-    ? '/data/uploads'
-    : path.join(__dirname, '../../uploads');
+// 保存先。UPLOADS_DIR で差し替え可能（app.js の静的配信と同じ場所を指すこと）
+const uploadsDir = process.env.UPLOADS_DIR
+    || (process.env.NODE_ENV === 'production'
+        ? '/data/uploads'
+        : path.join(__dirname, '../../uploads'));
 
 // アップロードディレクトリが存在しない場合は作成
 if (!fs.existsSync(uploadsDir)) {

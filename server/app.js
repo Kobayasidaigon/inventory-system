@@ -5,6 +5,7 @@ const express = require('express');
 const session = require('express-session');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
+const crypto = require('crypto');
 const path = require('path');
 const { startScheduledBackup } = require('./services/backup');
 const { startShiftMonitor } = require('./services/shift-monitor');
@@ -35,15 +36,54 @@ app.use(cookieParser());
 // API全体にレート制限を適用
 app.use('/api/', apiLimiter);
 
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Fly.io は TLS を手前で終端し、アプリには HTTP で渡す。
+// これを教えておかないと req.secure が常に false になり、
+// secure なセッション Cookie が一切発行されずログインできなくなる。
+if (isProduction) {
+    app.set('trust proxy', 1);
+}
+
+/**
+ * セッションの署名鍵を決める。
+ *
+ * 以前はソースに直接書いていたが、このリポジトリは公開されているため、
+ * 誰でも同じ鍵でセッション Cookie を偽造して管理者になりすませる状態だった。
+ * 必ず環境変数から読む。
+ */
+function resolveSessionSecret() {
+    if (process.env.SESSION_SECRET) {
+        return process.env.SESSION_SECRET;
+    }
+
+    if (isProduction) {
+        // 本番で未設定のまま落とすと店の業務が止まるので、起動はさせる。
+        // ただし毎回違う鍵になるため、再起動のたびに全員ログアウトになる。
+        // それを警告として見せて、設定を促す。
+        console.error(
+            '\n[警告] SESSION_SECRET が設定されていません。\n' +
+            '        起動のたびに鍵が変わるため、再起動すると全員ログアウトします。\n' +
+            '        flyctl secrets set SESSION_SECRET=$(openssl rand -base64 32)\n'
+        );
+        return crypto.randomBytes(32).toString('hex');
+    }
+
+    // 開発用。毎回ログインし直さずに済むよう固定値にする。
+    return 'development-only-session-secret';
+}
+
 // Session設定
 app.use(session({
-    secret: 'inventory-secret-key-2024',
+    secret: resolveSessionSecret(),
     resave: false,
     saveUninitialized: false,
     cookie: {
         maxAge: 30 * 24 * 60 * 60 * 1000, // 30日間
         httpOnly: true,
-        secure: false // 本番環境ではtrueに設定
+        // 本番は HTTPS 前提（fly.toml で force_https = true）
+        secure: isProduction,
+        sameSite: 'lax'
     }
 }));
 
@@ -87,9 +127,9 @@ app.use('/css', express.static(path.join(__dirname, '../public/css')));
 app.use('/js', express.static(path.join(__dirname, '../public/js')));
 
 // アップロード画像のパス（本番環境では /data/uploads を使用）
-const uploadsPath = process.env.NODE_ENV === 'production'
-    ? '/data/uploads'
-    : path.join(__dirname, '../uploads');
+// UPLOADS_DIR で差し替え可能。products.js と同じ場所を指すこと。
+const uploadsPath = process.env.UPLOADS_DIR
+    || (isProduction ? '/data/uploads' : path.join(__dirname, '../uploads'));
 app.use('/uploads', express.static(uploadsPath));
 
 // ルートパス

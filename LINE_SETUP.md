@@ -1,6 +1,27 @@
 # LINE通知機能 セットアップ手順
 
-在庫が発注点を下回った際に、LINEグループへ自動通知を送る機能のセットアップ手順です。
+在庫が発注点を下回った際、およびシフトの区切りで在庫の確認が済んでいない際に、
+LINEグループへ自動通知を送る機能のセットアップ手順です。
+
+## ⚠️ 先に読んでください（トークンの再発行）
+
+2026-02-06 までの版は、`.env.example` に実際のチャネルアクセストークンと
+チャネルシークレットが書かれた状態で公開リポジトリに入っていました。
+現在のファイルからは削除しましたが、**git の履歴には残っているため、
+削除だけでは無効になりません。**
+
+次の手順で作り直してください。
+
+1. [LINE Developers](https://developers.line.biz/) → 該当チャネル →
+   「Messaging API設定」→ チャネルアクセストークンの「再発行」
+2. 同じ画面で古いトークンを失効させる
+3. 「チャネル基本設定」→ Channel secret の「発行」で作り直す
+4. 新しい値を `flyctl secrets set` で設定する（`.env.example` には書かない）
+
+```bash
+flyctl secrets set LINE_CHANNEL_ACCESS_TOKEN=新しいトークン
+flyctl secrets set LINE_CHANNEL_SECRET=新しいシークレット
+```
 
 ## 1. LINE Messaging APIの設定
 

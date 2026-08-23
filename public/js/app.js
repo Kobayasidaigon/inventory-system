@@ -323,6 +323,144 @@ async function confirmShift(shiftId, movementCount) {
     }
 }
 
+// ========== 区切りの設定 ==========
+
+const WEEKDAY_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
+
+// 区切りの設定画面を開く
+async function openShiftSettings() {
+    try {
+        const response = await fetch('/api/shifts/settings');
+        const data = await response.json();
+
+        if (data.error) {
+            alert(data.error);
+            return;
+        }
+
+        renderShiftSettings(data.shifts || []);
+    } catch (error) {
+        console.error('区切り設定の取得エラー:', error);
+        alert('区切り設定の取得に失敗しました');
+    }
+}
+
+function renderShiftSettings(shifts) {
+    const modal = document.getElementById('modal');
+    const modalBody = document.getElementById('modal-body');
+
+    modalBody.innerHTML = `
+        <h3>区切りの設定</h3>
+        <p style="font-size: 13px; color: #666; margin-bottom: 12px;">
+            指定した時刻に確認が済んでいないと、LINE に通知が飛びます。<br>
+            チェックを外した曜日は通知しません（定休日など）。
+        </p>
+        <div id="shift-settings-rows"></div>
+        <button type="button" class="btn" style="margin-top: 8px;" onclick="addShiftSettingRow()">
+            + 区切りを追加
+        </button>
+        <div style="margin-top: 18px; display: flex; gap: 10px;">
+            <button type="button" class="btn btn-primary" onclick="saveShiftSettings()">保存</button>
+            <button type="button" class="btn" onclick="closeModal()">キャンセル</button>
+        </div>
+    `;
+
+    shifts.forEach(shift => addShiftSettingRow(shift));
+    modal.classList.add('show');
+}
+
+// 1 行分の入力欄を足す
+function addShiftSettingRow(shift) {
+    const container = document.getElementById('shift-settings-rows');
+    const row = document.createElement('div');
+    const days = String((shift && shift.active_days) || '1111111');
+
+    row.className = 'shift-setting-row';
+    row.dataset.shiftId = shift && shift.id ? shift.id : '';
+    row.style.cssText =
+        'border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; margin-bottom: 8px;';
+
+    const dayCheckboxes = WEEKDAY_LABELS.map((label, index) => `
+        <label style="display: inline-flex; align-items: center; gap: 3px; font-size: 13px;">
+            <input type="checkbox" class="shift-day" data-day="${index}" ${days[index] === '1' ? 'checked' : ''}>
+            ${label}
+        </label>
+    `).join('');
+
+    row.innerHTML = `
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <input type="text" class="shift-name" placeholder="名前（例: 昼）" maxlength="20"
+                value="${shift && shift.name ? escapeAttribute(shift.name) : ''}"
+                style="flex: 1 1 120px; min-width: 100px;">
+            <input type="time" class="shift-time"
+                value="${shift && shift.end_time ? shift.end_time : '22:00'}"
+                style="flex: 0 0 auto;">
+            <button type="button" class="btn" onclick="this.closest('.shift-setting-row').remove()"
+                style="flex: 0 0 auto;">削除</button>
+        </div>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px;">${dayCheckboxes}</div>
+    `;
+
+    container.appendChild(row);
+}
+
+// 属性値に埋め込む文字列をエスケープする
+function escapeAttribute(text) {
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+// 区切りの設定を保存する
+async function saveShiftSettings() {
+    const rows = Array.from(document.querySelectorAll('.shift-setting-row'));
+
+    if (rows.length === 0) {
+        alert('区切りを 1 つ以上設定してください');
+        return;
+    }
+
+    const shifts = rows.map(row => {
+        const days = WEEKDAY_LABELS.map((_, index) => {
+            const box = row.querySelector(`.shift-day[data-day="${index}"]`);
+            return box && box.checked ? '1' : '0';
+        }).join('');
+
+        return {
+            id: row.dataset.shiftId || null,
+            name: row.querySelector('.shift-name').value.trim(),
+            end_time: row.querySelector('.shift-time').value,
+            active_days: days
+        };
+    });
+
+    // 時刻の早い順に並べ替えてから送る。表示順と通知順を揃えるため。
+    shifts.sort((a, b) => String(a.end_time).localeCompare(String(b.end_time)));
+
+    try {
+        const response = await fetchWithCsrf('/api/shifts/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ shifts })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            alert(data.error || '保存に失敗しました');
+            return;
+        }
+
+        closeModal();
+        await loadShiftStatus();
+    } catch (error) {
+        console.error('区切り設定の保存エラー:', error);
+        alert('保存に失敗しました');
+    }
+}
+
 // 消費が早い商品を読み込み
 async function loadFastConsumption() {
     try {

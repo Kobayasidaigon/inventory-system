@@ -31,9 +31,14 @@
 
             <!-- シフトの区切りごとの在庫確認 -->
             <div id="shift-section" class="dashboard-section" style="display: none;">
-                <h3>在庫登録の確認 <span id="shift-unconfirmed-count" class="badge" style="display: none;"></span></h3>
-                <p style="margin: 0 0 12px; font-size: 13px; color: #666;">
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+                    <h3 style="margin: 0;">在庫登録の確認 <span id="shift-unconfirmed-count" class="badge" style="display: none;"></span></h3>
+                    <button type="button" class="btn" onclick="openShiftSettings()"
+                        style="white-space: nowrap; font-size: 13px; padding: 6px 12px;">区切りを変更</button>
+                </div>
+                <p style="margin: 8px 0 12px; font-size: 13px; color: #666;">
                     区切りごとに、登録した内容を確定してください。動きがなかった場合も「在庫の変化なし」で残します。
+                    区切りの時刻を過ぎても確認がないと LINE に通知が飛びます。
                 </p>
                 <div id="shift-cards"></div>
             </div>

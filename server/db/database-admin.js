@@ -49,14 +49,45 @@ function addPromiseMethods(db) {
     return db;
 }
 
+/**
+ * 初期化（テーブル作成・マイグレーション）が終わるまでクエリを待たせる。
+ *
+ * sqlite3 の Database は接続直後から使えてしまうので、テーブルができる前の
+ * SELECT が「テーブルがない」「行がまだ入っていない」状態を読んでしまう。
+ * 初期化そのものは待たせるわけにいかないので、初期化には差し替え前の
+ * メソッド（raw）を渡し、外から使うメソッドだけ差し替える。
+ *
+ * @param {object} db - 対象のデータベース
+ * @param {Function} initialize - raw を受け取って初期化する関数
+ * @returns {object} 初期化に使う素のメソッド
+ */
+function gateUntilReady(db, initialize) {
+    const raw = {
+        get: db.get,
+        all: db.all,
+        run: db.run
+    };
+
+    db.ready = initialize(raw);
+
+    for (const name of ['get', 'all', 'run']) {
+        db[name] = async function (query, params = []) {
+            await db.ready;
+            return raw[name](query, params);
+        };
+    }
+
+    return raw;
+}
+
 // メインデータベース（拠点とユーザー管理用）
 const mainDbPath = path.join(DB_DIR, 'main.db');
 const mainDb = addPromiseMethods(new sqlite3.Database(mainDbPath));
 
 // メインDBのテーブル作成
-async function initMainDatabase() {
+async function initMainDatabase(db) {
     // 拠点テーブル
-    await mainDb.run(`
+    await db.run(`
         CREATE TABLE IF NOT EXISTS locations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             location_code TEXT UNIQUE NOT NULL,
@@ -67,7 +98,7 @@ async function initMainDatabase() {
     `);
 
     // ユーザーテーブル
-    await mainDb.run(`
+    await db.run(`
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             location_id INTEGER NOT NULL,
@@ -82,7 +113,7 @@ async function initMainDatabase() {
     `);
 
     // 設定テーブル（LINE通知用など）
-    await mainDb.run(`
+    await db.run(`
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT,
@@ -91,7 +122,7 @@ async function initMainDatabase() {
     `);
 
     // Remember Meトークンテーブル
-    await mainDb.run(`
+    await db.run(`
         CREATE TABLE IF NOT EXISTS remember_tokens (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -103,7 +134,7 @@ async function initMainDatabase() {
     `);
 
     // QRコード用トークンテーブル（長期間有効）
-    await mainDb.run(`
+    await db.run(`
         CREATE TABLE IF NOT EXISTS qr_tokens (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -116,7 +147,7 @@ async function initMainDatabase() {
     `);
 
     // ご意見ボックステーブル（匿名）
-    await mainDb.run(`
+    await db.run(`
         CREATE TABLE IF NOT EXISTS feedbacks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             location_id INTEGER,
@@ -128,14 +159,14 @@ async function initMainDatabase() {
     `);
 
     // インデックス作成
-    await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_users_location ON users(location_id)`);
-    await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id)`);
-    await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_remember_tokens_token ON remember_tokens(token)`);
-    await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_remember_tokens_user_id ON remember_tokens(user_id)`);
-    await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_qr_tokens_token ON qr_tokens(token)`);
-    await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_qr_tokens_user_id ON qr_tokens(user_id)`);
-    await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_feedbacks_location ON feedbacks(location_id)`);
-    await mainDb.run(`CREATE INDEX IF NOT EXISTS idx_feedbacks_status ON feedbacks(status)`);
+    await db.run(`CREATE INDEX IF NOT EXISTS idx_users_location ON users(location_id)`);
+    await db.run(`CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id)`);
+    await db.run(`CREATE INDEX IF NOT EXISTS idx_remember_tokens_token ON remember_tokens(token)`);
+    await db.run(`CREATE INDEX IF NOT EXISTS idx_remember_tokens_user_id ON remember_tokens(user_id)`);
+    await db.run(`CREATE INDEX IF NOT EXISTS idx_qr_tokens_token ON qr_tokens(token)`);
+    await db.run(`CREATE INDEX IF NOT EXISTS idx_qr_tokens_user_id ON qr_tokens(user_id)`);
+    await db.run(`CREATE INDEX IF NOT EXISTS idx_feedbacks_location ON feedbacks(location_id)`);
+    await db.run(`CREATE INDEX IF NOT EXISTS idx_feedbacks_status ON feedbacks(status)`);
 }
 
 // 拠点データベースのテーブル作成SQL
@@ -295,11 +326,12 @@ async function migrateLocationTables(db) {
 }
 
 // シフトの区切りの初期値。
-// 在庫表の CSV が「朝・昼・晩」の 3 列なので、それに合わせている。
-// 時刻は拠点ごとに管理画面から変更できる。
+// 在庫表の CSV が「朝・昼・晩」の 3 列なので、名前はそれに合わせている。
+// 時刻は各区切りの「終わり」で、ここを過ぎると未確認の通知が飛ぶ。
+// 拠点ごとにダッシュボードの「区切りを変更」から変えられる。
 const DEFAULT_SHIFTS = [
-    { name: '朝', end_time: '11:00', sort_order: 1 },
-    { name: '昼', end_time: '17:00', sort_order: 2 },
+    { name: '朝', end_time: '14:00', sort_order: 1 },
+    { name: '昼', end_time: '19:00', sort_order: 2 },
     { name: '晩', end_time: '22:00', sort_order: 3 }
 ];
 
@@ -337,14 +369,14 @@ function getLocationDatabase(locationCode) {
 
     const db = addPromiseMethods(new sqlite3.Database(dbPath));
 
-    // テーブル作成とマイグレーション。
-    // 完了を待てるように Promise を db.ready に持たせる。在庫を書き換える処理は
-    // utils/stock.js の withTransaction がこれを待ってから始める。
-    db.ready = createLocationTables(db)
-        .then(() => migrateLocationTables(db))
-        .catch(err => {
-            console.error(`Error preparing tables for location ${locationCode}:`, err);
-        });
+    // テーブル作成とマイグレーションが終わるまで、この接続へのクエリを待たせる
+    gateUntilReady(db, raw =>
+        createLocationTables(raw)
+            .then(() => migrateLocationTables(raw))
+            .catch(err => {
+                console.error(`Error preparing tables for location ${locationCode}:`, err);
+            })
+    );
 
     dbConnections.set(locationCode, db);
     return db;
@@ -368,12 +400,12 @@ function closeAllDatabases() {
     dbConnections.clear();
 }
 
-// 初期化。
-// テーブル作成の完了を待てるように Promise を mainDb.ready に持たせる。
-// 起動直後のリクエストがテーブル作成より先に走るのを防ぐ。
-mainDb.ready = initMainDatabase().catch(err => {
-    console.error('Error creating main database tables:', err);
-});
+// 初期化。テーブルができるまで、この接続へのクエリを待たせる。
+gateUntilReady(mainDb, raw =>
+    initMainDatabase(raw).catch(err => {
+        console.error('Error creating main database tables:', err);
+    })
+);
 
 module.exports = {
     mainDb,

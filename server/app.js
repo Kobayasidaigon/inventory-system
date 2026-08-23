@@ -201,6 +201,7 @@ app.listen(PORT, () => {
     // 注意: この手の定期処理は、マシンが動いている間しか走らない。
     // Fly.io では min_machines_running = 1 が必要（fly.toml のコメント参照）。
     if (process.env.SHIFT_MONITOR !== 'off') {
-        startShiftMonitor(parseInt(process.env.SHIFT_CHECK_INTERVAL_MINUTES, 10) || 5);
+        // 間隔の既定値は services/shift-monitor.js 側で持つ
+        startShiftMonitor(parseInt(process.env.SHIFT_CHECK_INTERVAL_MINUTES, 10) || undefined);
     }
 });

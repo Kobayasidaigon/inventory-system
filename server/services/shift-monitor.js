@@ -7,16 +7,19 @@
 const { mainDb, getLocationDatabase } = require('../db/database-admin');
 const { sendShiftReminder } = require('./line-notify');
 
-// 区切りの時刻を過ぎてから通知するまでの猶予。
-// 締めの作業をしている最中に鳴らされると、通知そのものが煩わしくなる。
-const GRACE_MINUTES = 15;
+// 区切りの時刻を過ぎてから通知するまでの猶予（分）。
+// 既定は 0 で、区切りの時刻ちょうどに鳴らす。締めの作業中に鳴るのが
+// 煩わしければ SHIFT_GRACE_MINUTES で後ろにずらせる。
+const GRACE_MINUTES = parseInt(process.env.SHIFT_GRACE_MINUTES, 10) || 0;
 
 // 区切りからこれ以上経っていたら通知しない。
 // マシンが止まっていて復帰したときに、深夜へまとめて鳴らさないため。
 const STALE_HOURS = 6;
 
-// 見張りの間隔（分）
-const CHECK_INTERVAL_MINUTES = 5;
+// 見張りの間隔（分）。
+// 通知を区切りの時刻ちょうどに近づけたいので毎分見る。
+// 1 回の点検は拠点ごとに数クエリなので負荷は小さい。
+const CHECK_INTERVAL_MINUTES = 1;
 
 /**
  * Date をローカル時刻のまま YYYY-MM-DD にする。
@@ -135,7 +138,8 @@ async function buildShiftStatus(db, date) {
  *
  * 同じ区切りについて二度鳴らさないよう、送信したら shift_alerts に残す。
  */
-async function checkUnconfirmedShifts(now = new Date()) {
+async function checkUnconfirmedShifts(now = new Date(), options = {}) {
+    const graceMinutes = options.graceMinutes === undefined ? GRACE_MINUTES : options.graceMinutes;
     let notified = 0;
 
     try {
@@ -161,7 +165,7 @@ async function checkUnconfirmedShifts(now = new Date()) {
                 const elapsed = nowMinutes - endMinutes;
 
                 // まだ区切り前、猶予の中、または遅すぎるものは対象外
-                if (elapsed < GRACE_MINUTES || elapsed > STALE_HOURS * 60) {
+                if (elapsed < graceMinutes || elapsed > STALE_HOURS * 60) {
                     continue;
                 }
 

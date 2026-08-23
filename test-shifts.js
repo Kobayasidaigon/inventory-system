@@ -66,16 +66,16 @@ async function testMonitor() {
         return row.count;
     };
 
-    // --- 猶予の中は通知しない ---
-    await monitor.checkUnconfirmedShifts(todayAt(10, 5));
+    // --- 猶予の中は通知しない（猶予を明示的に 15 分にして確かめる） ---
+    await monitor.checkUnconfirmedShifts(todayAt(10, 5), { graceMinutes: 15 });
     addResult(
         '見張り: 区切り直後（猶予中）は通知しない',
         (await alertCount(s1.lastID)) === 0,
-        `通知 ${await alertCount(s1.lastID)} 件（猶予 ${monitor.GRACE_MINUTES} 分）`
+        `通知 ${await alertCount(s1.lastID)} 件（猶予 15 分を指定）`
     );
 
     // --- 猶予を過ぎたら通知する ---
-    await monitor.checkUnconfirmedShifts(todayAt(10, 20));
+    await monitor.checkUnconfirmedShifts(todayAt(10, 20), { graceMinutes: 15 });
     addResult(
         '見張り: 猶予を過ぎた未確認を通知する',
         (await alertCount(s1.lastID)) === 1,
@@ -113,6 +113,21 @@ async function testMonitor() {
         `通知 ${await alertCount(s3.lastID)} 件（${monitor.STALE_HOURS} 時間で打ち切り）`
     );
 
+    // --- 既定は区切りの時刻ちょうどに鳴る ---
+    addResult(
+        '見張り: 既定の猶予は 0 分（区切りの時刻ちょうど）',
+        monitor.GRACE_MINUTES === 0,
+        `GRACE_MINUTES = ${monitor.GRACE_MINUTES}`
+    );
+
+    const s5 = await db.run("INSERT INTO shifts (name, end_time, sort_order) VALUES ('検証5', '14:00', 5)");
+    await monitor.checkUnconfirmedShifts(todayAt(14, 0));
+    addResult(
+        '見張り: 区切りの時刻ちょうどに通知する',
+        (await alertCount(s5.lastID)) === 1,
+        `通知 ${await alertCount(s5.lastID)} 件（14:00 の区切りを 14:00 に点検）`
+    );
+
     // --- 曜日の指定が効く ---
     await db.run('DELETE FROM shifts');
     const offDay = '0'.repeat(7);
@@ -136,6 +151,15 @@ async function testApi(client) {
     const { request } = client;
 
     await setupLocationUser(client);
+
+    // --- 初期値の確認 ---
+    const defaults = await request('GET', '/api/shifts/settings');
+    const defaultTimes = (defaults.body.shifts || []).map(s => s.end_time).join(', ');
+    addResult(
+        '初期値: 区切りが 14:00 / 19:00 / 22:00 で作られる',
+        defaultTimes === '14:00, 19:00, 22:00',
+        `区切り: ${defaultTimes}`
+    );
 
     // 区切りを検証用に置き換える。
     //   00:01 → 常に「過ぎた区切り」

@@ -1,0 +1,53 @@
+name: Fly.io へデプロイ
+
+# main に入ったら自動でデプロイする。
+# 手動で流したいときは Actions タブから「Run workflow」でも実行できる。
+#
+# 自動デプロイをやめたい場合は、下の push: ブロックを消して
+# workflow_dispatch だけ残せば手動専用になる。
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# デプロイが重ならないようにする。
+# 実行中のものは止めない（途中で切ると中途半端な状態になりうるため）。
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: デプロイ前のテスト
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 注意: 本番 (Dockerfile) は Node 18 だが、ここは 22 を使う。
+      # 理由は .github/workflows/test.yml のコメントを参照。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+  deploy:
+    name: デプロイ
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # --remote-only: イメージのビルドを Fly 側で行う。
+      # ランナーに Docker を用意しなくて済む。
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

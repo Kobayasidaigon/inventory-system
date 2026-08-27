@@ -254,6 +254,15 @@ npm test
 一時ディレクトリに専用のデータベースを作り、サーバーを別プロセスで起動して
 実際の API を叩きます。既存のデータには触れません。
 
+## デプロイ
+
+`main` に入ると GitHub Actions が `npm test` を実行し、通ったら Fly.io へ
+デプロイします（`.github/workflows/deploy.yml`）。テストが失敗した場合は
+デプロイされません。
+
+手順とデプロイ前の確認事項は [DEPLOY.md](./DEPLOY.md) の
+「GitHub Actions で自動デプロイする」を参照してください。
+
 ## データベース
 
 SQLiteを使用しているため、データは `server/db/inventory.db` ファイルに保存されます。

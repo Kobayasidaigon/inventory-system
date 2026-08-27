@@ -1,0 +1,31 @@
+name: テスト
+
+# ブランチへの push と Pull Request で走らせる。
+# デプロイ前に壊れていることに気づくのが目的。
+on:
+  push:
+    branches-ignore:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: npm test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 注意: 本番 (Dockerfile) は Node 18 だが、ここは 22 を使う。
+      # テストが複数の Set-Cookie を読むのに Headers.getSetCookie() を
+      # 使っており、これは Node 20 以降にしかないため。
+      # アプリ本体は Node 18 でも動く。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test

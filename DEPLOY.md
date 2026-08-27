@@ -184,6 +184,68 @@ flyctl certs add yourdomain.com
 flyctl billing show
 ```
 
+## GitHub Actions で自動デプロイする
+
+`main` に入ったら自動でデプロイされます。手動で流したいときは
+GitHub の Actions タブ →「Fly.io へデプロイ」→「Run workflow」からも実行できます。
+
+デプロイの前に `npm test` が走り、**失敗したらデプロイは行われません。**
+
+### 1. Fly.io のデプロイ用トークンを作る
+
+```bash
+flyctl tokens create deploy -x 999999h
+```
+
+出力された `FlyV1 ...` の文字列全体をコピーします。
+（個人アカウント全体の権限ではなく、このアプリのデプロイに限定されたトークンです）
+
+### 2. GitHub にトークンを登録する
+
+リポジトリの **Settings → Secrets and variables → Actions →
+New repository secret** で登録します。
+
+| 項目 | 値 |
+|---|---|
+| Name | `FLY_API_TOKEN` |
+| Secret | 手順 1 でコピーした `FlyV1 ...` |
+
+名前は `FLY_API_TOKEN` にしてください。ワークフローがこの名前で参照します。
+
+### 3. 初回デプロイの前に確認すること
+
+一度きりですが、これを飛ばすと運用に影響します。
+
+**① セッションの署名鍵を設定する（必須）**
+
+```bash
+flyctl secrets set SESSION_SECRET=$(openssl rand -base64 32)
+```
+
+未設定でも起動はしますが、再起動のたびに鍵が変わります。
+
+**② バックアップを取る**
+
+起動時にデータベースの構成を更新します（列とテーブルの追加）。
+追加だけなので既存データは壊れませんが、念のため。
+
+```bash
+flyctl ssh console -C "tar czf /tmp/backup.tar.gz /data"
+flyctl ssh sftp get /tmp/backup.tar.gz
+```
+
+**③ 費用の確認**
+
+`fly.toml` の `min_machines_running` が `1` になっています。
+定期処理（通知・バックアップ）を動かすため常時 1 台起動する設定です。
+不要なら `0` に戻してください。
+
+### デプロイ後に起きること
+
+- **利用者はログインし直す必要はありません。** セッションの鍵が変わるので
+  既存のセッションは無効になりますが、Remember Me トークンから自動で復帰します
+- 「ログイン状態を保持」を外していた人だけ、1 回ログインが必要です
+
 ## 更新方法
 
 コードを変更した後：

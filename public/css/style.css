@@ -582,13 +582,23 @@ table tbody tr:hover {
     margin-bottom: 0;
 }
 
-#chart-container {
+/* グラフのカード。高さは軸ラベルの帯も含めた値にする
+   （足りないとカードの中に小さな縦スクロールが出る） */
+.chart-card {
     background: white;
     padding: 20px;
     border-radius: 8px;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     max-width: 100%;
-    height: 500px;
+    margin-bottom: 20px;
+}
+
+.chart-card-stock {
+    height: 360px;
+}
+
+.chart-card-consumption {
+    height: 280px;
 }
 
 #stock-chart {
@@ -923,13 +933,16 @@ table tbody tr:hover {
         width: 100%;
     }
 
-    #chart-container {
-        height: 300px;
+    .chart-card {
         padding: 10px;
     }
 
-    #stock-chart {
-        max-height: 280px;
+    .chart-card-stock {
+        height: 300px;
+    }
+
+    .chart-card-consumption {
+        height: 240px;
     }
 
     /* フォームアクション */
@@ -1133,13 +1146,16 @@ table tbody tr:hover {
     }
 
     /* グラフ */
-    #chart-container {
-        height: 250px;
+    .chart-card {
         padding: 8px;
     }
 
-    #stock-chart {
-        max-height: 230px;
+    .chart-card-stock {
+        height: 260px;
+    }
+
+    .chart-card-consumption {
+        height: 210px;
     }
 
     /* 週次入力の日付範囲 */
@@ -1166,12 +1182,12 @@ table tbody tr:hover {
         width: auto;
     }
 
-    #chart-container {
-        height: 350px;
+    .chart-card-stock {
+        height: 340px;
     }
 
-    #stock-chart {
-        max-height: 330px;
+    .chart-card-consumption {
+        height: 260px;
     }
 }
 

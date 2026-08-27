@@ -430,7 +430,10 @@ router.get('/chart', requireAuth, async (req, res) => {
         const productId = parseProductId(req.query.productId);
         const days = parseChartDays(req.query.days);
 
-        const product = await db.get('SELECT name FROM products WHERE id = ?', [productId]);
+        const product = await db.get(
+            'SELECT name, reorder_point FROM products WHERE id = ?',
+            [productId]
+        );
 
         if (!product) {
             throw new StockError('商品が見つかりません', 404);
@@ -440,9 +443,12 @@ router.get('/chart', requireAuth, async (req, res) => {
 
         res.json({
             productName: product.name,
+            reorderPoint: Number(product.reorder_point) || 0,
             labels: chart.labels,
             stocks: chart.stocks,
-            dailyConsumption: chart.dailyConsumption
+            dailyConsumption: chart.dailyConsumption,
+            // 過去の在庫がマイナスに復元された = 履歴に記録漏れがある
+            hasNegative: chart.hasNegative
         });
     } catch (err) {
         respondWithStockError(res, err, 'データ取得エラー');

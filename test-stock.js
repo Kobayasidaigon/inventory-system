@@ -446,7 +446,45 @@ async function run() {
         `グラフ最終日 ${chart.body.stocks[chart.body.stocks.length - 1]} / 現在庫 ${currentStock}`
     );
 
-    // --- 13. 管理画面のグラフも同じ値になる ---
+    // --- 13. グラフが発注点と記録漏れの有無を返す ---
+    addResult(
+        'グラフ: 発注点を返す',
+        chart.body.reorderPoint === 0,
+        `発注点 ${chart.body.reorderPoint}（この商品は 0）`
+    );
+    addResult(
+        'グラフ: 辻褄の合うデータでは記録漏れの印が立たない',
+        chart.body.hasNegative === false,
+        `hasNegative=${chart.body.hasNegative}`
+    );
+
+    // 登録日より前の日付に出庫を入れると、さかのぼった在庫がマイナスになる。
+    // 現実にはありえない状態なので、印が立つことを確かめる。
+    const brokenProduct = await request('POST', '/api/products', {
+        name: '記録漏れテスト商品',
+        category: 'テスト',
+        reorder_point: 4,
+        current_stock: 50
+    });
+    const brokenId = brokenProduct.body.productId;
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    await request('POST', '/api/inventory/out', {
+        productId: brokenId, quantity: 3, date: yesterday, note: '登録前の出庫'
+    });
+
+    const brokenChart = await request('GET', `/api/inventory/chart?productId=${brokenId}&days=30`);
+    addResult(
+        'グラフ: 記録に抜けがあると印が立つ',
+        brokenChart.body.hasNegative === true,
+        `hasNegative=${brokenChart.body.hasNegative} / 最小値 ${Math.min(...brokenChart.body.stocks)}`
+    );
+    addResult(
+        'グラフ: 発注点をそのまま返す',
+        brokenChart.body.reorderPoint === 4,
+        `発注点 ${brokenChart.body.reorderPoint}（期待値 4）`
+    );
+
+    // --- 14. 管理画面のグラフも同じ値になる ---
     await request('POST', '/api/auth/logout');
     client.resetSession();
     await refreshCsrfToken();

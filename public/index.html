@@ -238,9 +238,18 @@
                 </div>
                 <button id="load-chart-btn" class="btn btn-primary">グラフを表示</button>
             </div>
-            <div id="chart-container">
+            <!-- 記録漏れがあるときの断り -->
+            <div id="chart-note"></div>
+
+            <!-- 在庫の推移と消費量は単位が違うので、1 枚に重ねず 2 枚に分ける -->
+            <div class="chart-card chart-card-stock">
                 <canvas id="stock-chart"></canvas>
             </div>
+            <div class="chart-card chart-card-consumption">
+                <canvas id="consumption-chart"></canvas>
+            </div>
+
+            <div id="chart-table-wrap"></div>
         </div>
 
         <!-- 棚卸 -->

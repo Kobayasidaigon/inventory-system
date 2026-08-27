@@ -389,7 +389,12 @@ async function buildStockChartData(db, productId, days) {
         dailyConsumption.push(consumptionMap[dateStr] || 0);
     }
 
-    return { labels, stocks, dailyConsumption };
+    // 復元した在庫がマイナスになったら、履歴に記録漏れがある。
+    // 「実際にあった数より多く出庫している」ことになり、現実には起こりえない。
+    // グラフの過去の部分が実際とずれているので、画面で断りを出せるように返す。
+    const hasNegative = stocks.some(value => value < 0);
+
+    return { labels, stocks, dailyConsumption, hasNegative };
 }
 
 /**

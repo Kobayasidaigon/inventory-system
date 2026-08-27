@@ -3,6 +3,7 @@ require('dotenv').config();
 
 const express = require('express');
 const session = require('express-session');
+const SQLiteStore = require('connect-sqlite3')(session);
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
@@ -10,6 +11,7 @@ const path = require('path');
 const { startScheduledBackup } = require('./services/backup');
 const { startShiftMonitor } = require('./services/shift-monitor');
 const { generateCsrfToken, verifyCsrfToken, getCsrfToken } = require('./middleware/csrf');
+const { attachRememberedSession } = require('./middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -73,8 +75,20 @@ function resolveSessionSecret() {
     return 'development-only-session-secret';
 }
 
+// セッションの保存先。
+//
+// 既定のメモリ保持だと、サーバーが再起動するたびに全員のログインが切れる。
+// Fly.io はアクセスが途切れるとマシンを止めるので、これが毎日のように起きる。
+// 永続ディスク上の SQLite に置いて、再起動をまたいでも残るようにする。
+const sessionDir = process.env.DB_DIR || path.join(__dirname, 'db');
+
+if (!require('fs').existsSync(sessionDir)) {
+    require('fs').mkdirSync(sessionDir, { recursive: true });
+}
+
 // Session設定
 app.use(session({
+    store: new SQLiteStore({ db: 'sessions.db', dir: sessionDir, table: 'sessions' }),
     secret: resolveSessionSecret(),
     resave: false,
     saveUninitialized: false,
@@ -86,6 +100,10 @@ app.use(session({
         sameSite: 'lax'
     }
 }));
+
+// セッションが失われていても Remember Me トークンで復帰させる。
+// ルートより前に置くことで、管理画面の API も含めて全体に効かせる。
+app.use(attachRememberedSession);
 
 // CSRF対策ミドルウェア
 app.use(generateCsrfToken);

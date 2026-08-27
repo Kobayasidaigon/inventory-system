@@ -42,7 +42,15 @@ function createTempDbDir(prefix) {
  * Cookie と CSRF トークンを保持する HTTP クライアント。
  */
 function createClient(baseUrl) {
-    const state = { cookie: '', csrfToken: '' };
+    // ログインは connect.sid と remember_token の 2 つを返す。
+    // 1 個だけ持つと片方を取りこぼすので、名前ごとに持つ。
+    const jar = new Map();
+    const state = {
+        csrfToken: '',
+        get cookie() {
+            return [...jar.entries()].map(([name, value]) => `${name}=${value}`).join('; ');
+        }
+    };
 
     async function request(method, urlPath, body) {
         const headers = {};
@@ -60,7 +68,8 @@ function createClient(baseUrl) {
 
         const setCookie = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
         for (const raw of setCookie) {
-            state.cookie = raw.split(';')[0];
+            const [name, ...rest] = raw.split(';')[0].split('=');
+            jar.set(name, rest.join('='));
         }
 
         const text = await res.text();
@@ -80,7 +89,7 @@ function createClient(baseUrl) {
     }
 
     function resetSession() {
-        state.cookie = '';
+        jar.clear();
     }
 
     return { request, refreshCsrfToken, resetSession, state };
@@ -176,7 +185,9 @@ async function setupLocationUser(client, { password = 'test-password-1234' } = {
     const login = await request('POST', '/api/auth/login', {
         locationCode: location.body.locationCode,
         userId: 'tester',
-        password
+        password,
+        // 画面のチェックボックスは既定で入っているので、それに合わせる
+        rememberMe: true
     });
     await refreshCsrfToken();
 

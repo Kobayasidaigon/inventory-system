@@ -25,7 +25,18 @@ const PROXY_HEADERS = { 'X-Forwarded-Proto': 'https' };
 
 /** Set-Cookie の生の文字列を保持したまま叩くクライアント */
 function createRawClient() {
-    const state = { cookie: '', csrfToken: '', lastSetCookie: [] };
+    // ログインは connect.sid と remember_token を返すので、名前ごとに持つ
+    const jar = new Map();
+    const state = {
+        csrfToken: '',
+        lastSetCookie: [],
+        get cookie() {
+            return [...jar.entries()].map(([name, value]) => `${name}=${value}`).join('; ');
+        },
+        dropCookie(name) {
+            jar.delete(name);
+        }
+    };
 
     async function request(method, path, body) {
         const headers = { ...PROXY_HEADERS };
@@ -42,7 +53,8 @@ function createRawClient() {
 
         state.lastSetCookie = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
         for (const raw of state.lastSetCookie) {
-            state.cookie = raw.split(';')[0];
+            const [name, ...rest] = raw.split(';')[0].split('=');
+            jar.set(name, rest.join('='));
         }
 
         const text = await res.text();
@@ -64,8 +76,7 @@ function createRawClient() {
     return { request, refreshCsrfToken, state };
 }
 
-async function run() {
-    const client = createRawClient();
+async function run(client) {
     const { request, refreshCsrfToken, state } = client;
 
     await refreshCsrfToken();
@@ -97,7 +108,8 @@ async function run() {
     await refreshCsrfToken();
     const login = await request('POST', '/api/auth/admin/login', {
         username: 'admin',
-        password: PASSWORD
+        password: PASSWORD,
+        rememberMe: true
     });
     addResult(
         '本番構成: プロキシ越しでログインできる',
@@ -128,36 +140,112 @@ async function run() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// サーバーを落として立ち上げ直しても、ログインが切れないこと
+// ---------------------------------------------------------------------------
+
+async function testRestartSurvives(client) {
+    const { request, state } = client;
+
+    // 再起動前に持っていた CSRF トークン。
+    // セッションが残っていれば、これがそのまま通るはず。
+    const tokenBeforeRestart = state.csrfToken;
+
+    const check = await request('GET', '/api/auth/check');
+    addResult(
+        '再起動: 立ち上げ直してもログインが残る',
+        check.body.loggedIn === true,
+        `loggedIn=${check.body.loggedIn} / ${check.body.userName || ''}`
+    );
+
+    const products = await request('GET', '/api/auth/admin/locations');
+    addResult(
+        '再起動: 認証が要る API がそのまま使える',
+        products.status === 200,
+        `status ${products.status}`
+    );
+
+    addResult(
+        '再起動: 手元の CSRF トークンがそのまま通る',
+        state.csrfToken === tokenBeforeRestart,
+        'セッションの署名シークレットが保存されている'
+    );
+
+    const write = await request('POST', '/api/auth/admin/locations', { locationName: '再起動後の拠点' });
+    addResult(
+        '再起動: 書き込みの API も通る',
+        write.status === 200,
+        `status ${write.status} / ${write.body.error || ''}`
+    );
+}
+
+// ---------------------------------------------------------------------------
+// セッションの Cookie を失っても、Remember Me で復帰できること
+// ---------------------------------------------------------------------------
+
+async function testRememberTokenFallback(client) {
+    const { request, state } = client;
+
+    // ブラウザ側のセッション Cookie だけが消えた状態を作る
+    state.dropCookie('connect.sid');
+
+    const check = await request('GET', '/api/auth/check');
+    addResult(
+        'Remember Me: セッション Cookie がなくても復帰する',
+        check.body.loggedIn === true,
+        `loggedIn=${check.body.loggedIn}`
+    );
+
+    state.dropCookie('connect.sid');
+    const api = await request('GET', '/api/auth/admin/locations');
+    addResult(
+        'Remember Me: 認証が要る API でも復帰する（401 にならない）',
+        api.status === 200,
+        `status ${api.status}`
+    );
+}
+
 (async () => {
     console.log('========================================');
     console.log('セッション設定テスト開始');
     console.log('========================================\n');
 
-    const { server, waitUntilReady, context } = startServer({
-        port: PORT,
-        dbDir: DB_DIR,
-        env: {
-            NODE_ENV: 'production',
-            SESSION_SECRET,
-            // 本番判定で /data/uploads を使うため、書ける場所に向ける
-            UPLOADS_DIR: DB_DIR
-        }
-    });
+    const serverEnv = {
+        NODE_ENV: 'production',
+        SESSION_SECRET,
+        // 本番判定で /data/uploads を使うため、書ける場所に向ける
+        UPLOADS_DIR: DB_DIR
+    };
+
+    const client = createRawClient();
+    let first = startServer({ port: PORT, dbDir: DB_DIR, env: serverEnv });
+    let second = null;
 
     try {
-        await waitUntilReady(BASE_URL);
-        await run();
+        await first.waitUntilReady(BASE_URL);
+        await run(client);
 
         addResult(
             '起動: SESSION_SECRET 設定時は警告が出ない',
-            !context.stderr.includes('SESSION_SECRET が設定されていません'),
-            context.stderr.trim() ? `stderr: ${context.stderr.trim().slice(0, 120)}` : '警告なし'
+            !first.context.stderr.includes('SESSION_SECRET が設定されていません'),
+            first.context.stderr.trim() ? `stderr: ${first.context.stderr.trim().slice(0, 120)}` : '警告なし'
         );
+
+        // --- サーバーを落として立ち上げ直す ---
+        first.server.kill();
+        await new Promise(resolve => setTimeout(resolve, 1500));
+
+        second = startServer({ port: PORT, dbDir: DB_DIR, env: serverEnv });
+        await second.waitUntilReady(BASE_URL);
+
+        await testRestartSurvives(client);
+        await testRememberTokenFallback(client);
     } catch (err) {
         results.failed++;
         console.error('\n❌ テストの実行中にエラーが発生しました:', err.message);
     } finally {
-        server.kill();
+        first.server.kill();
+        if (second) second.server.kill();
         fs.rmSync(DB_DIR, { recursive: true, force: true });
     }
 

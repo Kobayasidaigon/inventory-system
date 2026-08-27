@@ -7,6 +7,7 @@ const { backupDatabase, listBackups, restoreDatabase, BACKUP_DIR } = require('..
 const { sanitizeHtml } = require('../utils/xss-protection');
 const path = require('path');
 const { buildStockChartData, parseChartDays } = require('../utils/stock');
+const { restoreSessionFromRememberToken } = require('../middleware/auth');
 const router = express.Router();
 
 // ログイン用のレート制限（15分間に5回まで）
@@ -41,24 +42,6 @@ async function saveRememberToken(userId) {
     return token;
 }
 
-// Remember Meトークンで認証
-async function authenticateByToken(token) {
-    const tokenData = await mainDb.get(
-        'SELECT * FROM remember_tokens WHERE token = ? AND expires_at > datetime("now")',
-        [token]
-    );
-
-    if (!tokenData) {
-        return null;
-    }
-
-    const user = await mainDb.get(
-        'SELECT * FROM users WHERE id = ?',
-        [tokenData.user_id]
-    );
-
-    return user;
-}
 
 // 管理者ログイン
 router.post('/admin/login', loginLimiter, async (req, res) => {
@@ -200,35 +183,17 @@ router.get('/check', async (req, res) => {
             });
         }
 
-        // セッションがない場合、Remember Meトークンをチェック
-        const token = req.cookies.remember_token;
-        if (token) {
-            const user = await authenticateByToken(token);
-            if (user) {
-                // ユーザーが見つかった場合、セッションを再作成
-                req.session.userId = user.id;
-                req.session.userName = user.user_name;
-                req.session.isAdmin = user.is_admin === 1;
+        // セッションがない場合、Remember Meトークンで復帰を試みる
+        // （復帰の処理は middleware/auth.js に置いて、API 側と共通にしている）
+        const user = await restoreSessionFromRememberToken(req);
 
-                // 一般ユーザーの場合は拠点情報も取得
-                if (!req.session.isAdmin) {
-                    const location = await mainDb.get(
-                        'SELECT * FROM locations WHERE id = ?',
-                        [user.location_id]
-                    );
-                    if (location) {
-                        req.session.locationId = location.id;
-                        req.session.locationCode = location.location_code;
-                    }
-                }
-
-                return res.json({
-                    loggedIn: true,
-                    userName: user.user_name,
-                    isAdmin: req.session.isAdmin,
-                    locationCode: req.session.locationCode
-                });
-            }
+        if (user) {
+            return res.json({
+                loggedIn: true,
+                userName: user.user_name,
+                isAdmin: req.session.isAdmin,
+                locationCode: req.session.locationCode
+            });
         }
 
         res.json({ loggedIn: false });

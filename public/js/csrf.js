@@ -47,24 +47,53 @@ async function fetchWithCsrf(url, options = {}) {
     }
 
     try {
-        const token = await getCsrfToken();
+        let response = await sendWithToken(url, options, await getCsrfToken());
 
-        // FormDataの場合はヘッダーではなくbodyに追加
-        if (options.body instanceof FormData) {
-            options.body.append('_csrf', token);
-            return fetch(url, options);
+        // サーバーが再起動するとセッションのシークレットが変わり、
+        // 手元に持っているトークンは通らなくなる。画面を開いたまま置いていた
+        // 端末でこれが起きるので、黙って取り直して 1 回だけ送り直す。
+        if (await isCsrfRejection(response)) {
+            resetCsrfToken();
+            response = await sendWithToken(url, options, await getCsrfToken());
         }
 
-        // JSON等の場合はヘッダーにCSRFトークンを追加
-        const headers = {
-            ...options.headers,
-            'X-CSRF-Token': token
-        };
-
-        return fetch(url, { ...options, headers });
+        return response;
     } catch (error) {
         console.error('Fetch with CSRF error:', error);
         throw error;
+    }
+}
+
+/** トークンを載せて送る */
+function sendWithToken(url, options, token) {
+    // FormDataの場合はヘッダーではなくbodyに入れる。
+    // append ではなく set にして、送り直しでも二重にならないようにする。
+    if (options.body instanceof FormData) {
+        options.body.set('_csrf', token);
+        return fetch(url, options);
+    }
+
+    const headers = {
+        ...options.headers,
+        'X-CSRF-Token': token
+    };
+
+    return fetch(url, { ...options, headers });
+}
+
+/** CSRF が理由で弾かれたレスポンスか */
+async function isCsrfRejection(response) {
+    if (response.status !== 403) {
+        return false;
+    }
+
+    try {
+        // 本文は呼び出し元が読むので、複製のほうを覗く
+        const data = await response.clone().json();
+        return typeof data.error === 'string' && data.error.includes('CSRF')
+            || data.error === 'セッションが無効です';
+    } catch (err) {
+        return false;
     }
 }
 

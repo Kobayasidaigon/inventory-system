@@ -15,13 +15,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # 注意: 本番 (Dockerfile) は Node 18 だが、ここは 22 を使う。
       # テストが複数の Set-Cookie を読むのに Headers.getSetCookie() を
       # 使っており、これは Node 20 以降にしかないため。
       # アプリ本体は Node 18 でも動く。
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm

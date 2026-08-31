@@ -43,6 +43,12 @@ const CHUNK_SIZE = 100;
 // 送信の間隔（ミリ秒）。相手のレート制限に当たらないように空ける。
 const CHUNK_INTERVAL_MS = 1000;
 
+// 1 回の送信を待つ上限（ミリ秒）。
+// fetch は既定で待ち続けるので、相手が黙り込むとジョブが何時間も居座る。
+// Fly のマシンは停止していることがあり、起き上がるのに十数秒かかるため、
+// 短すぎない値にしている。
+const REQUEST_TIMEOUT_MS = 60000;
+
 // 各操作のあとの待ち時間。描画前に読むと 0 件になるので必ず待つ。
 const WAIT_AFTER_ACTION_MS = 2000;
 const WAIT_AFTER_SEARCH_MS = 5000;
@@ -404,11 +410,22 @@ async function importToApi(schedules, targetMonth) {
         const chunk = schedules.slice(i, i + CHUNK_SIZE);
         const label = `${i + 1}〜${i + chunk.length}件目`;
 
-        const res = await fetch(`${apiBase}/api/staff/import-schedules`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ secret, schedules: chunk, targetMonth })
-        });
+        let res;
+        try {
+            res = await fetch(`${apiBase}/api/staff/import-schedules`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ secret, schedules: chunk, targetMonth }),
+                signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+            });
+        } catch (err) {
+            // タイムアウトも接続失敗もここに来る。何件目で止まったかを残す。
+            // 取り込みは同じ内容を送り直しても増えないので、直して再実行できる。
+            throw new Error(
+                `取り込み先に届きませんでした (${label}): ${err.message}。` +
+                `API_BASE (${apiBase}) を確認してください`
+            );
+        }
 
         const body = await res.json().catch(() => ({}));
 

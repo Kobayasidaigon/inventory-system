@@ -47,11 +47,17 @@ jobs:
         run: npx puppeteer browsers install chrome
 
       - name: 取得して取り込む
+        # 手動実行の入力値はシェルに直接埋め込まず、環境変数として渡す。
+        # ${{ }} で本文に埋め込むと、入力した文字列がそのままコマンドとして
+        # 動いてしまう。
         run: |
-          node scripts/scrape-jobcan.js \
-            ${{ inputs.dry_run && '--dry-run' || '' }} \
-            ${{ inputs.target_month }}
+          args=()
+          if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          if [ -n "$TARGET_MONTH" ]; then args+=("$TARGET_MONTH"); fi
+          node scripts/scrape-jobcan.js "${args[@]}"
         env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          TARGET_MONTH: ${{ inputs.target_month }}
           JOBCAN_EMAIL: ${{ secrets.JOBCAN_EMAIL }}
           JOBCAN_PASSWORD: ${{ secrets.JOBCAN_PASSWORD }}
           API_BASE: ${{ secrets.API_BASE }}

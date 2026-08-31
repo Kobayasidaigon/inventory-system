@@ -413,7 +413,14 @@ async function importToApi(schedules, targetMonth) {
         const body = await res.json().catch(() => ({}));
 
         if (!res.ok) {
-            throw new Error(`取り込みに失敗しました (${label}): ${res.status} ${body.error || ''}`);
+            // サーバーの検証エラーには、どの予定が悪いかを示すためにスタッフ名が
+            // 入る（例「9月に 31日 はありません（山田 太郎）」）。CI の実行ログは
+            // 公開されているので、そこには出さない。中身を見たいときは手元で
+            // --dry-run を付けて実行する。
+            const detail = IS_CI
+                ? '（内容は伏せています。手元で --dry-run を付けて実行すると出ます）'
+                : body.error || '';
+            throw new Error(`取り込みに失敗しました (${label}): ${res.status} ${detail}`);
         }
 
         totals.created += body.created || 0;

@@ -49,6 +49,11 @@ const WAIT_AFTER_SEARCH_MS = 5000;
 
 const DEBUG_DIR = path.join(__dirname, '..', 'debug');
 
+// GitHub Actions で動いているか。
+// このリポジトリは公開されていて、実行ログもアーティファクトも誰でも読める。
+// 手元で動かすときだけ、スタッフ名と取得結果そのものを出す。
+const IS_CI = Boolean(process.env.CI);
+
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // ---------------------------------------------------------------------------
@@ -335,9 +340,12 @@ async function scrapeGroup(page, group, targetMonth) {
 
     const schedules = await page.evaluate(extractSchedules);
 
+    // 取れているか目視できるよう先頭を数件出す。
+    // CI では氏名を伏せる。実行ログは公開されていて誰でも読めるため。
     console.log(`${schedules.length} 件を取得しました`);
     schedules.slice(0, 3).forEach(s => {
-        console.log(`  ${s.staffName} ${s.day}日 ${s.startTime}-${s.endTime}`);
+        const who = IS_CI ? '' : `${s.staffName} `;
+        console.log(`  ${who}${s.day}日 ${s.startTime}-${s.endTime}`);
     });
 
     return schedules.map(s => ({ ...s, groupId: group.id, groupName: group.name }));
@@ -450,10 +458,15 @@ async function main() {
         console.log(`  ${group.name}: ${count} 件`);
     }
 
-    saveDebugArtifact(
-        `schedules-${targetMonth}.json`,
-        JSON.stringify(schedules, null, 2)
-    );
+    // 取得結果そのもの。氏名と勤務時間がそのまま入るので、伏せようがない。
+    // 手元で中身を確かめるためのものなので、CI では書き出さない。
+    // 書き出すとアーティファクトに乗り、公開リポジトリでは誰でも取得できてしまう。
+    if (!IS_CI) {
+        saveDebugArtifact(
+            `schedules-${targetMonth}.json`,
+            JSON.stringify(schedules, null, 2)
+        );
+    }
 
     if (schedules.length === 0) {
         throw new Error(

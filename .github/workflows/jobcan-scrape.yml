@@ -64,13 +64,17 @@ jobs:
           IMPORT_SECRET: ${{ secrets.IMPORT_SECRET }}
           JOBCAN_GROUPS: ${{ vars.JOBCAN_GROUPS }}
 
-      # 失敗したときに原因を追えるよう、HTML とスクリーンショットを残す。
+      # 失敗したときに原因を追えるよう、伏せ字にした HTML を残す。
       # ジョブカンの画面構成が変わったときは、ここを見てセレクタを直す。
+      #
+      # path は debug/ 全体ではなく *.html に限る。このリポジトリは公開されていて
+      # アーティファクトは誰でもダウンロードできるので、伏せ字にできないもの
+      # （取得結果の JSON など）を巻き込まないようにする。
       - name: 調査用のファイルを保存
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: jobcan-debug-${{ github.run_number }}
-          path: debug/
+          path: debug/*.html
           retention-days: 7
           if-no-files-found: ignore

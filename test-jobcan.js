@@ -24,6 +24,7 @@ const {
 } = require('./test-helpers');
 const {
     extractSchedules,
+    maskPersonalText,
     resolveTargetMonth,
     resolveGroups,
     DEFAULT_GROUPS
@@ -157,6 +158,117 @@ function testExtract() {
         '解析: 日付ヘッダーが無ければ 0 件を返す',
         parseHtml('<table class="note"><tr><th class="first" colspan="2">山田</th></tr></table>').length === 0,
         '0 件'
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 1b. 調査用 HTML の伏せ字
+//
+// このリポジトリは公開されている。GitHub Actions のアーティファクトは誰でも
+// 取得できるので、debug/ に残す HTML にスタッフの氏名や勤務時間が素のまま
+// 入っていてはいけない。一方で、セレクタを直すのに要る構造は残す必要がある。
+// その両立をここで固定する。
+// ---------------------------------------------------------------------------
+
+function maskHtml(html) {
+    return maskPersonalText(new JSDOM(html).window.document);
+}
+
+function testMasking() {
+    const masked = maskHtml(buildShiftTable(
+        [1, 2],
+        [{ name: '山田 太郎', cells: [null, ['19:00', '23:00']] }]
+    ));
+
+    addResult(
+        '伏せ字: スタッフの氏名が残らない',
+        !masked.includes('山田') && !masked.includes('太郎'),
+        masked.includes('山田') ? '氏名が残っている' : '残っていない'
+    );
+    addResult(
+        '伏せ字: 勤務時間そのものが残らない',
+        !masked.includes('19:00') && !masked.includes('23:00'),
+        masked.includes('19:00') ? '時刻が残っている' : '残っていない'
+    );
+    addResult(
+        '伏せ字: 時刻の桁と : は形として残る（構造が読める）',
+        masked.includes('00:00'),
+        '00:00 の形で残る'
+    );
+    addResult(
+        '伏せ字: タグと class は残る（セレクタが直せる）',
+        masked.includes('table class="note"')
+            && masked.includes('class="day"')
+            && masked.includes('class="first"'),
+        'table.note / th.day / th.first すべて残る'
+    );
+    // 伏せた HTML から拾い直せるかは見ない。日付ヘッダーの数字も伏せるので
+    // 解析は通らない。この HTML の役目は「セレクタが当たるか」を確かめること。
+    const maskedDoc = new JSDOM(masked).window.document;
+    const selectors = [
+        'table.note',
+        'th.day',
+        'th.first[colspan=\"2\"]',
+        'td.day',
+        'span[style*=\"font-size: 10px\"]'
+    ];
+    const missing = selectors.filter(s => !maskedDoc.querySelector(s));
+    addResult(
+        '伏せ字: セレクタを直すのに要る構造が全部残る',
+        missing.length === 0,
+        missing.length === 0 ? selectors.join(' / ') : `見つからない: ${missing.join(' / ')}`
+    );
+
+    // 氏名は本文だけでなく属性にも入りうる
+    const attrs = maskHtml(
+        '<div title="山田 太郎" data-staff="佐藤 花子" class="keep">' +
+        '<input value="鈴木 一郎" placeholder="氏名"></div>'
+    );
+    addResult(
+        '伏せ字: title / value / placeholder も伏せる',
+        !attrs.includes('山田') && !attrs.includes('鈴木') && !attrs.includes('氏名'),
+        '属性に残っていない'
+    );
+    addResult(
+        '伏せ字: data-* も伏せる',
+        !attrs.includes('佐藤') && !attrs.includes('花子'),
+        'data-staff に残っていない'
+    );
+    addResult(
+        '伏せ字: class は伏せない',
+        attrs.includes('class="keep"'),
+        'class="keep" が残る'
+    );
+
+    // 画面に出ていなくても、script の中に一覧が埋まっていることがある
+    const script = maskHtml(
+        '<html><body><script>var staff = ["山田 太郎"];</script></body></html>'
+    );
+    addResult(
+        '伏せ字: script の中の氏名も伏せる',
+        !script.includes('山田'),
+        'script 内にも残っていない'
+    );
+
+    // 伏せ字は複製に対して行う。元の DOM を書き換えると、このあと走る
+    // extractSchedules() が伏せ字を読んで 0 件になる。
+    const liveDoc = new JSDOM(buildShiftTable(
+        [1, 2],
+        [{ name: '山田 太郎', cells: [null, ['19:00', '23:00']] }]
+    )).window.document;
+    maskPersonalText(liveDoc);
+    const afterMask = extractSchedules(liveDoc);
+    addResult(
+        '伏せ字: 元のページを書き換えない（伏せた後も取得できる）',
+        afterMask.length === 1 && afterMask[0].staffName === '山田 太郎'
+            && afterMask[0].startTime === '19:00',
+        JSON.stringify(afterMask[0] || null)
+    );
+
+    addResult(
+        '伏せ字: 中身が無くても落ちない',
+        maskHtml('<html></html>').length > 0,
+        '空でも例外にならない'
     );
 }
 
@@ -388,6 +500,7 @@ async function testImportApi(client) {
     console.log('========================================\n');
 
     testExtract();
+    testMasking();
     testTargetMonth();
 
     const { server, waitUntilReady } = startServer({

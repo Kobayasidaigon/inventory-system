@@ -8,3 +8,6 @@ server/db/backups/*.tar.gz
 data/
 *.log
 check-*.sh
+
+# 調査用に残す HTML。中身は伏せてあるが、リポジトリには入れない
+debug/

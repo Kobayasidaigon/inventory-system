@@ -13,8 +13,12 @@
  *   JOBCAN_GROUPS                   店舗の指定（JSON）。未設定なら既定の 3 店舗
  *
  * 注意: ジョブカンの HTML が変わるとセレクタが動かなくなる。
- * 0 件になったら debug/ に保存される HTML とスクリーンショットを見て、
- * extractSchedules() のセレクタを直すこと。ここが一番壊れやすい。
+ * 0 件になったら debug/ に保存される HTML を見て、extractSchedules() の
+ * セレクタを直すこと。ここが一番壊れやすい。
+ *
+ * debug/ の HTML は maskPersonalText() で中身の文字を伏せてから保存する。
+ * このリポジトリは公開されていて、GitHub Actions のアーティファクトは
+ * 誰でも取得できるため、スタッフの氏名や勤務時間を素のまま置けない。
  */
 
 require('dotenv').config();
@@ -190,6 +194,67 @@ function extractSchedules(doc) {
 // ブラウザ操作
 // ---------------------------------------------------------------------------
 
+/**
+ * ページから読み取れる文字をすべて伏せた HTML を返す。
+ *
+ * セレクタを直すのに要るのはタグと class の構造だけで、書かれている文字は
+ * 要らない。そこで桁数と区切り記号の位置は残したまま、数字を 0、それ以外の
+ * 文字を ● に置き換える。
+ *
+ *   山田 太郎 -> ●● ●●
+ *   19:00     -> 00:00
+ *
+ * 構造は読めるが、誰の何時のシフトかは読めない。
+ *
+ * extractSchedules() と同じく、引数なしならブラウザの document を使う。
+ * こうしておくと page.evaluate() からも jsdom のテストからも呼べる。
+ */
+function maskPersonalText(doc) {
+    const targetDocument = doc || document;
+
+    if (!targetDocument.documentElement) {
+        return '';
+    }
+
+    // 複製に対して伏せる。元の DOM を書き換えると、このあと走る
+    // extractSchedules() が伏せ字を読んで 0 件になってしまう。
+    const root = targetDocument.documentElement.cloneNode(true);
+
+    // 時刻らしさが分かるよう : - / と空白は残す
+    const mask = text => text.replace(/[0-9]/g, '0').replace(/[^\s0:\-/]/g, '●');
+
+    // 人が読める内容が入りうる属性。class や id は選び出すのに要るので残す。
+    const MASKED_ATTRIBUTES = ['title', 'alt', 'value', 'placeholder', 'aria-label'];
+
+    const walker = targetDocument.createTreeWalker(root, 4 /* NodeFilter.SHOW_TEXT */);
+    const textNodes = [];
+
+    while (walker.nextNode()) {
+        textNodes.push(walker.currentNode);
+    }
+
+    for (const node of textNodes) {
+        node.nodeValue = mask(node.nodeValue);
+    }
+
+    for (const element of root.querySelectorAll('*')) {
+        for (const name of MASKED_ATTRIBUTES) {
+            if (element.hasAttribute(name)) {
+                element.setAttribute(name, mask(element.getAttribute(name)));
+            }
+        }
+        // data-* は何が入っているか分からないので一律で伏せる
+        for (const attribute of [...element.attributes]) {
+            if (attribute.name.startsWith('data-')) {
+                element.setAttribute(attribute.name, mask(attribute.value));
+            }
+        }
+    }
+
+    return root.outerHTML;
+}
+
+// 調査用のファイルを残す。中身は maskPersonalText() で伏せてから渡すこと。
 function saveDebugArtifact(name, content) {
     if (!fs.existsSync(DEBUG_DIR)) {
         fs.mkdirSync(DEBUG_DIR, { recursive: true });
@@ -219,7 +284,7 @@ async function login(page) {
     // ログインに失敗するとサインイン画面に留まる。
     // ここで気づかないと「0 件取得」という分かりにくい失敗になるので、はっきり落とす。
     if (page.url().includes('/users/sign_in')) {
-        saveDebugArtifact('login-failed.html', await page.content());
+        saveDebugArtifact('login-failed.html', await page.evaluate(maskPersonalText));
         throw new Error(
             'ログインできませんでした。JOBCAN_EMAIL と JOBCAN_PASSWORD を確認してください'
         );
@@ -254,7 +319,7 @@ async function scrapeGroup(page, group, targetMonth) {
     });
 
     if (!clicked) {
-        saveDebugArtifact(`no-display-button-${group.id}.html`, await page.content());
+        saveDebugArtifact(`no-display-button-${group.id}.html`, await page.evaluate(maskPersonalText));
         throw new Error(
             `「表示」ボタン (.btn-info) が見つかりません（${group.name}）。` +
             'ジョブカンの画面構成が変わった可能性があります'
@@ -264,12 +329,9 @@ async function scrapeGroup(page, group, targetMonth) {
     // 描画を待つ。待たずに読むと 0 件になる。
     await sleep(WAIT_AFTER_SEARCH_MS);
 
-    // うまくいかなかったときに原因を追えるよう、毎回残しておく
-    saveDebugArtifact(`schedule-${group.id}.html`, await page.content());
-    await page.screenshot({
-        path: path.join(DEBUG_DIR, `schedule-${group.id}.png`),
-        fullPage: true
-    });
+    // うまくいかなかったときに原因を追えるよう、毎回残しておく。
+    // スクリーンショットは撮らない。画像は中身を伏せられないため。
+    saveDebugArtifact(`schedule-${group.id}.html`, await page.evaluate(maskPersonalText));
 
     const schedules = await page.evaluate(extractSchedules);
 
@@ -433,5 +495,6 @@ module.exports = {
     DEFAULT_GROUPS,
     resolveGroups,
     resolveTargetMonth,
-    extractSchedules
+    extractSchedules,
+    maskPersonalText
 };

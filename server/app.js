@@ -117,6 +117,7 @@ const orderRoutes = require('./routes/orders');
 const qrcodeRoutes = require('./routes/qrcode');
 const feedbackRoutes = require('./routes/feedback');
 const shiftRoutes = require('./routes/shifts');
+const staffRoutes = require('./routes/staff');
 const { getLocationDatabase } = require('./db/database-admin');
 const { requireAuth } = require('./middleware/auth');
 const inventoryCountRoutes = require('./routes/inventory-count');
@@ -134,6 +135,7 @@ app.use('/api/inventory', inventoryRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/qrcode', qrcodeRoutes);
 app.use('/api/shifts', shiftRoutes);
+app.use('/api/staff', staffRoutes);
 app.use('/api', feedbackRoutes);
 app.use('/api/inventory-count', requireAuth, (req, res, next) => {
     const db = getLocationDatabase(req.session.locationCode);

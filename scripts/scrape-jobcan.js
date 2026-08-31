@@ -1,0 +1,437 @@
+/**
+ * ジョブカン勤怠から店舗ごとの勤務予定を取得し、在庫システムへ取り込むスクリプト。
+ *
+ * 使い方:
+ *   node scripts/scrape-jobcan.js              # 対象月を自動で決める
+ *   node scripts/scrape-jobcan.js 2026-09      # 対象月を指定する
+ *   node scripts/scrape-jobcan.js --dry-run    # 取得だけして送信しない
+ *
+ * 必要な環境変数:
+ *   JOBCAN_EMAIL / JOBCAN_PASSWORD  ジョブカンのログイン情報
+ *   API_BASE                        取り込み先（例 https://inventory-system-aburiva.fly.dev）
+ *   IMPORT_SECRET                   取り込み口の合言葉（サーバー側と同じ値）
+ *   JOBCAN_GROUPS                   店舗の指定（JSON）。未設定なら既定の 3 店舗
+ *
+ * 注意: ジョブカンの HTML が変わるとセレクタが動かなくなる。
+ * 0 件になったら debug/ に保存される HTML とスクリーンショットを見て、
+ * extractSchedules() のセレクタを直すこと。ここが一番壊れやすい。
+ */
+
+require('dotenv').config();
+
+const fs = require('fs');
+const path = require('path');
+
+const LOGIN_URL = 'https://id.jobcan.jp/users/sign_in?app_key=atd&redirect_to=https://ssl.jobcan.jp/jbcoauth/callback';
+const MANAGER_URL = 'https://ssl.jobcan.jp/employee/login-manager/?cmi=5';
+const SCHEDULE_URL = 'https://ssl.jobcan.jp/client/shift-schedule/';
+
+// 既定の店舗。ジョブカンのシフト表 URL の group_id で確認できる。
+const DEFAULT_GROUPS = [
+    { id: '3', name: '萩野通店' },
+    { id: '5', name: '笠寺店' },
+    { id: '6', name: '枇杷島店' }
+];
+
+// 1 回の送信に含める件数。多すぎるとサーバー側で弾かれる。
+const CHUNK_SIZE = 100;
+
+// 送信の間隔（ミリ秒）。相手のレート制限に当たらないように空ける。
+const CHUNK_INTERVAL_MS = 1000;
+
+// 各操作のあとの待ち時間。描画前に読むと 0 件になるので必ず待つ。
+const WAIT_AFTER_ACTION_MS = 2000;
+const WAIT_AFTER_SEARCH_MS = 5000;
+
+const DEBUG_DIR = path.join(__dirname, '..', 'debug');
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// ---------------------------------------------------------------------------
+// 設定
+// ---------------------------------------------------------------------------
+
+/**
+ * 取得対象の店舗を決める。
+ *
+ * JOBCAN_GROUPS に [{"id":"3","name":"萩野通店"}, ...] の JSON を入れると差し替えられる。
+ */
+function resolveGroups() {
+    const raw = process.env.JOBCAN_GROUPS;
+
+    if (!raw) {
+        return DEFAULT_GROUPS;
+    }
+
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    } catch (err) {
+        throw new Error(`JOBCAN_GROUPS が JSON として読めません: ${err.message}`);
+    }
+
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+        throw new Error('JOBCAN_GROUPS は [{ "id": "3", "name": "店舗名" }] の形の配列で指定してください');
+    }
+
+    for (const group of parsed) {
+        if (!group || !group.id || !group.name) {
+            throw new Error('JOBCAN_GROUPS の各要素には id と name が必要です');
+        }
+    }
+
+    return parsed;
+}
+
+/**
+ * 対象月を決める。
+ *
+ * 月末の実行で翌月ぶんを先取りしたいので、25 日以降は翌月を見る。
+ * 引数で YYYY-MM を渡したらそれを優先する。
+ */
+function resolveTargetMonth(argument, now = new Date()) {
+    if (argument) {
+        if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(argument)) {
+            throw new Error(`対象月は YYYY-MM 形式で指定してください: ${argument}`);
+        }
+        return argument;
+    }
+
+    const base = now.getDate() >= 25
+        ? new Date(now.getFullYear(), now.getMonth() + 1, 1)
+        : now;
+
+    return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// ---------------------------------------------------------------------------
+// シフト表の解析
+// ---------------------------------------------------------------------------
+
+/**
+ * シフト表のテーブルから勤務予定を取り出す。
+ *
+ * ブラウザの中でも Node のテストからも呼べるように、document を引数で受け取る
+ * （省略時はブラウザの document を使う）。Puppeteer に渡す都合上、この関数は
+ * 外側の変数を参照してはいけない。
+ *
+ * @param {Document} [doc]
+ * @returns {Array<{staffName: string, day: number, startTime: string, endTime: string}>}
+ */
+function extractSchedules(doc) {
+    const targetDocument = doc || document;
+    const results = [];
+
+    const table = targetDocument.querySelector('table.note');
+    if (!table) {
+        return results;
+    }
+
+    const rows = table.querySelectorAll('tr');
+
+    // 日付ヘッダー（1, 2, 3 ...）を並び順のまま拾う
+    let dayHeaders = [];
+    rows.forEach(row => {
+        const dayCells = row.querySelectorAll('th.day');
+        if (dayCells.length > dayHeaders.length) {
+            dayHeaders = Array.from(dayCells).map(th => parseInt(th.textContent.trim(), 10));
+        }
+    });
+
+    if (dayHeaders.length === 0) {
+        return results;
+    }
+
+    rows.forEach(row => {
+        const nameCell = row.querySelector('th.first[colspan="2"]');
+        if (!nameCell) {
+            return;
+        }
+
+        const staffName = nameCell.textContent.trim();
+        if (!staffName) {
+            return;
+        }
+
+        const dayCells = row.querySelectorAll('td.day, td.applying.day');
+
+        dayCells.forEach((cell, index) => {
+            const day = dayHeaders[index];
+            if (!day) {
+                return;
+            }
+
+            const timeSpan = cell.querySelector('span[style*="font-size: 10px"]');
+            if (!timeSpan) {
+                return;
+            }
+
+            // "19:00<br>23:00" の形から時刻を 2 つ取り出す
+            const times = timeSpan.innerHTML
+                .split(/<br\s*\/?>/i)
+                .map(part => part.replace(/<[^>]*>/g, '').trim())
+                .filter(part => /^\d{1,2}:\d{2}$/.test(part));
+
+            if (times.length >= 2) {
+                results.push({
+                    staffName: staffName,
+                    day: day,
+                    startTime: times[0],
+                    endTime: times[1]
+                });
+            }
+        });
+    });
+
+    return results;
+}
+
+// ---------------------------------------------------------------------------
+// ブラウザ操作
+// ---------------------------------------------------------------------------
+
+function saveDebugArtifact(name, content) {
+    if (!fs.existsSync(DEBUG_DIR)) {
+        fs.mkdirSync(DEBUG_DIR, { recursive: true });
+    }
+    fs.writeFileSync(path.join(DEBUG_DIR, name), content);
+}
+
+async function login(page) {
+    const email = process.env.JOBCAN_EMAIL;
+    const password = process.env.JOBCAN_PASSWORD;
+
+    if (!email || !password) {
+        throw new Error('JOBCAN_EMAIL と JOBCAN_PASSWORD を設定してください');
+    }
+
+    console.log('ジョブカンにログインしています...');
+    await page.goto(LOGIN_URL, { waitUntil: 'networkidle2' });
+    await page.type('input[name="user[email]"]', email);
+    await page.type('input[name="user[password]"]', password);
+
+    await Promise.all([
+        page.waitForNavigation({ waitUntil: 'networkidle2' }),
+        page.click('#login_button')
+    ]);
+    await sleep(WAIT_AFTER_ACTION_MS);
+
+    // ログインに失敗するとサインイン画面に留まる。
+    // ここで気づかないと「0 件取得」という分かりにくい失敗になるので、はっきり落とす。
+    if (page.url().includes('/users/sign_in')) {
+        saveDebugArtifact('login-failed.html', await page.content());
+        throw new Error(
+            'ログインできませんでした。JOBCAN_EMAIL と JOBCAN_PASSWORD を確認してください'
+        );
+    }
+
+    console.log('ログインしました。管理者ページへ切り替えます...');
+    await page.goto(MANAGER_URL, { waitUntil: 'networkidle2' });
+    await sleep(WAIT_AFTER_ACTION_MS);
+}
+
+async function scrapeGroup(page, group, targetMonth) {
+    const [year, month] = targetMonth.split('-');
+    console.log(`\n--- ${group.name}（group_id=${group.id}） ---`);
+
+    await page.goto(
+        `${SCHEDULE_URL}?group_id=${group.id}&tab_type=shift_schedule`,
+        { waitUntil: 'networkidle2' }
+    );
+    await sleep(WAIT_AFTER_ACTION_MS);
+
+    await page.select('select[name="from[month][y]"]', year);
+    // 月の選択肢は先頭 0 なし（"9" であって "09" ではない）
+    await page.select('select[name="from[month][m]"]', String(parseInt(month, 10)));
+
+    const clicked = await page.evaluate(() => {
+        const button = document.querySelector('.btn-info');
+        if (!button) {
+            return false;
+        }
+        button.click();
+        return true;
+    });
+
+    if (!clicked) {
+        saveDebugArtifact(`no-display-button-${group.id}.html`, await page.content());
+        throw new Error(
+            `「表示」ボタン (.btn-info) が見つかりません（${group.name}）。` +
+            'ジョブカンの画面構成が変わった可能性があります'
+        );
+    }
+
+    // 描画を待つ。待たずに読むと 0 件になる。
+    await sleep(WAIT_AFTER_SEARCH_MS);
+
+    // うまくいかなかったときに原因を追えるよう、毎回残しておく
+    saveDebugArtifact(`schedule-${group.id}.html`, await page.content());
+    await page.screenshot({
+        path: path.join(DEBUG_DIR, `schedule-${group.id}.png`),
+        fullPage: true
+    });
+
+    const schedules = await page.evaluate(extractSchedules);
+
+    console.log(`${schedules.length} 件を取得しました`);
+    schedules.slice(0, 3).forEach(s => {
+        console.log(`  ${s.staffName} ${s.day}日 ${s.startTime}-${s.endTime}`);
+    });
+
+    return schedules.map(s => ({ ...s, groupId: group.id, groupName: group.name }));
+}
+
+async function scrapeAll(targetMonth, groups) {
+    const puppeteer = require('puppeteer');
+
+    const browser = await puppeteer.launch({
+        headless: 'new',
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu'
+        ],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
+    });
+
+    try {
+        const page = await browser.newPage();
+        await page.setViewport({ width: 1280, height: 800 });
+        page.setDefaultTimeout(30000);
+
+        await login(page);
+
+        const all = [];
+        for (const group of groups) {
+            all.push(...await scrapeGroup(page, group, targetMonth));
+        }
+        return all;
+    } finally {
+        await browser.close();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 取り込み
+// ---------------------------------------------------------------------------
+
+async function importToApi(schedules, targetMonth) {
+    const apiBase = (process.env.API_BASE || '').replace(/\/$/, '');
+    const secret = process.env.IMPORT_SECRET;
+
+    if (!apiBase) {
+        throw new Error('API_BASE を設定してください（例 https://inventory-system-aburiva.fly.dev）');
+    }
+    if (!secret) {
+        throw new Error('IMPORT_SECRET を設定してください（サーバー側と同じ値）');
+    }
+
+    const totals = { created: 0, updated: 0, staffCreated: 0 };
+    const unmatched = new Set();
+
+    for (let i = 0; i < schedules.length; i += CHUNK_SIZE) {
+        const chunk = schedules.slice(i, i + CHUNK_SIZE);
+        const label = `${i + 1}〜${i + chunk.length}件目`;
+
+        const res = await fetch(`${apiBase}/api/staff/import-schedules`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ secret, schedules: chunk, targetMonth })
+        });
+
+        const body = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+            throw new Error(`取り込みに失敗しました (${label}): ${res.status} ${body.error || ''}`);
+        }
+
+        totals.created += body.created || 0;
+        totals.updated += body.updated || 0;
+        totals.staffCreated += body.staffCreated || 0;
+        (body.unmatchedGroups || []).forEach(g => unmatched.add(g));
+
+        console.log(`${label}: 新規 ${body.created} / 更新 ${body.updated}`);
+
+        if (i + CHUNK_SIZE < schedules.length) {
+            await sleep(CHUNK_INTERVAL_MS);
+        }
+    }
+
+    return { ...totals, unmatchedGroups: [...unmatched] };
+}
+
+// ---------------------------------------------------------------------------
+
+async function main() {
+    const args = process.argv.slice(2);
+    const dryRun = args.includes('--dry-run');
+    const monthArgument = args.find(a => !a.startsWith('--'));
+
+    const targetMonth = resolveTargetMonth(monthArgument);
+    const groups = resolveGroups();
+
+    console.log('========================================');
+    console.log(`ジョブカン シフト取得 (${targetMonth})`);
+    console.log(`対象店舗: ${groups.map(g => g.name).join('、')}`);
+    if (dryRun) {
+        console.log('モード: 取得のみ（送信しません）');
+    }
+    console.log('========================================');
+
+    const schedules = await scrapeAll(targetMonth, groups);
+
+    console.log('\n========================================');
+    console.log(`合計 ${schedules.length} 件`);
+    for (const group of groups) {
+        const count = schedules.filter(s => s.groupId === group.id).length;
+        console.log(`  ${group.name}: ${count} 件`);
+    }
+
+    saveDebugArtifact(
+        `schedules-${targetMonth}.json`,
+        JSON.stringify(schedules, null, 2)
+    );
+
+    if (schedules.length === 0) {
+        throw new Error(
+            '1 件も取得できませんでした。debug/ の HTML を開いて table.note の構造を確認してください'
+        );
+    }
+
+    if (dryRun) {
+        console.log('\n--dry-run のため送信しませんでした');
+        return;
+    }
+
+    console.log('\n取り込んでいます...');
+    const result = await importToApi(schedules, targetMonth);
+
+    console.log('========================================');
+    console.log(`新規 ${result.created} / 更新 ${result.updated} / スタッフ新規 ${result.staffCreated}`);
+
+    if (result.unmatchedGroups.length > 0) {
+        console.warn(
+            `⚠ 拠点に結びつかない店舗: ${result.unmatchedGroups.join('、')}\n` +
+            '  locations.jobcan_group_id を設定してください'
+        );
+    }
+
+    console.log('========================================');
+}
+
+if (require.main === module) {
+    main()
+        .then(() => process.exit(0))
+        .catch(error => {
+            console.error('\n処理に失敗しました:', error.message);
+            process.exit(1);
+        });
+}
+
+module.exports = {
+    DEFAULT_GROUPS,
+    resolveGroups,
+    resolveTargetMonth,
+    extractSchedules
+};

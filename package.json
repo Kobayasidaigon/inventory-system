@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server/app.js",
     "dev": "nodemon server/app.js",
-    "test": "node test-stock.js && node test-shifts.js && node test-session.js"
+    "test": "node test-stock.js && node test-shifts.js && node test-session.js && node test-jobcan.js",
+    "scrape:jobcan": "node scripts/scrape-jobcan.js"
   },
   "dependencies": {
     "@line/bot-sdk": "^10.5.0",
@@ -29,6 +30,8 @@
     "sqlite3": "^5.1.6"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1"
+    "jsdom": "^30.0.1",
+    "nodemon": "^3.0.1",
+    "puppeteer": "^25.9.0"
   }
 }

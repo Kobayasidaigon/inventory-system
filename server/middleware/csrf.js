@@ -18,10 +18,15 @@ function generateCsrfToken(req, res, next) {
 // CSRFトークンを検証
 function verifyCsrfToken(req, res, next) {
     // GETリクエスト、CSRFトークン取得、LINE webhookは検証不要
+    //
+    // 勤務予定の取り込みも除外する。ブラウザではなく GitHub Actions から
+    // 呼ばれるのでセッションを持たない。代わりに IMPORT_SECRET で認証している
+    // （routes/staff.js の verifyImportSecret）。
     if (
         req.method === 'GET' ||
         req.path === '/csrf-token' ||
         req.path === '/line-webhook' ||
+        req.path === '/staff/import-schedules' ||
         req.path.includes('/api/auth/check')  // 認証チェックも除外
     ) {
         return next();

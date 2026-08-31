@@ -1,0 +1,70 @@
+name: ジョブカン シフト取得
+
+# 毎月 14 日と 30 日の 15:00 UTC（日本時間 翌 0:00）に実行する。
+#   14 日 → 当月ぶん
+#   30 日 → 翌月ぶん（月末に来月のシフトを先取りする）
+# 対象月の判定はスクリプト側（25 日以降なら翌月）が行う。
+on:
+  schedule:
+    - cron: '0 15 14,30 * *'
+  workflow_dispatch:
+    inputs:
+      target_month:
+        description: '対象月 (YYYY-MM)。空なら自動で決める'
+        required: false
+        type: string
+      dry_run:
+        description: '取得だけして保存しない'
+        required: false
+        type: boolean
+        default: false
+
+# 取り込みが重ならないようにする
+concurrency:
+  group: jobcan-scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    name: 取得して取り込む
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      # ここではブラウザを使うので、postinstall の自動取得は止めて
+      # 次のステップで明示的に入れる（入る場所を固定したいため）
+      - run: npm ci
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+
+      - name: Chrome を導入
+        run: npx puppeteer browsers install chrome
+
+      - name: 取得して取り込む
+        run: |
+          node scripts/scrape-jobcan.js \
+            ${{ inputs.dry_run && '--dry-run' || '' }} \
+            ${{ inputs.target_month }}
+        env:
+          JOBCAN_EMAIL: ${{ secrets.JOBCAN_EMAIL }}
+          JOBCAN_PASSWORD: ${{ secrets.JOBCAN_PASSWORD }}
+          API_BASE: ${{ secrets.API_BASE }}
+          IMPORT_SECRET: ${{ secrets.IMPORT_SECRET }}
+          JOBCAN_GROUPS: ${{ vars.JOBCAN_GROUPS }}
+
+      # 失敗したときに原因を追えるよう、HTML とスクリーンショットを残す。
+      # ジョブカンの画面構成が変わったときは、ここを見てセレクタを直す。
+      - name: 調査用のファイルを保存
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jobcan-debug-${{ github.run_number }}
+          path: debug/
+          retention-days: 7
+          if-no-files-found: ignore

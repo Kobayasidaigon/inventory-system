@@ -158,6 +158,41 @@ async function initMainDatabase(db) {
         )
     `);
 
+    // スタッフテーブル（ジョブカンから取り込む勤務者）
+    //
+    // users（このアプリのログイン用アカウント）とは別物。
+    // ジョブカンに載る勤務者全員が対象で、アプリにログインするとは限らない。
+    await db.run(`
+        CREATE TABLE IF NOT EXISTS staff (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
+    // スタッフの勤務予定テーブル
+    //
+    // 同じ日・同じ開始時刻の予定は 1 件に保つ（UNIQUE）。終了時刻が変わったときは
+    // 行を増やさず上書きしたいので、終了時刻はキーに含めない。
+    await db.run(`
+        CREATE TABLE IF NOT EXISTS staff_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id INTEGER NOT NULL,
+            location_id INTEGER,
+            date DATE NOT NULL,
+            start_time TEXT NOT NULL,
+            end_time TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'jobcan',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(staff_id, date, start_time),
+            FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE CASCADE,
+            FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE SET NULL
+        )
+    `);
+
     // インデックス作成
     await db.run(`CREATE INDEX IF NOT EXISTS idx_users_location ON users(location_id)`);
     await db.run(`CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id)`);
@@ -167,6 +202,31 @@ async function initMainDatabase(db) {
     await db.run(`CREATE INDEX IF NOT EXISTS idx_qr_tokens_user_id ON qr_tokens(user_id)`);
     await db.run(`CREATE INDEX IF NOT EXISTS idx_feedbacks_location ON feedbacks(location_id)`);
     await db.run(`CREATE INDEX IF NOT EXISTS idx_feedbacks_status ON feedbacks(status)`);
+    await db.run(`CREATE INDEX IF NOT EXISTS idx_staff_schedules_date ON staff_schedules(date)`);
+    await db.run(`CREATE INDEX IF NOT EXISTS idx_staff_schedules_staff ON staff_schedules(staff_id)`);
+    await db.run(`CREATE INDEX IF NOT EXISTS idx_staff_schedules_location ON staff_schedules(location_id)`);
+
+    await migrateMainTables(db);
+}
+
+// メインデータベースに後から追加した列。
+// 拠点データベース側と同じ理由で、PRAGMA で調べてから ALTER TABLE する。
+const mainColumnMigrations = [
+    // ジョブカンの店舗（グループ）ID。どの拠点がジョブカンのどの店舗かを結びつける。
+    { table: 'locations', column: 'jobcan_group_id', definition: 'TEXT' }
+];
+
+async function migrateMainTables(db) {
+    for (const { table, column, definition } of mainColumnMigrations) {
+        const columns = await db.all(`PRAGMA table_info(${table})`);
+
+        if (columns.some(info => info.name === column)) {
+            continue;
+        }
+
+        await db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+        console.log(`列を追加しました: ${table}.${column}`);
+    }
 }
 
 // 拠点データベースのテーブル作成SQL

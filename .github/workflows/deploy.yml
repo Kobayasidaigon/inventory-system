@@ -32,7 +32,11 @@ jobs:
           node-version: '22'
           cache: npm
 
+      # puppeteer は devDependency に入っているが、テストはブラウザを使わない
+      # （解析部分は jsdom で確かめる）ので Chromium は落とさない
       - run: npm ci
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
 
       - run: npm test
 

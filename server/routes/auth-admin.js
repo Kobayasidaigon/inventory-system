@@ -10,6 +10,23 @@ const { buildStockChartData, parseChartDays } = require('../utils/stock');
 const { restoreSessionFromRememberToken } = require('../middleware/auth');
 const router = express.Router();
 
+/**
+ * Remember Me のクッキーの付け方。
+ *
+ * 1 年有効の資格情報なので、セッションのクッキー（app.js）と同じ守りにする。
+ * secure を落としたままだと、http で開かれた場合に平文で流れる。Fly 側で
+ * force_https にしてあるので実際に流れる経路は塞がっているが、そちらの設定に
+ * 頼りきるのはやめる。
+ *
+ * 開発中は http のままなので、本番のときだけ secure を立てる。
+ */
+const REMEMBER_COOKIE_OPTIONS = {
+    maxAge: 365 * 24 * 60 * 60 * 1000, // 1年
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax'
+};
+
 // ログイン用のレート制限（15分間に5回まで）
 const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15分
@@ -71,11 +88,7 @@ router.post('/admin/login', loginLimiter, async (req, res) => {
         // Remember Me処理
         if (rememberMe) {
             const token = await saveRememberToken(user.id);
-            res.cookie('remember_token', token, {
-                maxAge: 365 * 24 * 60 * 60 * 1000, // 1年
-                httpOnly: true,
-                secure: false // 本番環境ではtrueに設定
-            });
+            res.cookie('remember_token', token, REMEMBER_COOKIE_OPTIONS);
         }
 
         res.json({ success: true, userName: user.user_name, isAdmin: true });
@@ -129,11 +142,7 @@ router.post('/login', loginLimiter, async (req, res) => {
         // Remember Me処理
         if (rememberMe) {
             const token = await saveRememberToken(user.id);
-            res.cookie('remember_token', token, {
-                maxAge: 365 * 24 * 60 * 60 * 1000, // 1年
-                httpOnly: true,
-                secure: false // 本番環境ではtrueに設定
-            });
+            res.cookie('remember_token', token, REMEMBER_COOKIE_OPTIONS);
         }
 
         res.json({

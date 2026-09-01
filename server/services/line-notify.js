@@ -8,6 +8,23 @@ const config = {
 
 let client = null;
 
+/**
+ * 通知を送ってよいか。
+ *
+ * 既定は「送らない」。止めるからには理由があって止めているので、
+ * 環境変数を明示的に立てたときだけ送る形にしている。設定を消し忘れた
+ * だけで鳴り出す、ということが起きない。
+ *
+ * 送るように戻すとき:
+ *   flyctl secrets set NOTIFICATIONS_ENABLED=true
+ *
+ * 呼ばれるたびに読む。起動時に固めると、テストから切り替えられない。
+ */
+function notificationsEnabled() {
+    const value = String(process.env.NOTIFICATIONS_ENABLED ?? '').trim().toLowerCase();
+    return value === 'true' || value === '1' || value === 'on';
+}
+
 // クライアントの初期化
 function initLineClient() {
     if (!config.channelAccessToken || !config.channelSecret) {
@@ -28,6 +45,13 @@ function initLineClient() {
 // 初期化
 initLineClient();
 
+if (!notificationsEnabled()) {
+    console.log(
+        '通知は止めてあります（NOTIFICATIONS_ENABLED が未設定）。' +
+        '送るように戻すには NOTIFICATIONS_ENABLED=true を設定してください。'
+    );
+}
+
 /**
  * グループに発注通知メッセージを送信
  * @param {string} groupId - LINEグループID
@@ -35,6 +59,11 @@ initLineClient();
  * @returns {Promise<boolean>} 送信成功/失敗
  */
 async function sendOrderNotification(groupId, orderInfo) {
+    // 送信の唯一の出口なので、ここで止めれば通知は一切出ない
+    if (!notificationsEnabled()) {
+        return false;
+    }
+
     if (!client) {
         console.log('LINE クライアントが初期化されていません');
         return false;
@@ -76,6 +105,11 @@ async function sendOrderNotification(groupId, orderInfo) {
  * @returns {Promise<boolean>} 送信成功/失敗
  */
 async function sendShiftReminder(groupId, shiftInfo) {
+    // 送信の唯一の出口なので、ここで止めれば通知は一切出ない
+    if (!notificationsEnabled()) {
+        return false;
+    }
+
     if (!client) {
         console.log('LINE クライアントが初期化されていません');
         return false;
@@ -112,5 +146,6 @@ async function sendShiftReminder(groupId, shiftInfo) {
 module.exports = {
     sendOrderNotification,
     sendShiftReminder,
-    isEnabled: () => !!client
+    notificationsEnabled,
+    isEnabled: () => !!client && notificationsEnabled()
 };

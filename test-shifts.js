@@ -33,6 +33,71 @@ function todayAt(hours, minutes) {
 }
 
 // ---------------------------------------------------------------------------
+// 0. 通知の大元の切り替え
+//
+// 通知は既定で止めてある。「止めたつもりが鳴っていた」も「戻したつもりが
+// 鳴らない」も困るので、どの値でどちらになるかを固定しておく。
+// ---------------------------------------------------------------------------
+
+function testNotificationSwitch() {
+    const { notificationsEnabled } = require('./server/services/line-notify');
+    const original = process.env.NOTIFICATIONS_ENABLED;
+
+    const check = value => {
+        if (value === undefined) {
+            delete process.env.NOTIFICATIONS_ENABLED;
+        } else {
+            process.env.NOTIFICATIONS_ENABLED = value;
+        }
+        return notificationsEnabled();
+    };
+
+    try {
+        addResult(
+            '通知: 未設定なら送らない',
+            check(undefined) === false,
+            '既定は停止'
+        );
+        addResult(
+            '通知: 空文字なら送らない',
+            check('') === false,
+            '停止'
+        );
+        addResult(
+            '通知: true を設定すれば送る',
+            check('true') === true,
+            '有効'
+        );
+        addResult(
+            '通知: 1 / on でも送る',
+            check('1') === true && check('on') === true,
+            '有効'
+        );
+        addResult(
+            '通知: 大文字や前後の空白は無視する',
+            check('  TRUE  ') === true && check('On') === true,
+            '有効'
+        );
+        addResult(
+            '通知: false / off なら送らない',
+            check('false') === false && check('off') === false,
+            '停止'
+        );
+        addResult(
+            '通知: 意味の分からない値は送らない側に倒す',
+            check('yes') === false && check('enabled') === false,
+            '停止'
+        );
+    } finally {
+        if (original === undefined) {
+            delete process.env.NOTIFICATIONS_ENABLED;
+        } else {
+            process.env.NOTIFICATIONS_ENABLED = original;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 1. 未確認の見張り（サーバーを起動せず、関数を直接呼ぶ）
 // ---------------------------------------------------------------------------
 
@@ -323,6 +388,7 @@ async function testApi(client) {
     const { server, waitUntilReady } = startServer({ port: PORT, dbDir: DB_DIR });
 
     try {
+        testNotificationSwitch();
         await testMonitor();
         await waitUntilReady(BASE_URL);
         await testApi(createClient(BASE_URL));

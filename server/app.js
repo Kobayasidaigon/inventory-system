@@ -10,6 +10,7 @@ const crypto = require('crypto');
 const path = require('path');
 const { startScheduledBackup } = require('./services/backup');
 const { startShiftMonitor } = require('./services/shift-monitor');
+const { notificationsEnabled } = require('./services/line-notify');
 const { generateCsrfToken, verifyCsrfToken, getCsrfToken } = require('./middleware/csrf');
 const { attachRememberedSession } = require('./middleware/auth');
 
@@ -260,7 +261,13 @@ app.listen(PORT, () => {
     // シフトの区切りが未確認のまま過ぎていないか見張る。
     // 注意: この手の定期処理は、マシンが動いている間しか走らない。
     // Fly.io では min_machines_running = 1 が必要（fly.toml のコメント参照）。
-    if (process.env.SHIFT_MONITOR !== 'off') {
+    //
+    // 通知を止めているときは見張りも回さない。知らせないのに点検だけ
+    // 続けても意味がなく、送っていない分を「通知済み」として記録して
+    // しまうと、通知を戻したときに取りこぼす。
+    if (!notificationsEnabled()) {
+        console.log('通知を止めているため、シフト未確認の見張りは動かしません');
+    } else if (process.env.SHIFT_MONITOR !== 'off') {
         // 間隔の既定値は services/shift-monitor.js 側で持つ
         startShiftMonitor(parseInt(process.env.SHIFT_CHECK_INTERVAL_MINUTES, 10) || undefined);
     }

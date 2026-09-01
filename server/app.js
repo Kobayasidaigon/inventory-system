@@ -13,6 +13,7 @@ const { startShiftMonitor } = require('./services/shift-monitor');
 const { notificationsEnabled } = require('./services/line-notify');
 const { generateCsrfToken, verifyCsrfToken, getCsrfToken } = require('./middleware/csrf');
 const { attachRememberedSession } = require('./middleware/auth');
+const entryRoutes = require('./routes/entry');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -142,6 +143,16 @@ app.use('/api/inventory-count', requireAuth, (req, res, next) => {
     const db = getLocationDatabase(req.session.locationCode);
     inventoryCountRoutes(db)(req, res, next);
 });
+
+// 信頼している別サイト（清掃管理表）からの入場。
+// /api/ の下ではないので、回数制限は個別に掛ける。
+app.use('/enter', rateLimit({
+    windowMs: 60 * 1000,
+    max: 20,
+    message: 'リクエストが多すぎます',
+    standardHeaders: true,
+    legacyHeaders: false
+}), entryRoutes);
 
 // 静的ファイルの提供（CSS, JS, 画像）
 app.use('/css', express.static(path.join(__dirname, '../public/css')));

@@ -121,6 +121,19 @@ async function initMainDatabase(db) {
         )
     `);
 
+    // 入場リンクの nonce（使い捨ての印）
+    //
+    // 信頼している別サイトからの署名付きリンクを、1 回しか通さないための記録。
+    // リンクは履歴に残るし共有もされうるので、同じものを二度は使えないようにする。
+    // expires_at は UNIX 秒。過ぎたものは期限切れとして弾かれるため、消してよい。
+    await db.run(`
+        CREATE TABLE IF NOT EXISTS entry_nonces (
+            nonce TEXT PRIMARY KEY,
+            expires_at INTEGER NOT NULL,
+            used_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
     // Remember Meトークンテーブル
     await db.run(`
         CREATE TABLE IF NOT EXISTS remember_tokens (

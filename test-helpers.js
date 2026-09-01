@@ -52,7 +52,14 @@ function createClient(baseUrl) {
         }
     };
 
-    async function request(method, urlPath, body) {
+    /**
+     * @param {object} [options]
+     * @param {'follow'|'manual'} [options.redirect='follow'] - リダイレクトを追うか。
+     *   fetch が追うと、途中の応答に付いた Set-Cookie を取りこぼす（最後の応答の
+     *   ヘッダーしか読めないため）。ブラウザは途中のクッキーも保存するので、
+     *   リダイレクトしながらログインさせる経路を試すときは 'manual' にする。
+     */
+    async function request(method, urlPath, body, options = {}) {
         const headers = {};
         if (state.cookie) headers['Cookie'] = state.cookie;
         if (method !== 'GET') headers['X-CSRF-Token'] = state.csrfToken;
@@ -64,7 +71,12 @@ function createClient(baseUrl) {
             payload = JSON.stringify({ ...body, _csrf: state.csrfToken });
         }
 
-        const res = await fetch(`${baseUrl}${urlPath}`, { method, headers, body: payload });
+        const res = await fetch(`${baseUrl}${urlPath}`, {
+            method,
+            headers,
+            body: payload,
+            redirect: options.redirect || 'follow'
+        });
 
         const setCookie = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
         for (const raw of setCookie) {

@@ -317,6 +317,43 @@ async function testGrace(db, monitor) {
         `23:55+${GRACE} → ${monitor.toTimeText(23 * 60 + 55 + GRACE)}`
     );
 
+    // --- その日の最後の区切りは締め切らない ---
+    //
+    // 締め切りは「その区切りぶんを次に渡す」線なので、次が無いところには引かない。
+    // 閉店の片付けを終えてから登録しても間に合うようにする。
+    const lastAfterEnd = await statusAt(19, 30);
+    addResult(
+        '最後の区切り: 区切りの時刻を過ぎても締め切らない',
+        lastAfterEnd['昼番'].hasDeadline === false &&
+            lastAfterEnd['昼番'].isClosed === false &&
+            lastAfterEnd['昼番'].isPast === true,
+        `hasDeadline=${lastAfterEnd['昼番'].hasDeadline} isClosed=${lastAfterEnd['昼番'].isClosed}`
+    );
+    addResult(
+        '最後の区切り: 締め切りは 24:00（日付が変わるまで）',
+        lastAfterEnd['昼番'].closeTime === '24:00',
+        `締め切り ${lastAfterEnd['昼番'].closeTime}`
+    );
+    addResult(
+        '最後の区切り: 時刻を過ぎても、そこが今の区切りのまま',
+        lastAfterEnd['昼番'].isCurrent === true,
+        `isCurrent=${lastAfterEnd['昼番'].isCurrent}`
+    );
+    addResult(
+        '最後の区切り: 手前の区切りは今まで通り締め切る',
+        lastAfterEnd['朝番'].hasDeadline === true && lastAfterEnd['朝番'].isClosed === true,
+        `朝番 hasDeadline=${lastAfterEnd['朝番'].hasDeadline} isClosed=${lastAfterEnd['朝番'].isClosed}`
+    );
+
+    // 閉店後の登録も最後の区切りに数える
+    await addMovement(23, 30);
+    const lateNight = await statusAt(23, 45);
+    addResult(
+        '最後の区切り: 区切りの時刻を過ぎてからの登録も数える',
+        lateNight['昼番'].movementCount === 2,
+        `昼番 ${lateNight['昼番'].movementCount} 件（14:15 と 23:30 のぶん）`
+    );
+
     await db.run('DELETE FROM inventory_history');
     void morning;
 }

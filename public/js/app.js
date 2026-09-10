@@ -239,8 +239,11 @@ function renderShiftStatus(shifts) {
 }
 
 // 区切りの時刻は過ぎたが、まだ締め切っていない状態。ここで押せば間に合う。
+//
+// 締め切りの無い区切り（その日の最後）は、急かす理由がないのでここに入れない。
+// 普通の「進行中」として扱う。
 function isInGrace(shift) {
-    return shift.isPast && !shift.isClosed;
+    return shift.hasDeadline && shift.isPast && !shift.isClosed;
 }
 
 function shiftBorderColor(shift) {

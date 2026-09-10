@@ -130,10 +130,18 @@ async function buildShiftStatus(db, date, options = {}) {
     // 今いる区切りは「まだ締め切っていない最初の区切り」1 つだけ
     let currentFound = false;
 
-    for (const shift of shifts) {
+    for (const [index, shift] of shifts.entries()) {
         const report = reports.find(r => r.shift_id === shift.id) || null;
         const endMinutes = toMinutes(shift.end_time);
-        const closeMinutes = endMinutes + graceMinutes;
+
+        // その日の最後の区切りは締め切らない。
+        //
+        // 締め切りは「その区切りぶんを次の区切りに渡す」ための線なので、次が
+        // 無いところに引く意味がない。閉店の片付けを終えてから登録することも
+        // あり、そこで締め切ると間に合わず、直しようもなく未確認だけが残る。
+        // 日付が変わればどのみち翌日の区切りに切り替わる。
+        const hasDeadline = index < shifts.length - 1;
+        const closeMinutes = hasDeadline ? endMinutes + graceMinutes : 24 * 60;
         const closeTime = toTimeText(closeMinutes);
 
         const movements = await countMovements(db, dateText, previousClose, closeTime);
@@ -141,7 +149,7 @@ async function buildShiftStatus(db, date, options = {}) {
         // 区切りの時刻は過ぎた（猶予の中かもしれない）
         const isPast = nowMinutes >= endMinutes;
         // 締め切った。ここから先は確認も登録も受け付けない
-        const isClosed = nowMinutes >= closeMinutes;
+        const isClosed = hasDeadline && nowMinutes >= closeMinutes;
         // 区切りの時刻を過ぎていても、猶予の中ならまだこの区切りにいる
         const isCurrent = !isClosed && !currentFound;
 
@@ -155,6 +163,7 @@ async function buildShiftStatus(db, date, options = {}) {
             startTime: previousClose,
             endTime: shift.end_time,
             closeTime,
+            hasDeadline,
             isCurrent,
             isPast,
             isClosed,

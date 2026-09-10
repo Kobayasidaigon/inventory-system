@@ -160,7 +160,7 @@ async function screenshot(page, file) {
         ]);
         await sleep(3000);
 
-        const cardNames = () => page.$$eval('.stock-card-name', els => els.map(e => e.textContent.trim()));
+        const cardNames = () => page.$$eval('.stock-row-name, .stock-card-name', els => els.map(e => e.textContent.trim()));
 
         check('一覧: 4 品目が出る', (await cardNames()).length === 4, `${(await cardNames()).length} 件`);
 
@@ -228,7 +228,7 @@ async function screenshot(page, file) {
         // 出してしまったので、ここで固定しておく。
 
         // 写真がまだ 1 枚も無い状態
-        const thumbsBefore = await page.$$eval('.stock-card-thumb', els => els.length);
+        const thumbsBefore = await page.$$eval('.stock-row-thumb, .stock-card-thumb', els => els.length);
         check('写真: 誰も使っていなければ枠を出さない', thumbsBefore === 0, `枠 ${thumbsBefore} 個`);
 
         await refresh();
@@ -239,7 +239,7 @@ async function screenshot(page, file) {
         await page.reload({ waitUntil: 'networkidle2' });
         await sleep(3000);
 
-        const thumbs = await page.$$eval('.stock-card-thumb', els => els.map(e => {
+        const thumbs = await page.$$eval('.stock-row-thumb, .stock-card-thumb', els => els.map(e => {
             const img = e.querySelector('img');
             const r = e.getBoundingClientRect();
             return {
@@ -262,15 +262,15 @@ async function screenshot(page, file) {
             `読み込めた写真 ${withPhoto.length} 枚`
         );
 
-        // 36px だと商品を見分けられなかった。見て分かる大きさを保つ。
+        // 36px だと商品を見分けられなかった。表示によらず 40px は保つ。
         check(
-            '写真: 見て分かる大きさで出る（56px 以上）',
-            thumbs.every(t => t.width >= 56 && t.height >= 56),
+            '写真: 見て分かる大きさで出る（40px 以上）',
+            thumbs.every(t => t.width >= 40 && t.height >= 40),
             thumbs.map(t => `${t.width}x${t.height}`).join(', ')
         );
 
         // 写真のある商品と無い商品で、名前の左端が揃っていること
-        const lefts = await page.$$eval('.stock-card-name', els =>
+        const lefts = await page.$$eval('.stock-row-name, .stock-card-name', els =>
             els.map(e => Math.round(e.getBoundingClientRect().left))
         );
         const spread = Math.max(...lefts) - Math.min(...lefts);
@@ -281,6 +281,41 @@ async function screenshot(page, file) {
         );
 
         await screenshot(page, path.join(OUT, '09-with-photo.png'));
+
+        // --- 表示の切り替え ---
+        //
+        // 既定はコンパクト。1 品目 1 枚のカードだと、50 品目で 8 画面ぶん
+        // スクロールすることになる。カードの方が見やすい場面もあるので残す。
+
+        const rowHeight = await page.$eval('.stock-row', el => Math.round(el.getBoundingClientRect().height));
+        check('表示: 既定はコンパクト（1 行 1 品目）', rowHeight > 0 && rowHeight <= 72, `1 行 ${rowHeight}px`);
+
+        await page.click('#stock-view-toggle');
+        await sleep(800);
+        const cardHeight = await page.$eval('.stock-card', el => Math.round(el.getBoundingClientRect().height));
+        check('表示: カード表示に切り替えられる', cardHeight > rowHeight, `1 カード ${cardHeight}px（行 ${rowHeight}px）`);
+
+        // カード表示には入庫のボタンも並ぶ
+        const inButtons = await page.$$eval('.stock-card .btn-quick-in', els => els.length);
+        check('表示: カード表示には入庫のボタンも出る', inButtons > 0, `+1/+5 が ${inButtons} 個`);
+
+        // 選んだ表示を覚えていること
+        await page.reload({ waitUntil: 'networkidle2' });
+        await sleep(3000);
+        const keptCards = await page.$$eval('.stock-card', els => els.length);
+        check('表示: 選んだ表示を覚えている', keptCards > 0, `開き直してもカード表示（${keptCards} 枚）`);
+
+        await page.click('#stock-view-toggle');
+        await sleep(800);
+        const backToRows = await page.$$eval('.stock-row', els => els.length);
+        check('表示: コンパクトに戻せる', backToRows > 0, `${backToRows} 行`);
+
+        // コンパクトでも、数字から個数を入れられる（入庫もここから）
+        await page.click('.stock-row .stock-now');
+        await sleep(400);
+        const modalInCompact = await page.$eval('#quantity-modal', el => el.style.display === 'block');
+        check('表示: コンパクトでも個数入力を開ける', modalInCompact, `開いた ${modalInCompact}`);
+        await page.evaluate(() => closeQuantityModal());
     } catch (err) {
         failed++;
         console.error('失敗:', err.message);

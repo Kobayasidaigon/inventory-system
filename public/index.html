@@ -105,7 +105,11 @@
 
             <!-- 現在庫一覧 -->
             <div class="dashboard-section">
-                <h3>現在庫一覧 <span id="stock-count" class="badge"></span></h3>
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
+                    <h3 style="margin: 0;">現在庫一覧 <span id="stock-count" class="badge"></span></h3>
+                    <button type="button" id="stock-view-toggle" class="btn btn-secondary"
+                        style="white-space: nowrap; font-size: 13px; padding: 6px 12px;"></button>
+                </div>
                 <!-- 名前で絞る。品目が増えると、探すだけで何画面もスクロールすることになる -->
                 <div class="stock-search">
                     <input type="search" id="stock-search" placeholder="商品名で絞り込み"

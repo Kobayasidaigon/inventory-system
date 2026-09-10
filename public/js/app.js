@@ -618,58 +618,62 @@ function updateDashboardDisplay() {
     // 幅を全部、名前と数字に回す。
     const showThumbs = filteredProducts.some(p => p.image_url);
 
+    const compact = stockViewMode === 'compact';
+    container.className = `stock-cards-container${compact ? ' is-compact' : ''}`;
+
     filteredProducts.forEach(product => {
         const isLow = product.current_stock <= product.reorder_point;
 
-        // 写真の枠。名前と数字の横に、その 2 行ぶんの高さで置く。
-        // すでにある高さに収めるので、大きくしてもカードは伸びない。
-        //
-        // 写真を使っていない品目だけのときは枠ごと出さない。逆に 1 つでも
-        // 写真があるなら、無い品目にも空の枠を残す。片方だけ字下げされると
-        // 名前の左端がガタガタになって読みにくい。
-        const thumbHtml = !showThumbs
-            ? ''
-            : product.image_url
-                ? `<div class="stock-card-thumb"><img src="${product.image_url}" class="stock-card-image" onclick="openImagePopup('${product.image_url}')" alt="${product.name}"></div>`
-                : '<div class="stock-card-thumb is-empty"></div>';
+        // 数字を押すと個数を入力できる。出庫も入庫もそこから入れられるので、
+        // コンパクト表示で +1/+5 を省いても、やれることは減らない。
+        const nowHtml = `<button type="button" class="stock-now ${isLow ? 'low' : ''}"
+            onclick="openQuantityModal(${product.id})"
+            title="タップして個数を入力">${product.current_stock}<span class="stock-now-hint">✎</span></button>`;
 
-        // 在庫が足りているカードには何も出さない。30 枚に同じ緑の帯が並ぶと、
-        // 目立たせたいはずの「発注済み」がその中に埋もれる。
-        const chipHtml = isLow
-            ? '<span class="stock-card-chip">発注済み</span>'
-            : '';
+        const outButtons =
+            `<button class="btn-quick btn-quick-out" onclick="quickStockChange(${product.id}, -5)" title="5個出庫">-5</button>` +
+            `<button class="btn-quick btn-quick-out" onclick="quickStockChange(${product.id}, -1)" title="1個出庫">-1</button>`;
 
-        const card = document.createElement('div');
-        card.className = `stock-card ${isLow ? 'low-stock' : ''}`;
-        card.innerHTML = `
-            <div class="stock-card-main">
-                ${thumbHtml}
-                <div class="stock-card-body">
-                    <div class="stock-card-header">
-                        <div class="stock-card-name">${product.name}</div>
-                        ${chipHtml}
-                    </div>
+        const element = document.createElement('div');
 
-                    <div class="stock-card-figures">
-                        <button type="button" class="stock-now ${isLow ? 'low' : ''}"
-                            onclick="openQuantityModal(${product.id})"
-                            title="タップして個数を入力">${product.current_stock}<span class="stock-now-hint">✎</span></button>
-                        <span class="stock-card-meta">
-                            発注点 ${product.reorder_point}${product.category ? ` ・ ${product.category}` : ''}
-                        </span>
+        if (compact) {
+            // 1 行 1 品目。横幅が限られるので、いちばんよく使う出庫だけ並べる。
+            element.className = `stock-row ${isLow ? 'low-stock' : ''}`;
+            element.innerHTML = `
+                ${thumbHtml(product, showThumbs, 'stock-row-thumb')}
+                <div class="stock-row-name" title="${product.name}">${product.name}</div>
+                ${nowHtml}
+                ${outButtons}
+            `;
+        } else {
+            element.className = `stock-card ${isLow ? 'low-stock' : ''}`;
+            element.innerHTML = `
+                <div class="stock-card-main">
+                    ${thumbHtml(product, showThumbs, 'stock-card-thumb')}
+                    <div class="stock-card-body">
+                        <div class="stock-card-header">
+                            <div class="stock-card-name">${product.name}</div>
+                            ${isLow ? '<span class="stock-card-chip">発注済み</span>' : ''}
+                        </div>
+
+                        <div class="stock-card-figures">
+                            ${nowHtml}
+                            <span class="stock-card-meta">
+                                発注点 ${product.reorder_point}${product.category ? ` ・ ${product.category}` : ''}
+                            </span>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            <div class="stock-card-actions">
-                <button class="btn-quick btn-quick-out" onclick="quickStockChange(${product.id}, -5)" title="5個出庫">-5</button>
-                <button class="btn-quick btn-quick-out" onclick="quickStockChange(${product.id}, -1)" title="1個出庫">-1</button>
-                <button class="btn-quick btn-quick-in" onclick="quickStockChange(${product.id}, 1)" title="1個入庫">+1</button>
-                <button class="btn-quick btn-quick-in" onclick="quickStockChange(${product.id}, 5)" title="5個入庫">+5</button>
-            </div>
-        `;
+                <div class="stock-card-actions">
+                    ${outButtons}
+                    <button class="btn-quick btn-quick-in" onclick="quickStockChange(${product.id}, 1)" title="1個入庫">+1</button>
+                    <button class="btn-quick btn-quick-in" onclick="quickStockChange(${product.id}, 5)" title="5個入庫">+5</button>
+                </div>
+            `;
+        }
 
-        container.appendChild(card);
+        container.appendChild(element);
     });
 
     // 絞り込んで 0 件になったとき、黙って空にすると壊れたように見える
@@ -2646,6 +2650,48 @@ async function exportCountCSV() {
 // ========== ワンタップ登録機能 ==========
 
 // ワンタップで在庫変更
+/**
+ * 写真の枠を組み立てる。コンパクト表示とカード表示の両方から使う。
+ *
+ * 写真を 1 つも使っていない拠点では枠ごと出さない。1 つでも使っているなら、
+ * 無い商品にも空の枠を残す。片方だけ字下げされると名前の左端が揃わない。
+ */
+function thumbHtml(product, showThumbs, className) {
+    if (!showThumbs) return '';
+    if (!product.image_url) return `<div class="${className} is-empty"></div>`;
+    return `<div class="${className}"><img src="${product.image_url}" class="stock-card-image"`
+        + ` onclick="openImagePopup('${product.image_url}')" alt="${product.name}"></div>`;
+}
+
+/*
+ * 一覧の見せ方。
+ *
+ *   compact … 1 行 1 品目。品目が増えるとカードでは何画面もスクロールする。
+ *   card    … 1 品目 1 枚。写真が大きく、入庫のボタンも並ぶ。
+ *
+ * 既定はコンパクト。現場でいちばん効くのがスクロールの短さなので、そちらを先に。
+ */
+let stockViewMode = localStorage.getItem('stockViewMode') === 'card' ? 'card' : 'compact';
+
+function setupStockViewToggle() {
+    const button = document.getElementById('stock-view-toggle');
+    if (!button) return;
+
+    const paint = () => {
+        // 「今どれか」ではなく「押すとどうなるか」を出す
+        button.textContent = stockViewMode === 'compact' ? 'カード表示にする' : '一覧をコンパクトに';
+    };
+
+    button.addEventListener('click', () => {
+        stockViewMode = stockViewMode === 'compact' ? 'card' : 'compact';
+        localStorage.setItem('stockViewMode', stockViewMode);
+        paint();
+        updateDashboardDisplay();
+    });
+
+    paint();
+}
+
 // 在庫一覧の絞り込み文字列。画面を開き直したら消える（前の絞り込みが
 // 残っていて「商品が消えた」と見えるほうが困る）。
 let stockSearchKeyword = '';
@@ -2944,6 +2990,7 @@ document.getElementById('feedback-form').addEventListener('submit', async (e) =>
 // 使い方ガイドの折りたたみ機能
 function setupUsageGuideToggle() {
     setupStockSearch();
+    setupStockViewToggle();
 
     const toggleBtn = document.getElementById('toggle-usage-guide');
     const content = document.getElementById('usage-guide-content');

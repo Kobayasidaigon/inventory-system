@@ -9,6 +9,7 @@
  *   - 同じリンクの 2 回目
  *   - 合言葉が未設定
  *   - 管理者として入ろうとする
+ *   - 操作者名（by）を書き換える / 剥がす / 後から足す
  *
  * 使い方: node test-entry.js
  */
@@ -27,7 +28,8 @@ const {
     canonicalString,
     buildEntryUrl,
     verifyEntryParams,
-    MAX_LINK_LIFETIME_SECONDS
+    MAX_LINK_LIFETIME_SECONDS,
+    BY_MAX_LENGTH
 } = require('./server/services/entry-link');
 
 const PORT = 3993;
@@ -144,6 +146,51 @@ function testVerify() {
     delete process.env.LINK_SECRET;
     rejects('検証: 合言葉が未設定なら受け付けない', goodQuery, 503);
     process.env.LINK_SECRET = LINK_SECRET;
+
+    // --- 操作者名（by） ---
+    //
+    // by は「誰が触っているか」を渡すだけで、入れるかどうかには効かない。
+    // ただし署名の対象なので、URL をいじって別人の名前にはできない。
+    const withBy = validParams({ by: '山田' });
+    const withByQuery = { ...withBy, sig: sign(withBy, LINK_SECRET) };
+
+    addResult(
+        '検証: 操作者名が付いたリンクは通り、その名前が読める',
+        verifyEntryParams(withByQuery).by === '山田',
+        '山田 として読めた'
+    );
+
+    addResult(
+        '検証: 操作者名が無いリンクは今まで通り通る（by は空）',
+        verifyEntryParams(goodQuery).by === '',
+        'by は空文字'
+    );
+
+    rejects('検証: 操作者名を書き換えたら拒否', { ...withByQuery, by: '鈴木' }, 401);
+
+    const stripped = { ...withByQuery };
+    delete stripped.by;
+    rejects('検証: 操作者名を剥がしたら拒否', stripped, 401);
+
+    rejects('検証: 操作者名を後から足したら拒否', { ...goodQuery, by: '鈴木' }, 401);
+
+    // 名前を入れるところなので、長いものと HTML として読める文字は受け取らない。
+    // 履歴の表はテンプレート文字列で組み立てているため、ここで止める。
+    const longBy = validParams({ by: 'あ'.repeat(BY_MAX_LENGTH + 1) });
+    rejects(
+        '検証: 操作者名が長すぎたら拒否',
+        { ...longBy, sig: sign(longBy, LINK_SECRET) },
+        400
+    );
+
+    for (const bad of ['<img src=x>', '&#60;script&#62;', '"onload"', "it's"]) {
+        const badBy = validParams({ by: bad });
+        rejects(
+            `検証: 操作者名に ${bad} は受け取らない`,
+            { ...badBy, sig: sign(badBy, LINK_SECRET) },
+            400
+        );
+    }
 
     // --- 区切り文字の混入で別の入力が同じ署名にならないこと ---
     const a = canonicalString({ loc: 'A&user=X', user: 'B', exp: 1, nonce: 'n' });
@@ -262,6 +309,103 @@ async function testEntry(setupClient) {
         '入場: 拒否のあとも正しいリンクは通る',
         stillWorks.loggedIn === true,
         '入れた'
+    );
+
+    // --- 操作者名（by）---
+    //
+    // 拠点のアカウントは店舗で共用する。それだけだと画面も履歴も全部同じ名前に
+    // なってしまうので、リンクで受け取った名前を使う。
+    const named = await enterWith(visitor(), validParams({ loc: locationCode, by: '山田' }));
+    addResult(
+        '入場: 操作者名が付いていれば、その名前で入る',
+        named.loggedIn === true && named.userName === '山田',
+        `${named.userName} として入った`
+    );
+
+    const unnamed = await enterWith(visitor(), validParams({ loc: locationCode }));
+    addResult(
+        '入場: 操作者名が無ければ、これまで通りアカウント名で入る',
+        unnamed.loggedIn === true && unnamed.userName === 'テスト担当',
+        `${unnamed.userName} として入った`
+    );
+
+    // --- 操作者名が記録にも残るか ---
+    //
+    // 画面の名前だけ変えても、履歴が共用アカウント名のままでは誰が入力したか
+    // 後から分からない。実際に出庫を登録して、履歴に出る名前まで見る。
+    await setupClient.refreshCsrfToken();
+    const product = await setupClient.request('POST', '/api/products', {
+        name: '操作者名テスト用',
+        category: '消耗品',
+        current_stock: 100,
+        // 発注点を 0 にして、このテストの出庫で自動発注が動かないようにする
+        reorder_point: 0
+    });
+
+    if (product.status !== 200 || !product.body.productId) {
+        throw new Error(`商品の登録に失敗しました: ${JSON.stringify(product.body)}`);
+    }
+    const productId = product.body.productId;
+
+    /**
+     * 履歴から、備考で 1 行を探す。
+     *
+     * 並び順は created_at なので、テストのように同じ秒に何件も入れると
+     * どれが先頭に来るか決まらない。狙った行を備考で選ぶ。
+     */
+    async function historyRowByNote(client, note) {
+        const history = await client.request(
+            'GET',
+            `/api/inventory/history?productId=${productId}&limit=1000`
+        );
+        return history.body.find(row => row.note === note);
+    }
+
+    /** リンクで入ってから出庫を 1 件登録し、履歴に出る名前を返す */
+    async function recordAs(params, note) {
+        const client = visitor();
+        await client.request('GET', `/enter?${buildQuery(params)}`, undefined, { redirect: 'manual' });
+        await client.refreshCsrfToken();
+
+        const posted = await client.request('POST', '/api/inventory/out', {
+            productId,
+            quantity: 1,
+            note
+        });
+
+        if (posted.status !== 200) {
+            throw new Error(`出庫の登録に失敗しました: ${JSON.stringify(posted.body)}`);
+        }
+
+        return historyRowByNote(client, note);
+    }
+
+    const byRow = await recordAs(validParams({ loc: locationCode, by: '山田' }), '操作者名あり');
+    addResult(
+        '記録: 操作者名がそのまま履歴に残る',
+        byRow && byRow.username === '山田',
+        `履歴の担当: ${byRow && byRow.username}`
+    );
+
+    const plainRow = await recordAs(validParams({ loc: locationCode }), '操作者名なし');
+    addResult(
+        '記録: 操作者名が無ければ履歴はアカウント名のまま',
+        plainRow && plainRow.username === 'テスト担当',
+        `履歴の担当: ${plainRow && plainRow.username}`
+    );
+
+    // 普通にログインした人の記録も、これまで通りアカウント名で出る。
+    // 入場リンクの仕組みを足したことで、既存の経路が変わっていないことの確認。
+    await setupClient.request('POST', '/api/inventory/out', {
+        productId,
+        quantity: 1,
+        note: '普通のログインから'
+    });
+    const loggedInRow = await historyRowByNote(setupClient, '普通のログインから');
+    addResult(
+        '記録: 普通にログインした人はアカウント名で残る',
+        loggedInRow && loggedInRow.username === 'テスト担当',
+        `履歴の担当: ${loggedInRow && loggedInRow.username}`
     );
 }
 

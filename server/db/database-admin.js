@@ -259,6 +259,10 @@ const locationTablesSql = [
     )`,
 
     // 在庫履歴テーブル
+    // operator_name は「実際に操作した人の名前」。
+    // user_id のアカウントは店舗で共用することがあり（清掃管理表からの入場）、
+    // それだけでは誰が入力したのか分からないため、名前を行にも残す。
+    // 普通のログインで入ったときは空のままで、表示にはアカウント名を使う。
     `CREATE TABLE IF NOT EXISTS inventory_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         product_id INTEGER NOT NULL,
@@ -267,6 +271,7 @@ const locationTablesSql = [
         date DATE,
         note TEXT,
         user_id INTEGER NOT NULL,
+        operator_name TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (product_id) REFERENCES products(id)
     )`,
@@ -287,6 +292,7 @@ const locationTablesSql = [
         requested_quantity INTEGER NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'ordered', 'received', 'cancelled')),
         user_id INTEGER NOT NULL,
+        operator_name TEXT,
         requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         note TEXT,
         FOREIGN KEY (product_id) REFERENCES products(id)
@@ -342,6 +348,7 @@ const locationTablesSql = [
         count_date DATE NOT NULL,
         status TEXT NOT NULL DEFAULT 'in_progress' CHECK(status IN ('in_progress', 'completed', 'approved')),
         user_id INTEGER NOT NULL,
+        operator_name TEXT,
         approved_by INTEGER,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         completed_at DATETIME,
@@ -380,7 +387,12 @@ const locationColumnMigrations = [
     // 棚卸の対象にするかどうか。商品登録画面のチェックボックスに対応する。
     { table: 'products', column: 'include_in_count', definition: 'INTEGER NOT NULL DEFAULT 1' },
     // 仕入れ単価。商品一覧の「単価」列に表示する。
-    { table: 'products', column: 'unit_price', definition: 'REAL NOT NULL DEFAULT 0' }
+    { table: 'products', column: 'unit_price', definition: 'REAL NOT NULL DEFAULT 0' },
+    // 操作した人の名前。共用アカウントで入っても誰が入力したか残すためのもの。
+    // 列を足す前の記録は空のままで、これまで通りアカウント名で表示される。
+    { table: 'inventory_history', column: 'operator_name', definition: 'TEXT' },
+    { table: 'order_requests', column: 'operator_name', definition: 'TEXT' },
+    { table: 'inventory_counts', column: 'operator_name', definition: 'TEXT' }
 ];
 
 async function migrateLocationTables(db) {

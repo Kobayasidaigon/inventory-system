@@ -16,6 +16,7 @@ const {
     parseChartDays,
     respondWithStockError
 } = require('../utils/stock');
+const { attachOperatorNames } = require('../utils/operator-name');
 const router = express.Router();
 
 /**
@@ -71,7 +72,8 @@ async function handleStockChange(req, res, type) {
                 quantity,
                 date,
                 note,
-                userId: req.session.userId
+                userId: req.session.userId,
+                operatorName: req.session.operatorName
             });
 
             // 発注依頼済みの商品には自動発注を作らない（createAutoOrderIfNeeded が
@@ -79,7 +81,8 @@ async function handleStockChange(req, res, type) {
             // 同じ依頼をもう一度作ってしまうのを防ぐため。
             const order = await createAutoOrderIfNeeded(db, {
                 product: updated,
-                userId: req.session.userId
+                userId: req.session.userId,
+                operatorName: req.session.operatorName
             });
 
             return { product: updated, autoOrder: order };
@@ -175,7 +178,8 @@ router.post('/weekly', requireAuth, async (req, res) => {
                     quantity: entry.quantity,
                     date: entry.date,
                     note: '日次出庫',
-                    userId: req.session.userId
+                    userId: req.session.userId,
+                    operatorName: req.session.operatorName
                 });
                 updatedProducts.set(entry.productId, updated);
             }
@@ -185,7 +189,8 @@ router.post('/weekly', requireAuth, async (req, res) => {
             for (const product of updatedProducts.values()) {
                 const order = await createAutoOrderIfNeeded(db, {
                     product,
-                    userId: req.session.userId
+                    userId: req.session.userId,
+                    operatorName: req.session.operatorName
                 });
 
                 if (order) {
@@ -258,11 +263,7 @@ router.get('/history', requireAuth, async (req, res) => {
     try {
         const history = await db.all(query, params);
 
-        // ユーザー名をメインDBから取得して追加
-        for (let item of history) {
-            const user = await mainDb.get('SELECT user_name FROM users WHERE id = ?', [item.user_id]);
-            item.username = user ? user.user_name : '不明';
-        }
+        await attachOperatorNames(mainDb, history);
 
         res.json(history);
     } catch (err) {
@@ -389,11 +390,7 @@ router.get('/export', requireAuth, async (req, res) => {
                 ORDER BY h.created_at DESC
             `);
 
-            // ユーザー名をメインDBから取得して追加
-            for (let item of history) {
-                const user = await mainDb.get('SELECT user_name FROM users WHERE id = ?', [item.user_id]);
-                item.username = user ? user.user_name : '不明';
-            }
+            await attachOperatorNames(mainDb, history);
 
             const typeLabel = (t) => (t === 'in' ? '入庫' : t === 'out' ? '出庫' : '調整');
 

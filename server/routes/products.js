@@ -195,7 +195,8 @@ router.post('/', requireAuth, upload.single('image'), async (req, res) => {
                     type: 'adjust',
                     quantity: currentStock,
                     note: '初期在庫',
-                    userId: req.session.userId
+                    userId: req.session.userId,
+                    operatorName: req.session.operatorName
                 });
             }
 
@@ -279,6 +280,7 @@ router.put('/:id', requireAuth, upload.single('image'), async (req, res) => {
                         quantity: delta,
                         note: '商品編集で在庫を修正',
                         userId: req.session.userId,
+                        operatorName: req.session.operatorName,
                         // 画面に入力された数が実際の棚の数なので、その値を優先する
                         allowNegative: true
                     });
@@ -341,6 +343,7 @@ router.post('/initialize', requireAuth, async (req, res) => {
                 quantity: delta,
                 note: '初期在庫設定',
                 userId: req.session.userId,
+                operatorName: req.session.operatorName,
                 // 初期在庫は「今ある数」の申告なので、その値を優先して受け入れる
                 allowNegative: true
             });

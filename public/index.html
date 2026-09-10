@@ -38,7 +38,7 @@
                 </div>
                 <p style="margin: 8px 0 12px; font-size: 13px; color: #666;">
                     区切りごとに、登録した内容を確定してください。動きがなかった場合も「在庫の変化なし」で残します。
-                    区切りの時刻を過ぎても確認がないと LINE に通知が飛びます。
+                    区切りの時刻から 10 分で締め切ります（その日の最後の区切りは締め切りません）。
                 </p>
                 <div id="shift-cards"></div>
             </div>
@@ -106,9 +106,17 @@
             <!-- 現在庫一覧 -->
             <div class="dashboard-section">
                 <h3>現在庫一覧 <span id="stock-count" class="badge"></span></h3>
+                <!-- 名前で絞る。品目が増えると、探すだけで何画面もスクロールすることになる -->
+                <div class="stock-search">
+                    <input type="search" id="stock-search" placeholder="商品名で絞り込み"
+                        autocomplete="off" enterkeyhint="search">
+                    <button type="button" id="stock-search-clear" class="stock-search-clear"
+                        aria-label="絞り込みを消す">×</button>
+                </div>
                 <div id="stock-cards-container" class="stock-cards-container">
                     <!-- カードがJavaScriptで動的に追加されます -->
                 </div>
+                <p id="stock-empty" class="stock-empty" style="display: none;"></p>
             </div>
         </div>
 
@@ -342,6 +350,22 @@
     </div>
 
     <!-- ご意見ボックスモーダル -->
+    <!-- 数を直接入れる。-5/-1 の組み合わせだと、12 個使った日に 4 回押すことになる -->
+    <div id="quantity-modal" class="modal">
+        <div class="modal-content" style="max-width: 340px;">
+            <span class="close" onclick="closeQuantityModal()">&times;</span>
+            <h2 id="quantity-modal-title" style="font-size: 18px; margin-bottom: 4px;"></h2>
+            <p id="quantity-modal-current" style="color: #666; font-size: 13px; margin-bottom: 16px;"></p>
+            <input type="number" id="quantity-input" inputmode="numeric" min="1" step="1"
+                placeholder="個数" style="width: 100%; font-size: 24px; text-align: center; padding: 12px;">
+            <p id="quantity-modal-error" class="quantity-modal-error" style="display: none;"></p>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 16px;">
+                <button type="button" class="btn btn-primary" onclick="submitQuantity('out')">出庫（減らす）</button>
+                <button type="button" class="btn btn-secondary" onclick="submitQuantity('in')">入庫（増やす）</button>
+            </div>
+        </div>
+    </div>
+
     <div id="feedback-modal" class="modal">
         <div class="modal-content">
             <span class="close" id="feedback-modal-close">&times;</span>

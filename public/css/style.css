@@ -1428,19 +1428,6 @@ table tbody tr:hover {
     background: #f8f8f8;
 }
 
-.stock-card-image-placeholder {
-    width: 36px;
-    height: 36px;
-    border-radius: 4px;
-    background: #f8f8f8;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #ccc;
-    font-size: 9px;
-    flex-shrink: 0;
-}
-
 .stock-card-name {
     font-size: 13px;
     font-weight: 600;
@@ -1452,82 +1439,79 @@ table tbody tr:hover {
     min-width: 0;
 }
 
-.stock-card-category {
+/*
+ * 在庫が足りない印。全幅の帯ではなく小さな札にしてある。
+ * 帯にすると、在庫が足りているカードにも同じ大きさの帯（「在庫十分」）を
+ * 出したくなり、30 枚並んだときにどれが警告なのか分からなくなる。
+ */
+.stock-card-chip {
+    flex-shrink: 0;
     font-size: 10px;
-    color: #999;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font-weight: 700;
+    color: #c53030;
+    background: #fff5f5;
+    border: 1px solid #feb2b2;
+    border-radius: 10px;
+    padding: 2px 7px;
     white-space: nowrap;
+}
+
+.stock-card-figures {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 6px 0 8px;
+    min-width: 0;
+}
+
+/*
+ * 現在庫。登録するときに見たいのはこの数だけなので、いちばん大きくする。
+ * そのままタップの的でもある（個数を直接入れる入口）。ボタンに見せると
+ * 幅を取るので、下線で「押せる」ことだけ示す。
+ */
+.stock-now {
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1;
+    color: #1a1a1a;
+    background: none;
+    border: none;
+    border-bottom: 2px dotted #cbd5e0;
+    padding: 2px 6px 3px;
+    margin: 0;
+    cursor: pointer;
+    font-family: inherit;
     flex-shrink: 0;
 }
 
-.stock-card-stats {
-    display: flex;
-    gap: 6px;
-    margin: 8px 0;
-    padding: 6px;
-    background: #fafafa;
-    border-radius: 4px;
+.stock-now:active {
+    background: #edf2f7;
 }
 
-.stock-stat {
-    flex: 1;
-    text-align: center;
+/*
+ * 数字が押せることの印。下線だけだと、スマホには hover が無いので
+ * 押せると気づけない。
+ */
+.stock-now-hint {
+    font-size: 11px;
+    color: #a0aec0;
+    margin-left: 4px;
+    vertical-align: super;
 }
 
-.stock-stat-label {
-    font-size: 9px;
-    color: #aaa;
-    margin-bottom: 2px;
+.stock-now.low {
+    color: #c53030;
+    border-bottom-color: #feb2b2;
 }
 
-.stock-stat-value {
-    font-size: 15px;
-    font-weight: 700;
-    color: #1a1a1a;
-    line-height: 1;
-}
-
-.stock-stat-value.low {
-    color: #ff6b6b;
-}
-
-.stock-stat-value.ok {
-    color: #51cf66;
-}
-
-.stock-card-status {
-    margin: 8px 0;
-    padding: 8px 12px;
-    border-radius: 20px;
-    text-align: center;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-    transition: all 0.3s ease;
-}
-
-.stock-card-status.status-ok {
-    background: linear-gradient(135deg, #51cf66 0%, #40c057 100%);
-    color: white;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-}
-
-.stock-card-status.status-low {
-    background: linear-gradient(135deg, #ff922b 0%, #ff6b6b 100%);
-    color: white;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-    animation: pulse 2s ease-in-out infinite;
-}
-
-@keyframes pulse {
-    0%, 100% {
-        box-shadow: 0 2px 8px rgba(255, 107, 107, 0.3);
-    }
-    50% {
-        box-shadow: 0 4px 16px rgba(255, 107, 107, 0.5);
-    }
+/* 発注点とカテゴリは参考。登録の判断には使わないので小さく添える */
+.stock-card-meta {
+    font-size: 10px;
+    color: #a0aec0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
 }
 
 .stock-card-actions {
@@ -1549,22 +1533,30 @@ table tbody tr:hover {
     transform: scale(0.95);
 }
 
+/*
+ * 出庫はいちばんよくやる正常な操作なので、塗りつぶしの主役の色にする。
+ * 赤をやめたのは、危険な操作に見えるうえ、在庫切れの警告と同じ系統の色で
+ * 画面が埋まり、警告が効かなくなるため。赤は警告だけに残す。
+ */
 .stock-card .btn-quick-out {
-    background: #ff6b6b;
+    background: #667eea;
     color: white;
 }
 
 .stock-card .btn-quick-out:hover {
-    background: #ff5252;
+    background: #5a67d8;
 }
 
+/* 入庫は補充と入力の直しのときだけ。輪郭だけにして、出庫と競わせない */
 .stock-card .btn-quick-in {
-    background: #51cf66;
-    color: white;
+    background: white;
+    color: #4a5568;
+    border: 1px solid #cbd5e0;
 }
 
 .stock-card .btn-quick-in:hover {
-    background: #40c057;
+    background: #f7fafc;
+    border-color: #a0aec0;
 }
 
 /* レスポンシブ対応 */
@@ -1584,12 +1576,14 @@ table tbody tr:hover {
         gap: 6px;
     }
 
-    .stock-card-stats {
-        gap: 10px;
+    /* 指を置く的として 40px 前後は要る。ここを詰めると押し間違いが増える */
+    .stock-card .btn-quick {
+        padding: 11px 4px;
+        font-size: 14px;
     }
 
-    .stock-stat-value {
-        font-size: 20px;
+    .stock-now {
+        font-size: 30px;
     }
 }
 
@@ -1608,8 +1602,7 @@ table tbody tr:hover {
         gap: 8px;
     }
 
-    .stock-card-image,
-    .stock-card-image-placeholder {
+    .stock-card-image {
         width: 40px;
         height: 40px;
     }
@@ -1618,12 +1611,8 @@ table tbody tr:hover {
         font-size: 14px;
     }
 
-    .stock-card-stats {
-        gap: 8px;
-    }
-
-    .stock-stat-value {
-        font-size: 16px;
+    .stock-now {
+        font-size: 24px;
     }
 
     .stock-card .btn-quick {
@@ -1780,4 +1769,59 @@ table tbody tr:hover {
         white-space: normal;
         max-width: 100%;
     }
+}
+
+/* ---------------------------------------------------------------------------
+ * 在庫一覧の絞り込み
+ * ------------------------------------------------------------------------ */
+
+.stock-search {
+    position: relative;
+    margin: 4px 0 2px;
+}
+
+.stock-search input {
+    width: 100%;
+    padding: 11px 38px 11px 14px;
+    font-size: 16px; /* 16px 未満だと iOS が拡大する */
+    border: 1px solid #cbd5e0;
+    border-radius: 8px;
+    background: #fff;
+    box-sizing: border-box;
+}
+
+.stock-search input:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+}
+
+.stock-search-clear {
+    display: none;
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+    width: 30px;
+    height: 30px;
+    border: none;
+    background: none;
+    color: #a0aec0;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.stock-empty {
+    margin: 16px 0;
+    text-align: center;
+    color: #a0aec0;
+    font-size: 13px;
+}
+
+.quantity-modal-error {
+    margin: 8px 0 0;
+    color: #c53030;
+    font-size: 13px;
+    text-align: center;
 }

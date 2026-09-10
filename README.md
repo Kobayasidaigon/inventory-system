@@ -277,6 +277,18 @@ flyctl secrets set NOTIFICATIONS_ENABLED=true
 
 手順とリンクの作り方は **ENTRY_LINK_SETUP.md** を見てください。
 
+## 画面のテスト
+
+絞り込みと個数入力は、配線が外れてもサーバー側は何も変わらないため、単体テストでは
+気づけません。ブラウザで実際に押して確かめるテストを別に用意しています。
+
+```bash
+npm run test:ui          # ブラウザが要る
+CHROME_PATH=/path/to/chrome npm run test:ui
+```
+
+ブラウザが要るので `npm test` には含めていません（CI ではブラウザを入れていない）。
+
 ## ログイン状態の保ちかた
 
 Fly.io はアクセスが途切れるとマシンを止めるため、サーバーの再起動は日常的に起きます。

@@ -34,6 +34,9 @@ async function restoreSessionFromRememberToken(req) {
 
     req.session.userId = user.id;
     req.session.userName = user.user_name;
+    // 普通のログインでは操作者名を持たない。前に入場リンクで入った
+    // セッションを引き継いだときに、古い名前が残らないよう消しておく。
+    req.session.operatorName = null;
     req.session.isAdmin = user.is_admin === 1;
 
     // 一般ユーザーは拠点の情報がないと在庫の API が使えない

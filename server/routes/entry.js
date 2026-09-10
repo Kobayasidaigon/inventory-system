@@ -73,14 +73,23 @@ router.get('/', async (req, res) => {
         }
 
         req.session.userId = user.id;
-        req.session.userName = user.user_name;
+        // 画面に出す名前。リンクが操作者名（by）を持っていればそちらを使う。
+        //
+        // users のアカウントは店舗で共用していて、清掃管理表から入ると全員が
+        // 同じ「清掃管理表」になる。それだと誰が触っているのか画面からも履歴からも
+        // 分からないので、向こうで選ばれている担当者の名前を受け取って上書きする。
+        req.session.userName = params.by || user.user_name;
+        // 記録に残す操作者名。by が無いリンクでは付けない（従来どおりアカウント名で出る）。
+        req.session.operatorName = params.by || null;
         req.session.locationId = location.id;
         req.session.locationCode = location.location_code;
         req.session.isAdmin = false;
         // このセッションがリンク由来であることを残す。あとで経路を絞りたくなったときに要る。
         req.session.enteredByLink = true;
 
-        console.log(`[入場リンク] ${location.location_name} / ${user.user_name} が入りました`);
+        // ログにはアカウントと操作者の両方を残す。どのアカウントで入ったかも要るため。
+        const who = params.by ? `${user.user_name}（${params.by}）` : user.user_name;
+        console.log(`[入場リンク] ${location.location_name} / ${who} が入りました`);
 
         // 署名付きの URL を残さないよう、素の URL へ送り直す。
         // アドレス欄・履歴・次の遷移の Referer から消える。

@@ -8,6 +8,7 @@ const { sanitizeHtml } = require('../utils/xss-protection');
 const path = require('path');
 const { buildStockChartData, parseChartDays } = require('../utils/stock');
 const { restoreSessionFromRememberToken } = require('../middleware/auth');
+const { attachOperatorNames } = require('../utils/operator-name');
 const router = express.Router();
 
 /**
@@ -83,6 +84,9 @@ router.post('/admin/login', loginLimiter, async (req, res) => {
 
         req.session.userId = user.id;
         req.session.userName = user.user_name;
+        // 普通のログインでは操作者名を持たない。前に入場リンクで入った
+        // セッションを引き継いだときに、古い名前が残らないよう消しておく。
+        req.session.operatorName = null;
         req.session.isAdmin = true;
 
         // Remember Me処理
@@ -135,6 +139,9 @@ router.post('/login', loginLimiter, async (req, res) => {
 
         req.session.userId = user.id;
         req.session.userName = user.user_name;
+        // 普通のログインでは操作者名を持たない。前に入場リンクで入った
+        // セッションを引き継いだときに、古い名前が残らないよう消しておく。
+        req.session.operatorName = null;
         req.session.locationId = location.id;
         req.session.locationCode = location.location_code;
         req.session.isAdmin = false;
@@ -557,11 +564,7 @@ router.get('/admin/locations/:locationId/orders', async (req, res) => {
             ORDER BY o.requested_at DESC
         `);
 
-        // ユーザー名をメインDBから取得して追加
-        for (let order of orders) {
-            const user = await mainDb.get('SELECT user_name FROM users WHERE id = ?', [order.user_id]);
-            order.username = user ? user.user_name : '不明';
-        }
+        await attachOperatorNames(mainDb, orders);
 
         res.json({
             locationName: location.location_name,
@@ -741,12 +744,11 @@ router.get('/admin/all-orders', async (req, res) => {
                 ORDER BY o.requested_at DESC
             `);
 
-            // ユーザー名をメインDBから取得して追加
+            await attachOperatorNames(mainDb, orders);
+
             for (const order of orders) {
-                const user = await mainDb.get('SELECT user_name FROM users WHERE id = ?', [order.user_id]);
                 allOrders.push({
                     ...order,
-                    username: user ? user.user_name : '不明',
                     location_id: location.id,
                     location_name: location.location_name,
                     location_code: location.location_code

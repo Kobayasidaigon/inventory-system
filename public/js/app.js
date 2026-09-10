@@ -601,90 +601,57 @@ function updateDashboardDisplay() {
         filteredProducts = filteredProducts.filter(p => p.category === selectedCategory);
     }
 
-    // 名前で絞る。カテゴリだけだと「どのカテゴリだったか」を思い出す必要がある。
-    const keyword = (stockSearchKeyword || '').trim().toLowerCase();
-    if (keyword) {
-        filteredProducts = filteredProducts.filter(p =>
-            String(p.name || '').toLowerCase().includes(keyword)
-        );
-    }
-
     const container = document.getElementById('stock-cards-container');
     const stockCount = document.getElementById('stock-count');
-    const emptyNote = document.getElementById('stock-empty');
     container.innerHTML = '';
-
-    // 写真を 1 つでも使っているか。使っていないなら枠ごと出さず、
-    // 幅を全部、名前と数字に回す。
-    const showThumbs = filteredProducts.some(p => p.image_url);
-
-    const compact = stockViewMode === 'compact';
-    container.className = `stock-cards-container${compact ? ' is-compact' : ''}`;
 
     filteredProducts.forEach(product => {
         const isLow = product.current_stock <= product.reorder_point;
 
-        // 数字を押すと個数を入力できる。出庫も入庫もそこから入れられるので、
-        // コンパクト表示で +1/+5 を省いても、やれることは減らない。
-        const nowHtml = `<button type="button" class="stock-now ${isLow ? 'low' : ''}"
-            onclick="openQuantityModal(${product.id})"
-            title="タップして個数を入力">${product.current_stock}<span class="stock-now-hint">✎</span></button>`;
+        // 画像HTML
+        const imageHtml = product.image_url
+            ? `<img src="${product.image_url}" class="stock-card-image" onclick="openImagePopup('${product.image_url}')" alt="${product.name}">`
+            : `<div class="stock-card-image-placeholder">画像なし</div>`;
 
-        const outButtons =
-            `<button class="btn-quick btn-quick-out" onclick="quickStockChange(${product.id}, -5)" title="5個出庫">-5</button>` +
-            `<button class="btn-quick btn-quick-out" onclick="quickStockChange(${product.id}, -1)" title="1個出庫">-1</button>`;
+        // ステータス
+        const statusClass = isLow ? 'status-low' : 'status-ok';
+        const statusText = isLow ? '⚠️ 発注依頼済み' : '✓ 在庫十分';
 
-        const element = document.createElement('div');
+        // カード作成
+        const card = document.createElement('div');
+        card.className = `stock-card ${isLow ? 'low-stock' : ''}`;
+        card.innerHTML = `
+            <div class="stock-card-header">
+                ${imageHtml}
+                <div class="stock-card-name">${product.name}</div>
+                ${product.category ? `<span class="stock-card-category">${product.category}</span>` : ''}
+            </div>
 
-        if (compact) {
-            // 1 行 1 品目。横幅が限られるので、いちばんよく使う出庫だけ並べる。
-            element.className = `stock-row ${isLow ? 'low-stock' : ''}`;
-            element.innerHTML = `
-                ${thumbHtml(product, showThumbs, 'stock-row-thumb')}
-                <div class="stock-row-name" title="${product.name}">${product.name}</div>
-                ${nowHtml}
-                ${outButtons}
-            `;
-        } else {
-            element.className = `stock-card ${isLow ? 'low-stock' : ''}`;
-            element.innerHTML = `
-                <div class="stock-card-main">
-                    ${thumbHtml(product, showThumbs, 'stock-card-thumb')}
-                    <div class="stock-card-body">
-                        <div class="stock-card-header">
-                            <div class="stock-card-name">${product.name}</div>
-                            ${isLow ? '<span class="stock-card-chip">発注済み</span>' : ''}
-                        </div>
-
-                        <div class="stock-card-figures">
-                            ${nowHtml}
-                            <span class="stock-card-meta">
-                                発注点 ${product.reorder_point}${product.category ? ` ・ ${product.category}` : ''}
-                            </span>
-                        </div>
-                    </div>
+            <div class="stock-card-stats">
+                <div class="stock-stat">
+                    <div class="stock-stat-label">現在庫</div>
+                    <div class="stock-stat-value ${isLow ? 'low' : 'ok'}">${product.current_stock}</div>
                 </div>
-
-                <div class="stock-card-actions">
-                    ${outButtons}
-                    <button class="btn-quick btn-quick-in" onclick="quickStockChange(${product.id}, 1)" title="1個入庫">+1</button>
-                    <button class="btn-quick btn-quick-in" onclick="quickStockChange(${product.id}, 5)" title="5個入庫">+5</button>
+                <div class="stock-stat">
+                    <div class="stock-stat-label">発注点</div>
+                    <div class="stock-stat-value">${product.reorder_point}</div>
                 </div>
-            `;
-        }
+            </div>
 
-        container.appendChild(element);
+            <div class="stock-card-status ${statusClass}">
+                ${statusText}
+            </div>
+
+            <div class="stock-card-actions">
+                <button class="btn-quick btn-quick-out" onclick="quickStockChange(${product.id}, -5)" title="5個出庫">-5</button>
+                <button class="btn-quick btn-quick-out" onclick="quickStockChange(${product.id}, -1)" title="1個出庫">-1</button>
+                <button class="btn-quick btn-quick-in" onclick="quickStockChange(${product.id}, 1)" title="1個入庫">+1</button>
+                <button class="btn-quick btn-quick-in" onclick="quickStockChange(${product.id}, 5)" title="5個入庫">+5</button>
+            </div>
+        `;
+
+        container.appendChild(card);
     });
-
-    // 絞り込んで 0 件になったとき、黙って空にすると壊れたように見える
-    if (emptyNote) {
-        if (filteredProducts.length === 0 && keyword) {
-            emptyNote.textContent = `「${keyword}」に当てはまる商品がありません`;
-            emptyNote.style.display = 'block';
-        } else {
-            emptyNote.style.display = 'none';
-        }
-    }
 
     // 件数バッジを更新
     stockCount.textContent = `${filteredProducts.length}件`;
@@ -2650,142 +2617,6 @@ async function exportCountCSV() {
 // ========== ワンタップ登録機能 ==========
 
 // ワンタップで在庫変更
-/**
- * 写真の枠を組み立てる。コンパクト表示とカード表示の両方から使う。
- *
- * 写真を 1 つも使っていない拠点では枠ごと出さない。1 つでも使っているなら、
- * 無い商品にも空の枠を残す。片方だけ字下げされると名前の左端が揃わない。
- */
-function thumbHtml(product, showThumbs, className) {
-    if (!showThumbs) return '';
-    if (!product.image_url) return `<div class="${className} is-empty"></div>`;
-    return `<div class="${className}"><img src="${product.image_url}" class="stock-card-image"`
-        + ` onclick="openImagePopup('${product.image_url}')" alt="${product.name}"></div>`;
-}
-
-/*
- * 一覧の見せ方。
- *
- *   compact … 1 行 1 品目。品目が増えるとカードでは何画面もスクロールする。
- *   card    … 1 品目 1 枚。写真が大きく、入庫のボタンも並ぶ。
- *
- * 既定はコンパクト。現場でいちばん効くのがスクロールの短さなので、そちらを先に。
- */
-let stockViewMode = localStorage.getItem('stockViewMode') === 'card' ? 'card' : 'compact';
-
-function setupStockViewToggle() {
-    const button = document.getElementById('stock-view-toggle');
-    if (!button) return;
-
-    const paint = () => {
-        // 「今どれか」ではなく「押すとどうなるか」を出す
-        button.textContent = stockViewMode === 'compact' ? 'カード表示にする' : '一覧をコンパクトに';
-    };
-
-    button.addEventListener('click', () => {
-        stockViewMode = stockViewMode === 'compact' ? 'card' : 'compact';
-        localStorage.setItem('stockViewMode', stockViewMode);
-        paint();
-        updateDashboardDisplay();
-    });
-
-    paint();
-}
-
-// 在庫一覧の絞り込み文字列。画面を開き直したら消える（前の絞り込みが
-// 残っていて「商品が消えた」と見えるほうが困る）。
-let stockSearchKeyword = '';
-
-function setupStockSearch() {
-    const input = document.getElementById('stock-search');
-    const clear = document.getElementById('stock-search-clear');
-    if (!input) return;
-
-    const apply = () => {
-        stockSearchKeyword = input.value;
-        if (clear) clear.style.display = input.value ? 'block' : 'none';
-        updateDashboardDisplay();
-    };
-
-    input.addEventListener('input', apply);
-    // スマホのキーボードの「検索」で閉じるだけにする（送信で画面が飛ばないよう）
-    input.addEventListener('keydown', event => {
-        if (event.key === 'Enter') {
-            event.preventDefault();
-            input.blur();
-        }
-    });
-
-    if (clear) {
-        clear.addEventListener('click', () => {
-            input.value = '';
-            apply();
-            input.focus();
-        });
-    }
-}
-
-// ---------------------------------------------------------------------------
-// 個数を直接入れる
-//
-// -5 / -1 の組み合わせだけだと、12 個使った日に 4 回押すことになる。
-// 履歴も 4 行に分かれるし、押し間違いも 4 回ぶん起きる。
-// ---------------------------------------------------------------------------
-
-let quantityModalProductId = null;
-
-function openQuantityModal(productId) {
-    const product = products.find(p => p.id === productId);
-    if (!product) return;
-
-    quantityModalProductId = productId;
-
-    document.getElementById('quantity-modal-title').textContent = product.name;
-    document.getElementById('quantity-modal-current').textContent =
-        `現在庫 ${product.current_stock}（発注点 ${product.reorder_point}）`;
-
-    const input = document.getElementById('quantity-input');
-    input.value = '';
-    hideQuantityError();
-
-    document.getElementById('quantity-modal').style.display = 'block';
-    // スマホで数字のキーボードがすぐ出るように
-    setTimeout(() => input.focus(), 50);
-}
-
-function closeQuantityModal() {
-    document.getElementById('quantity-modal').style.display = 'none';
-    quantityModalProductId = null;
-}
-
-function showQuantityError(message) {
-    const el = document.getElementById('quantity-modal-error');
-    el.textContent = message;
-    el.style.display = 'block';
-}
-
-function hideQuantityError() {
-    document.getElementById('quantity-modal-error').style.display = 'none';
-}
-
-async function submitQuantity(type) {
-    if (quantityModalProductId === null) return;
-
-    const input = document.getElementById('quantity-input');
-    const quantity = Number(input.value);
-
-    // 画面の中で止める。ここで弾いておくと、開いたまま直せる。
-    if (!Number.isInteger(quantity) || quantity <= 0) {
-        showQuantityError('1 以上の整数を入れてください');
-        input.focus();
-        return;
-    }
-
-    const productId = quantityModalProductId;
-    closeQuantityModal();
-    await quickStockChange(productId, type === 'out' ? -quantity : quantity);
-}
-
 async function quickStockChange(productId, change) {
     const product = products.find(p => p.id === productId);
     if (!product) return;
@@ -2989,17 +2820,12 @@ document.getElementById('feedback-form').addEventListener('submit', async (e) =>
 
 // 使い方ガイドの折りたたみ機能
 function setupUsageGuideToggle() {
-    setupStockSearch();
-    setupStockViewToggle();
-
     const toggleBtn = document.getElementById('toggle-usage-guide');
     const content = document.getElementById('usage-guide-content');
 
-    // localStorage から状態を読み込む。
-    // 既定は閉じた状態。開いていると、在庫を触るまでに 310px ぶん余計に
-    // スクロールすることになる。読みたい人は開けば、その状態を覚える。
+    // localStorageから状態を読み込み（デフォルトは開いた状態）
     const savedState = localStorage.getItem('usageGuideCollapsed');
-    let isCollapsed = savedState === null ? true : savedState === 'true';
+    let isCollapsed = savedState === null ? false : savedState === 'true';
 
     // 初期状態を設定
     if (isCollapsed) {

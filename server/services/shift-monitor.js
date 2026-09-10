@@ -7,10 +7,21 @@
 const { mainDb, getLocationDatabase } = require('../db/database-admin');
 const { sendShiftReminder } = require('./line-notify');
 
-// 区切りの時刻を過ぎてから通知するまでの猶予（分）。
-// 既定は 0 で、区切りの時刻ちょうどに鳴らす。締めの作業中に鳴るのが
-// 煩わしければ SHIFT_GRACE_MINUTES で後ろにずらせる。
-const GRACE_MINUTES = parseInt(process.env.SHIFT_GRACE_MINUTES, 10) || 0;
+// 区切りの時刻から締め切りまでの猶予（分）。
+//
+// 上がりの片付けを終えてから登録するので、区切りの時刻ちょうどで切ると、
+// その区切りぶんの登録が次の区切りに落ちてしまう。猶予の中の登録は、
+// 区切りの時刻を過ぎていても手前の区切りのものとして数える。
+//
+// 猶予を過ぎたら締め切る。締め切った区切りは確認を受け付けず、以降の
+// 登録も数えない。後から取り繕えると、区切りごとに確認を残す意味がなくなる。
+//
+// 0 も指定できる（猶予なし＝区切りの時刻ちょうどで締め切る）ため、
+// || ではなく数値として妥当かで見る。
+const GRACE_MINUTES = (() => {
+    const parsed = parseInt(process.env.SHIFT_GRACE_MINUTES, 10);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 10;
+})();
 
 // 区切りからこれ以上経っていたら通知しない。
 // マシンが止まっていて復帰したときに、深夜へまとめて鳴らさないため。
@@ -37,6 +48,19 @@ function toDateString(date) {
 function toMinutes(timeText) {
     const [hour, minute] = String(timeText).split(':');
     return (parseInt(hour, 10) || 0) * 60 + (parseInt(minute, 10) || 0);
+}
+
+/**
+ * 0 時からの分数を 'HH:MM' に戻す。
+ *
+ * 猶予を足すと日をまたぐことがある（23:55 + 10 分）。その先に区切りは無いので
+ * 24:00 で頭打ちにする。集計の上限としてはこれで足りる。
+ */
+function toTimeText(minutes) {
+    const capped = Math.min(Math.max(minutes, 0), 24 * 60);
+    const hour = Math.floor(capped / 60);
+    const minute = capped % 60;
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
 /**
@@ -88,7 +112,8 @@ async function countMovements(db, dateText, fromTime, toTime) {
  *
  * @returns {Promise<Array>} 区切りごとの状況
  */
-async function buildShiftStatus(db, date) {
+async function buildShiftStatus(db, date, options = {}) {
+    const graceMinutes = options.graceMinutes === undefined ? GRACE_MINUTES : options.graceMinutes;
     const dateText = toDateString(date);
     const nowMinutes = date.getHours() * 60 + date.getMinutes();
 
@@ -99,16 +124,26 @@ async function buildShiftStatus(db, date) {
     );
 
     const statuses = [];
-    let previousEnd = '00:00';
-    // 今いる区切りは「まだ終わっていない最初の区切り」1 つだけ
+    // 区切りの境目は「区切りの時刻」ではなく「締め切り」。猶予の中の登録は
+    // 手前の区切りのものとして数えるので、次の区切りもそこから始まる。
+    let previousClose = '00:00';
+    // 今いる区切りは「まだ締め切っていない最初の区切り」1 つだけ
     let currentFound = false;
 
     for (const shift of shifts) {
         const report = reports.find(r => r.shift_id === shift.id) || null;
-        const movements = await countMovements(db, dateText, previousEnd, shift.end_time);
         const endMinutes = toMinutes(shift.end_time);
+        const closeMinutes = endMinutes + graceMinutes;
+        const closeTime = toTimeText(closeMinutes);
+
+        const movements = await countMovements(db, dateText, previousClose, closeTime);
+
+        // 区切りの時刻は過ぎた（猶予の中かもしれない）
         const isPast = nowMinutes >= endMinutes;
-        const isCurrent = !isPast && !currentFound;
+        // 締め切った。ここから先は確認も登録も受け付けない
+        const isClosed = nowMinutes >= closeMinutes;
+        // 区切りの時刻を過ぎていても、猶予の中ならまだこの区切りにいる
+        const isCurrent = !isClosed && !currentFound;
 
         if (isCurrent) {
             currentFound = true;
@@ -117,17 +152,19 @@ async function buildShiftStatus(db, date) {
         statuses.push({
             id: shift.id,
             name: shift.name,
-            startTime: previousEnd,
+            startTime: previousClose,
             endTime: shift.end_time,
+            closeTime,
             isCurrent,
             isPast,
+            isClosed,
             movementCount: movements,
             confirmed: report !== null,
             confirmedStatus: report ? report.status : null,
             confirmedAt: report ? report.created_at : null
         });
 
-        previousEnd = shift.end_time;
+        previousClose = closeTime;
     }
 
     return statuses;
@@ -254,6 +291,7 @@ module.exports = {
     STALE_HOURS,
     toDateString,
     toMinutes,
+    toTimeText,
     listShiftsForDate,
     buildShiftStatus,
     checkUnconfirmedShifts,

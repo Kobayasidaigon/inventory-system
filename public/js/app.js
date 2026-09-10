@@ -238,16 +238,23 @@ function renderShiftStatus(shifts) {
     });
 }
 
+// 区切りの時刻は過ぎたが、まだ締め切っていない状態。ここで押せば間に合う。
+function isInGrace(shift) {
+    return shift.isPast && !shift.isClosed;
+}
+
 function shiftBorderColor(shift) {
     if (shift.confirmed) return '#9ae6b4';
-    if (shift.isPast) return '#fc8181';
+    if (isInGrace(shift)) return '#f6ad55';
+    if (shift.isClosed) return '#fc8181';
     if (shift.isCurrent) return '#90cdf4';
     return '#e2e8f0';
 }
 
 function shiftBackground(shift) {
     if (shift.confirmed) return '#f0fff4';
-    if (shift.isPast) return '#fff5f5';
+    if (isInGrace(shift)) return '#fffaf0';
+    if (shift.isClosed) return '#fff5f5';
     if (shift.isCurrent) return '#ebf8ff';
     return '#f7fafc';
 }
@@ -258,8 +265,12 @@ function shiftStateText(shift) {
             ? ' ・ <span style="color: #2f855a;">確認済み（変化なし）</span>'
             : ' ・ <span style="color: #2f855a;">確認済み</span>';
     }
-    if (shift.isPast) {
-        return ' ・ <span style="color: #c53030; font-weight: bold;">未確認</span>';
+    // 締め切りが近いことを出す。あと何分あるかが分からないと急ぎようがない。
+    if (isInGrace(shift)) {
+        return ` ・ <span style="color: #b7791f; font-weight: bold;">${shift.closeTime} まで</span>`;
+    }
+    if (shift.isClosed) {
+        return ' ・ <span style="color: #c53030; font-weight: bold;">未確認のまま締め切り</span>';
     }
     if (shift.isCurrent) {
         return ' ・ <span style="color: #2b6cb0;">進行中</span>';
@@ -270,6 +281,12 @@ function shiftStateText(shift) {
 function shiftActionHtml(shift) {
     if (shift.confirmed) {
         return '<span style="color: #2f855a; font-size: 20px;">✅</span>';
+    }
+
+    // 締め切った区切りは押せない。押せるように見せると、後から取り繕えると
+    // 誤解させることになる。
+    if (shift.isClosed) {
+        return '<span style="color: #a0aec0; font-size: 13px;">締め切り</span>';
     }
 
     // まだ始まっていない区切りは押せない

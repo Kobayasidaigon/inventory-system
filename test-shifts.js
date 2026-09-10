@@ -178,19 +178,26 @@ async function testMonitor() {
         `通知 ${await alertCount(s3.lastID)} 件（${monitor.STALE_HOURS} 時間で打ち切り）`
     );
 
-    // --- 既定は区切りの時刻ちょうどに鳴る ---
+    // --- 既定の猶予は 10 分。締め切りと同時に鳴る ---
     addResult(
-        '見張り: 既定の猶予は 0 分（区切りの時刻ちょうど）',
-        monitor.GRACE_MINUTES === 0,
+        '見張り: 既定の猶予は 10 分',
+        monitor.GRACE_MINUTES === 10,
         `GRACE_MINUTES = ${monitor.GRACE_MINUTES}`
     );
 
     const s5 = await db.run("INSERT INTO shifts (name, end_time, sort_order) VALUES ('検証5', '14:00', 5)");
     await monitor.checkUnconfirmedShifts(todayAt(14, 0));
     addResult(
-        '見張り: 区切りの時刻ちょうどに通知する',
-        (await alertCount(s5.lastID)) === 1,
+        '見張り: 区切りの時刻ちょうどでは、まだ鳴らさない',
+        (await alertCount(s5.lastID)) === 0,
         `通知 ${await alertCount(s5.lastID)} 件（14:00 の区切りを 14:00 に点検）`
+    );
+
+    await monitor.checkUnconfirmedShifts(todayAt(14, 10));
+    addResult(
+        '見張り: 締め切り（区切り + 猶予）で鳴る',
+        (await alertCount(s5.lastID)) === 1,
+        `通知 ${await alertCount(s5.lastID)} 件（14:00 の区切りを 14:10 に点検）`
     );
 
     // --- 曜日の指定が効く ---
@@ -206,6 +213,112 @@ async function testMonitor() {
         (await alertCount(s4.lastID)) === 0,
         `通知 ${await alertCount(s4.lastID)} 件`
     );
+
+    await testGrace(db, monitor);
+}
+
+// ---------------------------------------------------------------------------
+// 1b. 猶予と締め切り
+//
+// 上がりの片付けを終えてから登録するので、区切りの時刻ちょうどで切ると、
+// その区切りぶんが次の区切りに落ちる。猶予の中の登録は手前の区切りに数え、
+// 猶予を過ぎたら締め切る。ここが今回の変更の中身なので、時刻を作って固定する。
+// ---------------------------------------------------------------------------
+
+/** ローカル時刻の Date を、created_at にそのまま入れられる UTC の文字列にする */
+function toUtcStamp(date) {
+    return date.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+async function testGrace(db, monitor) {
+    const GRACE = 10;
+
+    await db.run('DELETE FROM shifts');
+    await db.run('DELETE FROM inventory_history');
+    const morning = await db.run(
+        "INSERT INTO shifts (name, end_time, sort_order) VALUES ('朝番', '14:00', 1)"
+    );
+    await db.run("INSERT INTO shifts (name, end_time, sort_order) VALUES ('昼番', '19:00', 2)");
+
+    const addMovement = (hour, minute) => db.run(
+        `INSERT INTO inventory_history (product_id, type, quantity, note, user_id, created_at)
+         VALUES (1, 'in', 1, 'テスト', 1, ?)`,
+        [toUtcStamp(todayAt(hour, minute))]
+    );
+
+    const statusAt = async (hour, minute) => {
+        const list = await monitor.buildShiftStatus(db, todayAt(hour, minute), { graceMinutes: GRACE });
+        return Object.fromEntries(list.map(s => [s.name, s]));
+    };
+
+    // 区切りの時刻を 5 分過ぎてからの登録
+    await addMovement(14, 5);
+
+    const inGrace = await statusAt(14, 5);
+    addResult(
+        '猶予: 締め切りが区切り + 猶予になる',
+        inGrace['朝番'].closeTime === '14:10',
+        `朝番の締め切り ${inGrace['朝番'].closeTime}`
+    );
+    addResult(
+        '猶予: 区切りを過ぎても、猶予の中はまだ朝番',
+        inGrace['朝番'].isPast === true &&
+            inGrace['朝番'].isClosed === false &&
+            inGrace['朝番'].isCurrent === true,
+        `isPast=${inGrace['朝番'].isPast} isClosed=${inGrace['朝番'].isClosed} isCurrent=${inGrace['朝番'].isCurrent}`
+    );
+    addResult(
+        '猶予: 14:05 の登録は朝番に数える',
+        inGrace['朝番'].movementCount === 1 && inGrace['昼番'].movementCount === 0,
+        `朝番 ${inGrace['朝番'].movementCount} 件 / 昼番 ${inGrace['昼番'].movementCount} 件`
+    );
+
+    // 締め切りを過ぎた時点
+    const afterClose = await statusAt(14, 15);
+    addResult(
+        '締め切り: 猶予を過ぎたら朝番は締め切る',
+        afterClose['朝番'].isClosed === true && afterClose['朝番'].isCurrent === false,
+        `isClosed=${afterClose['朝番'].isClosed} isCurrent=${afterClose['朝番'].isCurrent}`
+    );
+    addResult(
+        '締め切り: 締め切ったあとは昼番が今の区切りになる',
+        afterClose['昼番'].isCurrent === true,
+        `昼番 isCurrent=${afterClose['昼番'].isCurrent}`
+    );
+    addResult(
+        '締め切り: 締め切っても、朝番に数えた分は動かない',
+        afterClose['朝番'].movementCount === 1,
+        `朝番 ${afterClose['朝番'].movementCount} 件`
+    );
+
+    // 締め切り後の登録は次の区切りへ
+    await addMovement(14, 15);
+    const afterMore = await statusAt(14, 20);
+    addResult(
+        '締め切り: 締め切ってからの登録は朝番に入らない',
+        afterMore['朝番'].movementCount === 1 && afterMore['昼番'].movementCount === 1,
+        `朝番 ${afterMore['朝番'].movementCount} 件 / 昼番 ${afterMore['昼番'].movementCount} 件`
+    );
+
+    // 猶予を 0 にすれば元の切り方に戻る
+    const noGrace = await monitor.buildShiftStatus(db, todayAt(14, 5), { graceMinutes: 0 });
+    const morningNoGrace = noGrace.find(s => s.name === '朝番');
+    addResult(
+        '猶予: 0 分にすれば区切りの時刻ちょうどで切れる',
+        morningNoGrace.isClosed === true && morningNoGrace.movementCount === 0,
+        `isClosed=${morningNoGrace.isClosed} / 朝番 ${morningNoGrace.movementCount} 件`
+    );
+
+    // 日をまたぐ区切りで締め切りが壊れないこと
+    addResult(
+        '猶予: 日をまたぐ締め切りは 24:00 で止める',
+        monitor.toTimeText(23 * 60 + 55 + GRACE) === '24:00' &&
+            monitor.toTimeText(14 * 60 + GRACE) === '14:10',
+        `23:55+${GRACE} → ${monitor.toTimeText(23 * 60 + 55 + GRACE)}`
+    );
+
+    await db.run('DELETE FROM inventory_history');
+    void morning;
 }
 
 // ---------------------------------------------------------------------------
@@ -310,12 +423,14 @@ async function testApi(client) {
         `status ${registered.status} / ${registered.body.status}`
     );
 
-    // --- 過ぎた区切りも確認できる ---
+    // --- 締め切った区切りは確認できない ---
+    // 早番の区切りは 00:01。猶予を足しても 00:11 には締め切っている。
+    // 後から取り繕えると、区切りごとに確認を残す意味がなくなる。
     const late = await request('POST', `/api/shifts/${shiftIds['早番']}/confirm`, {});
     addResult(
-        '確認: 過ぎた区切りをあとから確認できる',
-        late.status === 200,
-        `status ${late.status} / ${late.body.status}`
+        '確認: 締め切った区切りはあとから確認できない',
+        late.status === 400 && String(late.body.error || '').includes('締め切'),
+        `status ${late.status} / ${late.body.error || ''}`
     );
 
     // --- 入力の検証 ---
@@ -353,17 +468,19 @@ async function testApi(client) {
 
     // --- 履歴 ---
     const history = await request('GET', '/api/shifts/history?days=7');
+    // 早番は締め切り済みで確認できないので、残るのは中番の 1 件だけ
     addResult(
         '履歴: 確認記録が残っている',
-        history.status === 200 && history.body.reports.length === 2,
-        `記録 ${history.body.reports ? history.body.reports.length : 0} 件（期待値 2）`
+        history.status === 200 && history.body.reports.length === 1,
+        `記録 ${history.body.reports ? history.body.reports.length : 0} 件（期待値 1）`
     );
     addResult(
         '履歴: 区切りごとの「変化なし」率が出る',
-        history.body.summary && history.body.summary['早番'] &&
-            history.body.summary['早番'].noChange === 1,
-        `早番の変化なし ${history.body.summary && history.body.summary['早番'] ? history.body.summary['早番'].noChange : '?'} / ` +
-        `中番の変化なし ${history.body.summary && history.body.summary['中番'] ? history.body.summary['中番'].noChange : '?'}`
+        history.body.summary && history.body.summary['中番'] &&
+            history.body.summary['中番'].total === 1 &&
+            history.body.summary['中番'].noChange === 0,
+        `中番 ${history.body.summary && history.body.summary['中番'] ? JSON.stringify(history.body.summary['中番']) : '?'}` +
+        `（登録ありで確定し直したので変化なしは 0）`
     );
 
     // --- 区切りを減らしても確認記録が消えない ---
@@ -373,8 +490,8 @@ async function testApi(client) {
     const afterShrink = await request('GET', '/api/shifts/history?days=7');
     addResult(
         '設定: 区切りを減らしても過去の確認記録は残る',
-        afterShrink.body.reports.length === 2,
-        `記録 ${afterShrink.body.reports.length} 件（期待値 2）`
+        afterShrink.body.reports.length === 1,
+        `記録 ${afterShrink.body.reports.length} 件（期待値 1）`
     );
 }
 

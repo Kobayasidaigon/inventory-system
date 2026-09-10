@@ -92,6 +92,14 @@ router.post('/:id/confirm', requireAuth, async (req, res) => {
                 throw new StockError('区切りが見つかりません', 404);
             }
 
+            // 締め切った区切りは確認できない。後から取り繕えると、区切りごとに
+            // 確認を残す意味がなくなる。押しそびれた区切りは未確認のまま残す。
+            if (target.isClosed) {
+                throw new StockError(
+                    `${target.name}は ${target.closeTime} で締め切りました`
+                );
+            }
+
             // まだ担当時間帯に入っていない区切りは確認できない。
             // 先に押しておく運用を許すと、確認の意味がなくなる。
             if (!target.isCurrent && !target.isPast) {

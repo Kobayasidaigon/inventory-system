@@ -1411,21 +1411,51 @@ table tbody tr:hover {
     background: linear-gradient(to bottom, #fff 0%, #fff9f9 100%);
 }
 
+/*
+ * 写真は名前と数字の横に、その 2 行ぶんの高さで置く。
+ * すでにある高さに収まるので、大きくしてもカードは縦に伸びない。
+ * 36px の頃は、商品を見分けるための写真なのに何か分からなかった。
+ */
+.stock-card-main {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.stock-card-thumb {
+    width: 56px;
+    height: 56px;
+    flex-shrink: 0;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #f1f5f9;
+}
+
+/* 写真が無い品目。空けておかないと名前の左端が揃わない */
+.stock-card-thumb.is-empty {
+    background: #f8fafc;
+    border: 1px dashed #e2e8f0;
+    box-sizing: border-box;
+}
+
+.stock-card-body {
+    flex: 1;
+    min-width: 0;
+}
+
 .stock-card-header {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
 }
 
 .stock-card-image {
-    width: 36px;
-    height: 36px;
-    border-radius: 4px;
+    width: 100%;
+    height: 100%;
     object-fit: cover;
-    flex-shrink: 0;
+    display: block;
     cursor: pointer;
-    background: #f8f8f8;
 }
 
 .stock-card-name {
@@ -1493,10 +1523,11 @@ table tbody tr:hover {
  * 押せると気づけない。
  */
 .stock-now-hint {
-    font-size: 11px;
+    font-size: 13px;
     color: #a0aec0;
-    margin-left: 4px;
-    vertical-align: super;
+    margin-left: 5px;
+    vertical-align: baseline;
+    font-weight: 400;
 }
 
 .stock-now.low {
@@ -1576,6 +1607,12 @@ table tbody tr:hover {
         gap: 6px;
     }
 
+    /* ボタンは下の段で全幅なので、写真を大きくしても押しにくくならない */
+    .stock-card-thumb {
+        width: 64px;
+        height: 64px;
+    }
+
     /* 指を置く的として 40px 前後は要る。ここを詰めると押し間違いが増える */
     .stock-card .btn-quick {
         padding: 11px 4px;
@@ -1602,9 +1639,9 @@ table tbody tr:hover {
         gap: 8px;
     }
 
-    .stock-card-image {
-        width: 40px;
-        height: 40px;
+    .stock-card-thumb {
+        width: 60px;
+        height: 60px;
     }
 
     .stock-card-name {

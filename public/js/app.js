@@ -614,14 +614,24 @@ function updateDashboardDisplay() {
     const emptyNote = document.getElementById('stock-empty');
     container.innerHTML = '';
 
+    // 写真を 1 つでも使っているか。使っていないなら枠ごと出さず、
+    // 幅を全部、名前と数字に回す。
+    const showThumbs = filteredProducts.some(p => p.image_url);
+
     filteredProducts.forEach(product => {
         const isLow = product.current_stock <= product.reorder_point;
 
-        // 画像は「あるときだけ」出す。無いときの「画像なし」の枠は、
-        // 30 品目ぶん並ぶと縦を食うだけで何も伝えない。
-        const imageHtml = product.image_url
-            ? `<img src="${product.image_url}" class="stock-card-image" onclick="openImagePopup('${product.image_url}')" alt="${product.name}">`
-            : '';
+        // 写真の枠。名前と数字の横に、その 2 行ぶんの高さで置く。
+        // すでにある高さに収めるので、大きくしてもカードは伸びない。
+        //
+        // 写真を使っていない品目だけのときは枠ごと出さない。逆に 1 つでも
+        // 写真があるなら、無い品目にも空の枠を残す。片方だけ字下げされると
+        // 名前の左端がガタガタになって読みにくい。
+        const thumbHtml = !showThumbs
+            ? ''
+            : product.image_url
+                ? `<div class="stock-card-thumb"><img src="${product.image_url}" class="stock-card-image" onclick="openImagePopup('${product.image_url}')" alt="${product.name}"></div>`
+                : '<div class="stock-card-thumb is-empty"></div>';
 
         // 在庫が足りているカードには何も出さない。30 枚に同じ緑の帯が並ぶと、
         // 目立たせたいはずの「発注済み」がその中に埋もれる。
@@ -632,19 +642,23 @@ function updateDashboardDisplay() {
         const card = document.createElement('div');
         card.className = `stock-card ${isLow ? 'low-stock' : ''}`;
         card.innerHTML = `
-            <div class="stock-card-header">
-                ${imageHtml}
-                <div class="stock-card-name">${product.name}</div>
-                ${chipHtml}
-            </div>
+            <div class="stock-card-main">
+                ${thumbHtml}
+                <div class="stock-card-body">
+                    <div class="stock-card-header">
+                        <div class="stock-card-name">${product.name}</div>
+                        ${chipHtml}
+                    </div>
 
-            <div class="stock-card-figures">
-                <button type="button" class="stock-now ${isLow ? 'low' : ''}"
-                    onclick="openQuantityModal(${product.id})"
-                    title="タップして個数を入力">${product.current_stock}<span class="stock-now-hint">✎</span></button>
-                <span class="stock-card-meta">
-                    発注点 ${product.reorder_point}${product.category ? ` ・ ${product.category}` : ''}
-                </span>
+                    <div class="stock-card-figures">
+                        <button type="button" class="stock-now ${isLow ? 'low' : ''}"
+                            onclick="openQuantityModal(${product.id})"
+                            title="タップして個数を入力">${product.current_stock}<span class="stock-now-hint">✎</span></button>
+                        <span class="stock-card-meta">
+                            発注点 ${product.reorder_point}${product.category ? ` ・ ${product.category}` : ''}
+                        </span>
+                    </div>
+                </div>
             </div>
 
             <div class="stock-card-actions">

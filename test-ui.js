@@ -23,6 +23,7 @@ const BASE = `http://localhost:${PORT}`;
 const CHROME = process.env.CHROME_PATH || undefined;
 const PASSWORD = 'test-password-1234';
 const puppeteer = require('puppeteer');
+const sharp = require('sharp');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 let passed = 0, failed = 0;
@@ -43,10 +44,20 @@ server.stderr.on('data', () => {});
 
 const jar = new Map();
 let csrf = '';
+function cookieHeader() {
+    return [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
+}
+
+function absorb(res) {
+    for (const raw of (res.headers.getSetCookie ? res.headers.getSetCookie() : [])) {
+        const [n, ...r] = raw.split(';')[0].split('=');
+        jar.set(n, r.join('='));
+    }
+}
+
 async function api(method, urlPath, body) {
     const headers = {};
-    const cookie = [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
-    if (cookie) headers.Cookie = cookie;
+    if (cookieHeader()) headers.Cookie = cookieHeader();
     if (method !== 'GET') headers['X-CSRF-Token'] = csrf;
     let payload;
     if (body !== undefined) {
@@ -54,14 +65,41 @@ async function api(method, urlPath, body) {
         payload = JSON.stringify({ ...body, _csrf: csrf });
     }
     const res = await fetch(`${BASE}${urlPath}`, { method, headers, body: payload });
-    for (const raw of (res.headers.getSetCookie ? res.headers.getSetCookie() : [])) {
-        const [n, ...r] = raw.split(';')[0].split('=');
-        jar.set(n, r.join('='));
-    }
+    absorb(res);
     const t = await res.text();
     try { return { status: res.status, body: JSON.parse(t) }; } catch { return { status: res.status, body: {} }; }
 }
 const refresh = async () => { csrf = (await api('GET', '/api/csrf-token')).body.csrfToken; };
+
+/** 写真の代わり。色と文字だけの画像を作る。 */
+async function makeImage(label, color) {
+    const svg = Buffer.from(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400">
+           <rect width="400" height="400" fill="${color}"/>
+           <text x="200" y="230" font-size="80" text-anchor="middle" fill="white"
+                 font-family="sans-serif">${label}</text>
+         </svg>`
+    );
+    return sharp(svg).png().toBuffer();
+}
+
+/** 実際の経路（multipart）で写真つきの商品を作る */
+async function createProductWithImage({ name, category, stock, reorder }, image) {
+    const form = new FormData();
+    form.append('name', name);
+    form.append('category', category);
+    form.append('reorder_point', String(reorder));
+    form.append('current_stock', String(stock));
+    form.append('_csrf', csrf);
+    form.append('image', new Blob([image], { type: 'image/png' }), 'photo.png');
+    const res = await fetch(`${BASE}/api/products`, {
+        method: 'POST',
+        headers: { Cookie: cookieHeader(), 'X-CSRF-Token': csrf },
+        body: form
+    });
+    absorb(res);
+    return res.ok;
+}
 
 /** 撮れなくてもテストは続ける。画面の確認が主で、画像はおまけ。 */
 async function screenshot(page, file) {
@@ -182,6 +220,67 @@ async function screenshot(page, file) {
         await page.click('#stock-search-clear');
         await sleep(600);
         await screenshot(page, path.join(OUT, '08-after.png'));
+
+        // --- 写真 ---
+        //
+        // 写真の見え方は、写真を持つ商品を用意しないと確かめられない。
+        // 一度これを怠って「写真が小さすぎる」「名前の左端が揃わない」を
+        // 出してしまったので、ここで固定しておく。
+
+        // 写真がまだ 1 枚も無い状態
+        const thumbsBefore = await page.$$eval('.stock-card-thumb', els => els.length);
+        check('写真: 誰も使っていなければ枠を出さない', thumbsBefore === 0, `枠 ${thumbsBefore} 個`);
+
+        await refresh();
+        await createProductWithImage(
+            { name: '写真つき洗剤', category: '清掃', stock: 9, reorder: 3 },
+            await makeImage('洗', '#3d5a80')
+        );
+        await page.reload({ waitUntil: 'networkidle2' });
+        await sleep(3000);
+
+        const thumbs = await page.$$eval('.stock-card-thumb', els => els.map(e => {
+            const img = e.querySelector('img');
+            const r = e.getBoundingClientRect();
+            return {
+                width: Math.round(r.width),
+                height: Math.round(r.height),
+                loaded: img ? img.naturalWidth > 0 : null
+            };
+        }));
+
+        check(
+            '写真: 1 つでも使っていれば、全部の商品に枠を出す',
+            thumbs.length === 5,
+            `枠 ${thumbs.length} 個 / 商品 5 件`
+        );
+
+        const withPhoto = thumbs.filter(t => t.loaded === true);
+        check(
+            '写真: 実際に読み込まれて表示される',
+            withPhoto.length === 1,
+            `読み込めた写真 ${withPhoto.length} 枚`
+        );
+
+        // 36px だと商品を見分けられなかった。見て分かる大きさを保つ。
+        check(
+            '写真: 見て分かる大きさで出る（56px 以上）',
+            thumbs.every(t => t.width >= 56 && t.height >= 56),
+            thumbs.map(t => `${t.width}x${t.height}`).join(', ')
+        );
+
+        // 写真のある商品と無い商品で、名前の左端が揃っていること
+        const lefts = await page.$$eval('.stock-card-name', els =>
+            els.map(e => Math.round(e.getBoundingClientRect().left))
+        );
+        const spread = Math.max(...lefts) - Math.min(...lefts);
+        check(
+            '写真: 写真の有無で名前の左端がずれない',
+            spread <= 4,
+            `左端の幅 ${spread}px（${lefts.join(', ')}）`
+        );
+
+        await screenshot(page, path.join(OUT, '09-with-photo.png'));
     } catch (err) {
         failed++;
         console.error('失敗:', err.message);

@@ -1,6 +1,7 @@
 const express = require('express');
 const { getLocationDatabase, mainDb } = require('../db/database-admin');
 const { requireAuth } = require('../middleware/auth');
+const { attachOperatorNames } = require('../utils/operator-name');
 const router = express.Router();
 
 // 発注依頼作成
@@ -10,9 +11,9 @@ router.post('/', requireAuth, async (req, res) => {
 
     try {
         const result = await db.run(
-            `INSERT INTO order_requests (product_id, requested_quantity, user_id, note)
-             VALUES (?, ?, ?, ?)`,
-            [productId, quantity, req.session.userId, note || '']
+            `INSERT INTO order_requests (product_id, requested_quantity, user_id, operator_name, note)
+             VALUES (?, ?, ?, ?, ?)`,
+            [productId, quantity, req.session.userId, req.session.operatorName || null, note || '']
         );
 
         res.json({ success: true, orderId: result.lastID });
@@ -34,11 +35,7 @@ router.get('/', requireAuth, async (req, res) => {
     try {
         const orders = await db.all(query);
 
-        // ユーザー名をメインDBから取得して追加
-        for (let order of orders) {
-            const user = await mainDb.get('SELECT user_name FROM users WHERE id = ?', [order.user_id]);
-            order.username = user ? user.user_name : '不明';
-        }
+        await attachOperatorNames(mainDb, orders);
 
         res.json(orders);
     } catch (err) {

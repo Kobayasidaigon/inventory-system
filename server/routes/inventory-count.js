@@ -1,4 +1,5 @@
 const express = require('express');
+const { attachOperatorNames } = require('../utils/operator-name');
 const router = express.Router();
 const { mainDb } = require('../db/database-admin');
 const {
@@ -33,8 +34,8 @@ module.exports = (db) => {
 
             // 棚卸を作成
             const result = await db.run(
-                'INSERT INTO inventory_counts (count_date, user_id) VALUES (?, ?)',
-                [count_date, userId]
+                'INSERT INTO inventory_counts (count_date, user_id, operator_name) VALUES (?, ?, ?)',
+                [count_date, userId, req.session.operatorName || null]
             );
 
             const countId = result.lastID;
@@ -76,11 +77,10 @@ module.exports = (db) => {
                 ORDER BY ic.count_date DESC
             `);
 
-            // ユーザー名をメインDBから取得して追加
-            for (let count of counts) {
-                const user = await mainDb.get('SELECT user_name FROM users WHERE id = ?', [count.user_id]);
-                count.created_by = user ? user.user_name : '不明';
+            await attachOperatorNames(mainDb, counts, 'created_by');
 
+            // 承認したのは管理者なので、こちらはアカウント名のまま
+            for (let count of counts) {
                 if (count.approved_by) {
                     const approver = await mainDb.get('SELECT user_name FROM users WHERE id = ?', [count.approved_by]);
                     count.approved_by_username = approver ? approver.user_name : '不明';
@@ -338,9 +338,7 @@ module.exports = (db) => {
                 return res.status(404).json({ error: '棚卸が見つかりません' });
             }
 
-            // ユーザー名をメインDBから取得
-            const user = await mainDb.get('SELECT user_name FROM users WHERE id = ?', [count.user_id]);
-            count.created_by = user ? user.user_name : '不明';
+            await attachOperatorNames(mainDb, [count], 'created_by');
 
             const items = await db.all(`
                 SELECT

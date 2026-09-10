@@ -200,12 +200,23 @@ async function withTransaction(db, fn) {
  * @param {number} params.quantity - in・out は 1 以上、adjust は符号付きの増減量
  * @param {string|null} [params.date] - 取引日（省略時は created_at を使う）
  * @param {string} [params.note] - 備考
- * @param {number} params.userId - 操作者
+ * @param {number} params.userId - 操作者のアカウント
+ * @param {string|null} [params.operatorName] - 操作した人の名前。共用アカウントで
+ *        入っているときに、誰が入力したかを行にも残すためのもの。省略すれば付かない
  * @param {boolean} [params.allowNegative] - 在庫がマイナスになるのを許すか
  * @returns {Promise<object>} 更新後の商品行
  */
 async function applyStockChange(db, params) {
-    const { productId, type, quantity, date = null, note = '', userId, allowNegative = false } = params;
+    const {
+        productId,
+        type,
+        quantity,
+        date = null,
+        note = '',
+        userId,
+        operatorName = null,
+        allowNegative = false
+    } = params;
 
     const product = await db.get('SELECT * FROM products WHERE id = ?', [productId]);
     if (!product) {
@@ -223,9 +234,9 @@ async function applyStockChange(db, params) {
     }
 
     await db.run(
-        `INSERT INTO inventory_history (product_id, type, quantity, date, note, user_id)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [productId, type, quantity, date, note, userId]
+        `INSERT INTO inventory_history (product_id, type, quantity, date, note, user_id, operator_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [productId, type, quantity, date, note, userId, operatorName || null]
     );
 
     await db.run('UPDATE products SET current_stock = ? WHERE id = ?', [nextStock, productId]);
@@ -257,7 +268,7 @@ const ACTIVE_ORDER_STATUSES = ['pending', 'ordered'];
  *
  * @returns {Promise<{orderQuantity: number}|null>}
  */
-async function createAutoOrderIfNeeded(db, { product, userId }) {
+async function createAutoOrderIfNeeded(db, { product, userId, operatorName = null }) {
     const currentStock = Number(product.current_stock) || 0;
     const reorderPoint = Number(product.reorder_point) || 0;
 
@@ -279,9 +290,9 @@ async function createAutoOrderIfNeeded(db, { product, userId }) {
     const orderQuantity = calcOrderQuantity(product);
 
     await db.run(
-        `INSERT INTO order_requests (product_id, requested_quantity, user_id, note, status)
-         VALUES (?, ?, ?, ?, 'pending')`,
-        [product.id, orderQuantity, userId, '在庫が発注点を下回ったため自動発注']
+        `INSERT INTO order_requests (product_id, requested_quantity, user_id, operator_name, note, status)
+         VALUES (?, ?, ?, ?, ?, 'pending')`,
+        [product.id, orderQuantity, userId, operatorName || null, '在庫が発注点を下回ったため自動発注']
     );
 
     return { orderQuantity };

@@ -28,8 +28,37 @@ const MAX_LINK_LIFETIME_SECONDS = 600;
 const NONCE_MIN_LENGTH = 16;
 const NONCE_MAX_LENGTH = 128;
 
+/** 操作者名（by）の長さの上限。名前を入れるところなので、長い文字列は受け取らない。 */
+const BY_MAX_LENGTH = 40;
+
+/**
+ * 操作者名に使わせない文字。
+ *
+ * この名前は履歴の表になって、CSV にも出る。表の描画は今のところ
+ * テンプレート文字列で組み立てているので、HTML として読める文字を
+ * 受け取らないようにしておく。& を含めているのは、`&#60;` のような
+ * 書き方が innerHTML で `<` に戻るため。
+ */
+const BY_FORBIDDEN = /[<>"'&\\]|[\u0000-\u001f\u007f]/;
+
 /** 署名の対象にする項目。順序も含めてこの通りに並べる。 */
 const SIGNED_FIELDS = ['loc', 'user', 'exp', 'nonce'];
+
+/**
+ * 署名の対象にはするが、無くてもよい項目。あるときだけ SIGNED_FIELDS の後ろに続ける。
+ *
+ * by（操作者名）がこれにあたる。無くても通るようにしてあるのは、発行側と
+ * こちら側を同時に入れ替えられないため。片方だけ新しくても、リンクは通る。
+ *
+ * 「無くてもよい」であって「署名しなくてよい」ではない。付け足しても剥がしても
+ * 署名の元になる文字列が変わるので、URL をいじって別人の名前にはできない。
+ */
+const OPTIONAL_SIGNED_FIELDS = ['by'];
+
+/** 空でない値が入っているか。無い項目は署名の対象から外す。 */
+function hasValue(value) {
+    return value !== undefined && value !== null && String(value).trim() !== '';
+}
 
 /**
  * 署名の対象になる文字列を組み立てる。
@@ -38,7 +67,11 @@ const SIGNED_FIELDS = ['loc', 'user', 'exp', 'nonce'];
  * 別々の入力が同じ文字列になりうる（loc="a&user=b" のような形）。
  */
 function canonicalString(params) {
-    return SIGNED_FIELDS
+    const fields = SIGNED_FIELDS.concat(
+        OPTIONAL_SIGNED_FIELDS.filter(key => hasValue(params[key]))
+    );
+
+    return fields
         .map(key => `${key}=${encodeURIComponent(String(params[key]))}`)
         .join('&');
 }
@@ -61,14 +94,14 @@ function sign(params, secret) {
  * 入るためのリンクを組み立てる。テストと手順書で同じ作り方を使うために置いている。
  *
  * @param {string} baseUrl - 例 https://inventory-system-aburiva.fly.dev
- * @param {object} params - { loc, user }
+ * @param {object} params - { loc, user, by }
  * @param {string} secret - 合言葉
  * @param {object} [options]
  * @param {number} [options.lifetimeSeconds=300] - 有効時間（秒）
  * @param {number} [options.now] - 現在時刻（UNIX 秒）。テスト用
  * @returns {string} 署名付きの URL
  */
-function buildEntryUrl(baseUrl, { loc, user }, secret, options = {}) {
+function buildEntryUrl(baseUrl, { loc, user, by }, secret, options = {}) {
     const lifetime = options.lifetimeSeconds ?? 300;
     const now = options.now ?? Math.floor(Date.now() / 1000);
 
@@ -78,6 +111,11 @@ function buildEntryUrl(baseUrl, { loc, user }, secret, options = {}) {
         exp: now + lifetime,
         nonce: crypto.randomBytes(16).toString('hex')
     };
+
+    // 受け取る側は前後の空白を落としてから署名を確かめるので、ここでも落としておく
+    if (hasValue(by)) {
+        params.by = String(by).trim();
+    }
 
     const query = canonicalString(params) + `&sig=${sign(params, secret)}`;
     return `${String(baseUrl).replace(/\/$/, '')}/enter?${query}`;
@@ -109,7 +147,8 @@ function isConfigured() {
  * @param {object} query - リクエストのクエリ
  * @param {object} [options]
  * @param {number} [options.now] - 現在時刻（UNIX 秒）。テスト用
- * @returns {{loc: string, user: string, exp: number, nonce: string}}
+ * @returns {{loc: string, user: string, by: string, exp: number, nonce: string}}
+ *          by は操作者名。付いていなければ空文字。
  */
 function verifyEntryParams(query, options = {}) {
     const secret = getSecret();
@@ -117,11 +156,18 @@ function verifyEntryParams(query, options = {}) {
 
     const loc = String(query.loc ?? '').trim();
     const user = String(query.user ?? '').trim();
+    const by = String(query.by ?? '').trim();
     const nonce = String(query.nonce ?? '').trim();
     const sig = String(query.sig ?? '').trim();
     const expText = String(query.exp ?? '').trim();
 
     if (!loc || !user || !nonce || !sig || !expText) {
+        throw new StockError('リンクの形式が正しくありません', 400);
+    }
+
+    // by は無くてもよいが、あるなら名前として読める形であること。
+    // ここを通った値がそのまま履歴に残るので、入り口で狭めておく。
+    if (by && (by.length > BY_MAX_LENGTH || BY_FORBIDDEN.test(by))) {
         throw new StockError('リンクの形式が正しくありません', 400);
     }
 
@@ -136,7 +182,7 @@ function verifyEntryParams(query, options = {}) {
 
     // 署名を先に確かめる。期限切れかどうかは、正しい署名のリンクにだけ答える。
     // 中身を作り変えながら反応の違いを見る、という調べ方をさせないため。
-    const expected = sign({ loc, user, exp, nonce }, secret);
+    const expected = sign({ loc, user, by, exp, nonce }, secret);
 
     // timingSafeEqual は長さが違うと例外になるので、先に長さで弾く
     if (sig.length !== expected.length) {
@@ -159,7 +205,7 @@ function verifyEntryParams(query, options = {}) {
         );
     }
 
-    return { loc, user, exp, nonce };
+    return { loc, user, by, exp, nonce };
 }
 
 /**
@@ -204,6 +250,7 @@ module.exports = {
     MAX_LINK_LIFETIME_SECONDS,
     NONCE_MIN_LENGTH,
     NONCE_MAX_LENGTH,
+    BY_MAX_LENGTH,
     canonicalString,
     sign,
     buildEntryUrl,

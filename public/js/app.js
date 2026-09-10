@@ -224,7 +224,7 @@ function renderShiftStatus(shifts) {
                 <div style="font-weight: bold; font-size: 15px;">
                     ${shift.name}
                     <span style="font-weight: normal; color: #666; font-size: 13px;">
-                        (${shift.startTime}〜${shift.endTime})
+                        (${shift.startTime}〜${shift.closeTime})
                     </span>
                 </div>
                 <div style="font-size: 13px; color: #555; margin-top: 2px;">

@@ -830,6 +830,10 @@ async function showOrderDialog(productId) {
                     closeModal();
                     alert('発注依頼を送信しました');
                     showDashboard();
+                } else {
+                    // すでに依頼が出ている商品などは、理由をそのまま見せる
+                    const result = await response.json().catch(() => ({}));
+                    alert(result.error || '発注依頼の送信に失敗しました');
                 }
             } catch (error) {
                 alert('発注依頼の送信に失敗しました');

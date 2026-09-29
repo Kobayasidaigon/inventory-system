@@ -2,23 +2,56 @@ const express = require('express');
 const { getLocationDatabase, mainDb } = require('../db/database-admin');
 const { requireAuth } = require('../middleware/auth');
 const { attachOperatorNames } = require('../utils/operator-name');
+const { sanitizeHtml } = require('../utils/xss-protection');
+const {
+    StockError,
+    parseProductId,
+    parseStockLevel,
+    withTransaction,
+    findActiveOrder,
+    respondWithStockError
+} = require('../utils/stock');
 const router = express.Router();
 
 // 発注依頼作成
+//
+// 未入荷の依頼がある商品には作らない（自動発注と同じ決まり）。二重に出すと
+// 発注依頼の一覧に同じ商品が 2 行並び、どちらで入荷完了すればよいか分からなくなる。
 router.post('/', requireAuth, async (req, res) => {
     const db = getLocationDatabase(req.session.locationCode);
-    const { productId, quantity, note } = req.body;
 
     try {
-        const result = await db.run(
-            `INSERT INTO order_requests (product_id, requested_quantity, user_id, operator_name, note)
-             VALUES (?, ?, ?, ?, ?)`,
-            [productId, quantity, req.session.userId, req.session.operatorName || null, note || '']
-        );
+        const productId = parseProductId(req.body.productId);
+        // 画面から手で出す依頼は数量を決めずに出す（入荷完了のときに入れる）ので、
+        // 省略と 0 を許す
+        const rawQuantity = req.body.quantity;
+        const quantity = rawQuantity === undefined || rawQuantity === null || rawQuantity === ''
+            ? 0
+            : parseStockLevel(rawQuantity, '依頼数');
+        const note = sanitizeHtml(req.body.note || '');
 
-        res.json({ success: true, orderId: result.lastID });
+        const orderId = await withTransaction(db, async () => {
+            const product = await db.get('SELECT id FROM products WHERE id = ?', [productId]);
+            if (!product) {
+                throw new StockError('商品が見つかりません', 404);
+            }
+
+            if (await findActiveOrder(db, productId)) {
+                throw new StockError('この商品はすでに発注依頼が出ています', 409);
+            }
+
+            const result = await db.run(
+                `INSERT INTO order_requests (product_id, requested_quantity, user_id, operator_name, note)
+                 VALUES (?, ?, ?, ?, ?)`,
+                [productId, quantity, req.session.userId, req.session.operatorName || null, note]
+            );
+
+            return result.lastID;
+        });
+
+        res.json({ success: true, orderId });
     } catch (err) {
-        res.status(500).json({ error: '発注依頼の登録に失敗しました' });
+        respondWithStockError(res, err, '発注依頼の登録に失敗しました');
     }
 });
 

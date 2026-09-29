@@ -262,6 +262,18 @@ function calcOrderQuantity(product) {
 const ACTIVE_ORDER_STATUSES = ['pending', 'ordered'];
 
 /**
+ * 商品の未入荷の発注依頼（依頼中・発注済）を 1 件返す。無ければ undefined。
+ */
+async function findActiveOrder(db, productId) {
+    const placeholders = ACTIVE_ORDER_STATUSES.map(() => '?').join(', ');
+    return db.get(
+        `SELECT id, status FROM order_requests
+         WHERE product_id = ? AND status IN (${placeholders})`,
+        [productId, ...ACTIVE_ORDER_STATUSES]
+    );
+}
+
+/**
  * 在庫が発注点を下回っていれば自動で発注依頼を作る。
  *
  * すでに未入荷の依頼がある商品には作らない。作った場合だけ依頼の内容を返す。
@@ -276,14 +288,7 @@ async function createAutoOrderIfNeeded(db, { product, userId, operatorName = nul
         return null;
     }
 
-    const placeholders = ACTIVE_ORDER_STATUSES.map(() => '?').join(', ');
-    const existingOrder = await db.get(
-        `SELECT id FROM order_requests
-         WHERE product_id = ? AND status IN (${placeholders})`,
-        [product.id, ...ACTIVE_ORDER_STATUSES]
-    );
-
-    if (existingOrder) {
+    if (await findActiveOrder(db, product.id)) {
         return null;
     }
 
@@ -443,6 +448,7 @@ module.exports = {
     withTransaction,
     applyStockChange,
     calcOrderQuantity,
+    findActiveOrder,
     createAutoOrderIfNeeded,
     buildStockChartData,
     parseChartDays,

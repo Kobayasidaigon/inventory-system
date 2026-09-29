@@ -610,6 +610,9 @@ function updateDashboardDisplay() {
 
     filteredProducts.forEach(product => {
         const isLow = product.current_stock <= product.reorder_point;
+        // 「発注依頼済み」は、実際に未入荷の依頼があるときだけ出す。在庫の数だけで
+        // 決めると、依頼をキャンセルした商品や棚卸で減った商品まで依頼済みに見える。
+        const hasActiveOrder = allActiveOrders.some(order => order.product_id === product.id);
 
         // 画像HTML
         const imageHtml = product.image_url
@@ -618,7 +621,9 @@ function updateDashboardDisplay() {
 
         // ステータス
         const statusClass = isLow ? 'status-low' : 'status-ok';
-        const statusText = isLow ? '⚠️ 発注依頼済み' : '✓ 在庫十分';
+        const statusText = !isLow
+            ? '✓ 在庫十分'
+            : hasActiveOrder ? '⚠️ 発注依頼済み' : '⚠️ 発注依頼なし';
 
         // カード作成
         const card = document.createElement('div');
@@ -2821,12 +2826,11 @@ async function quickStockChange(productId, change) {
             // 成功時のフィードバック（短い通知）
             showQuickFeedback(product.name, change);
 
-            // 商品データを再読み込み
+            // 商品データと発注依頼を読み直す。発注依頼を先に読むのは、カードの
+            // 「発注依頼済み」が依頼の有無で決まるため（出庫で自動発注ができることがある）
             await loadProducts();
-            updateDashboardDisplay();
-
-            // 発注依頼済み商品リストも更新
             await loadPendingOrders();
+            updateDashboardDisplay();
 
             // 区切りごとの登録件数も変わるので読み直す
             await loadShiftStatus();

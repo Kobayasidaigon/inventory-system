@@ -2,7 +2,7 @@
  * 発注依頼のテストスクリプト
  *
  * 1. API: 依頼の作成、重複の拒否、入力の検証、管理画面の発注状況
- * 2. 画面: 「発注依頼」タブの一覧
+ * 2. 画面: 「発注依頼」タブの一覧と、在庫カードの「発注依頼済み」の表示
  *
  * 画面は、CI にブラウザが無いので jsdom で確かめる。実物の index.html と app.js を
  * 読み込み、fetch はログイン済みのテスト用クライアントと同じクッキーで実サーバーへ送る。
@@ -277,6 +277,15 @@ function clickRowButton(window, selector, productName, buttonText) {
     button.click();
 }
 
+function cardStatuses(window) {
+    const statuses = {};
+    for (const card of window.document.querySelectorAll('.stock-card')) {
+        const name = card.querySelector('.stock-card-name').textContent.trim();
+        statuses[name] = card.querySelector('.stock-card-status').textContent.trim();
+    }
+    return statuses;
+}
+
 async function testScreen(location) {
     // 依頼中・依頼なし（最初から発注点以下）・在庫十分・発注済 の 4 つを用意する
     const withOrder = await createProduct('画面: 依頼中', 5, 10);
@@ -298,10 +307,27 @@ async function testScreen(location) {
     const { window, errors, dialogs, state } = openUserScreen();
 
     try {
-        // 最初はダッシュボードが開く。描き終わるのを待ってからタブを切り替える
+        // --- ダッシュボードのカード ---
         await waitFor(
             () => window.document.querySelectorAll('.stock-card').length === productCount,
             'ダッシュボードのカードが並ぶ'
+        );
+        const cards = cardStatuses(window);
+
+        addResult(
+            'カード: 依頼が出ている商品は「発注依頼済み」',
+            cards['画面: 依頼中'] === '⚠️ 発注依頼済み' && cards['画面: 発注済'] === '⚠️ 発注依頼済み',
+            `依頼中「${cards['画面: 依頼中']}」 / 発注済「${cards['画面: 発注済']}」`
+        );
+        addResult(
+            'カード: 発注点以下でも依頼が無ければ「発注依頼済み」と出さない',
+            cards['画面: 依頼なし'] === '⚠️ 発注依頼なし',
+            `「${cards['画面: 依頼なし']}」`
+        );
+        addResult(
+            'カード: 在庫が発注点より多ければ「在庫十分」',
+            cards['画面: 在庫十分'] === '✓ 在庫十分',
+            `「${cards['画面: 在庫十分']}」`
         );
 
         // --- 発注依頼タブ ---

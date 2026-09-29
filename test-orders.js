@@ -3,6 +3,7 @@
  *
  * 1. API: 依頼の作成、重複の拒否、入力の検証、管理画面の発注状況
  * 2. 画面: 「発注依頼」タブの一覧と、在庫カードの「発注依頼済み」の表示
+ * 3. CSV: 「発注依頼」タブの一覧の CSV 出力
  *
  * 画面は、CI にブラウザが無いので jsdom で確かめる。実物の index.html と app.js を
  * 読み込み、fetch はログイン済みのテスト用クライアントと同じクッキーで実サーバーへ送る。
@@ -66,6 +67,33 @@ async function activeOrdersOf(productId) {
     return (await allOrders()).filter(o =>
         o.product_id === productId && (o.status === 'pending' || o.status === 'ordered')
     );
+}
+
+/**
+ * 日本時間の今日と、今日の朝 8:30 を requested_at の形（UTC）で表したもの。
+ * 日本時間の朝 9 時より前は、UTC ではまだ前日になっている。
+ */
+function tokyoToday() {
+    const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+    const [year, month, day] = [jstNow.getUTCFullYear(), jstNow.getUTCMonth() + 1, jstNow.getUTCDate()];
+    const morningUtc = new Date(Date.UTC(year, month - 1, day, 8, 30) - 9 * 60 * 60 * 1000)
+        .toISOString().replace('T', ' ').slice(0, 19);
+
+    return { year, month, day, morningUtc };
+}
+
+/** 依頼日時を書き換える（API では日時を指定できないので、データベースを直接触る） */
+function setRequestedAt(locationCode, orderId, requestedAt) {
+    const sqlite3 = require('sqlite3');
+    const db = new sqlite3.Database(path.join(DB_DIR, `location_${locationCode}.db`));
+
+    return new Promise((resolve, reject) => {
+        db.run('UPDATE order_requests SET requested_at = ? WHERE id = ?', [requestedAt, orderId], err => {
+            db.close();
+            if (err) reject(err);
+            else resolve();
+        });
+    });
 }
 
 async function markOrdered(locationId, orderId) {
@@ -370,10 +398,7 @@ async function testScreen(location) {
 
         // --- 依頼日は日本時間で出す ---
         // 日本時間の今日 8:30 は、UTC では前日の 23:30。端末の時刻として読むと前日になる
-        const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
-        const [year, month, day] = [jstNow.getUTCFullYear(), jstNow.getUTCMonth() + 1, jstNow.getUTCDate()];
-        const morning = new Date(Date.UTC(year, month - 1, day, 8, 30) - 9 * 60 * 60 * 1000)
-            .toISOString().replace('T', ' ').slice(0, 19);
+        const { year, month, day, morningUtc: morning } = tokyoToday();
 
         addResult(
             '依頼日: 日本時間の朝の依頼が前日の日付にならない',
@@ -463,6 +488,101 @@ async function testScreen(location) {
 }
 
 // ---------------------------------------------------------------------------
+// 3. CSV 出力
+// ---------------------------------------------------------------------------
+
+/**
+ * CSV を取ってくる。ヘッダーも見たいので request() ではなく fetch を直接使う。
+ * res.text() は先頭の BOM を黙って取り除くので、バイト列のまま受け取って確かめる。
+ */
+async function fetchCsv(cookie) {
+    const res = await fetch(`${BASE_URL}/api/orders/export`, { headers: cookie ? { Cookie: cookie } : {} });
+    const bytes = Buffer.from(await res.arrayBuffer());
+
+    return {
+        status: res.status,
+        contentType: res.headers.get('content-type') || '',
+        disposition: res.headers.get('content-disposition') || '',
+        hasBom: bytes.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])),
+        text: bytes.toString('utf8').replace(/^﻿/, '')
+    };
+}
+
+async function testCsv(location) {
+    // 画面のテストの最後で未入荷の依頼はすべて片付けてある。ここで作り直す
+    const escaped = await createProduct('CSV: P&G ジョイ 1/2', 5, 10);
+    await request('POST', '/api/inventory/out', { productId: escaped, quantity: 6, note: '発注点割れ' });
+
+    const ordered = await createProduct('CSV: 発注済', 5, 10);
+    await request('POST', '/api/inventory/out', { productId: ordered, quantity: 7, note: '発注点割れ' });
+    await markOrdered(location.locationId, (await activeOrdersOf(ordered))[0].id);
+
+    const manual = await createProduct('CSV: 手で依頼', 5, 20);
+    const manualOrder = await request('POST', '/api/orders', { productId: manual, quantity: 0, note: 'A社, "至急"/2箱' });
+    // 日本時間の朝に出した依頼にする（UTC では前日）。CSV でも日本時間の日付で出るか見る
+    const { year, month, day, morningUtc } = tokyoToday();
+    await setRequestedAt(location.locationCode, manualOrder.body.orderId, morningUtc);
+
+    const received = await createProduct('CSV: 受領済', 5, 10);
+    await request('POST', '/api/inventory/out', { productId: received, quantity: 6, note: '発注点割れ' });
+    await request('PUT', `/api/orders/${(await activeOrdersOf(received))[0].id}`, { status: 'received' });
+
+    const csv = await fetchCsv(client.state.cookie);
+    const lines = csv.text.split('\n');
+    const lineOf = name => lines.find(line => line.startsWith(`${name},`));
+
+    addResult(
+        'CSV: CSV として返す（Excel で文字化けしないよう BOM 付き）',
+        csv.status === 200 && csv.contentType.startsWith('text/csv') && csv.hasBom,
+        `status ${csv.status} / ${csv.contentType} / BOM ${csv.hasBom ? 'あり' : 'なし'}`
+    );
+    addResult(
+        'CSV: 見出しが画面の一覧と同じ',
+        lines[0] === '商品名,状況,依頼日,現在庫,発注点,依頼者,備考',
+        lines[0]
+    );
+
+    const activeCount = (await allOrders()).filter(o => o.status === 'pending' || o.status === 'ordered').length;
+    addResult(
+        'CSV: 未入荷の依頼だけが並ぶ（受領済・キャンセルは出さない）',
+        lines.length - 1 === activeCount && activeCount === 3 && !lineOf('CSV: 受領済') && !lineOf('画面: 依頼中'),
+        `行 ${lines.length - 1}（期待値 ${activeCount}）`
+    );
+
+    // 依頼はどれも日本時間の今日（手の依頼は今日の朝、ほかは今）
+    const today = `${year}/${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}`;
+    addResult(
+        'CSV: 状況と依頼日（日本時間）が入る',
+        lineOf('CSV: 発注済') === `CSV: 発注済,発注済,${today},3,5,テスト担当,在庫が発注点を下回ったため自動発注`,
+        lineOf('CSV: 発注済')
+    );
+    addResult(
+        'CSV: 保存時のエスケープを戻す（& や / が &amp; &#x2F; のまま出ない）',
+        !!lineOf('CSV: P&G ジョイ 1/2') && !/&amp;|&#x2F;|&quot;/.test(csv.text),
+        lineOf('CSV: P&G ジョイ 1/2')
+    );
+    addResult(
+        'CSV: 「,」や「"」を含む備考で列がずれない（日本時間の朝の依頼も今日の日付）',
+        lineOf('CSV: 手で依頼') === `CSV: 手で依頼,発注依頼中,${today},20,5,テスト担当,"A社, ""至急""/2箱"`,
+        lineOf('CSV: 手で依頼')
+    );
+
+    const expectedName = encodeURIComponent(`発注依頼_${today.replace(/\//g, '')}.csv`);
+    addResult(
+        'CSV: ファイル名は日本語（発注依頼_日付.csv）',
+        csv.disposition.startsWith('attachment;') && csv.disposition.includes(`filename*=UTF-8''${expectedName}`),
+        csv.disposition
+    );
+
+    const anonymous = await fetchCsv(null);
+    addResult(
+        'CSV: ログインしていないと出さない',
+        anonymous.status === 401,
+        `status ${anonymous.status}`
+    );
+}
+
+// ---------------------------------------------------------------------------
 
 (async () => {
     console.log('========================================');
@@ -481,6 +601,7 @@ async function testScreen(location) {
 
         await testApi(location);
         await testScreen(location);
+        await testCsv(location);
     } catch (err) {
         results.failed++;
         console.error('\n❌ テストの実行中にエラーが発生しました:', err.message);

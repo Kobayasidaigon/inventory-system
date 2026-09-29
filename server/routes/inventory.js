@@ -17,6 +17,7 @@ const {
     respondWithStockError
 } = require('../utils/stock');
 const { attachOperatorNames } = require('../utils/operator-name');
+const { toCsv } = require('../utils/csv');
 const router = express.Router();
 
 /**
@@ -336,29 +337,6 @@ router.put('/history/:id', requireAuth, async (req, res) => {
         respondWithStockError(res, err, '履歴修正に失敗しました');
     }
 });
-
-/**
- * 行の配列を CSV 文字列にする。
- *
- * 商品名に「,」や「"」が入っていても列がずれないようにエスケープする。
- * Excel で開いたときに文字化けしないよう BOM を付ける。
- *
- * @param {string[]} headers - 見出し行
- * @param {Array<Array<*>>} rows - 各行の値（headers と同じ順序）
- */
-function toCsv(headers, rows) {
-    const escape = (value) => {
-        const text = value === null || value === undefined ? '' : String(value);
-        return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-    };
-
-    const lines = [headers.map(escape).join(',')];
-    for (const row of rows) {
-        lines.push(row.map(escape).join(','));
-    }
-
-    return '﻿' + lines.join('\n');
-}
 
 // CSVエクスポート
 router.get('/export', requireAuth, async (req, res) => {

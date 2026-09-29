@@ -2,8 +2,10 @@ const express = require('express');
 const { getLocationDatabase, mainDb } = require('../db/database-admin');
 const { requireAuth } = require('../middleware/auth');
 const { attachOperatorNames } = require('../utils/operator-name');
-const { sanitizeHtml } = require('../utils/xss-protection');
+const { sanitizeHtml, unescapeHtml } = require('../utils/xss-protection');
+const { toCsv } = require('../utils/csv');
 const {
+    ACTIVE_ORDER_STATUSES,
     StockError,
     parseProductId,
     parseStockLevel,
@@ -12,6 +14,33 @@ const {
     respondWithStockError
 } = require('../utils/stock');
 const router = express.Router();
+
+// 画面（発注依頼タブ）と同じ呼び方
+const ORDER_STATUS_LABELS = {
+    pending: '発注依頼中',
+    ordered: '発注済',
+    received: '受領済',
+    cancelled: 'キャンセル'
+};
+
+/**
+ * 日本時間の「2026/09/29」にする。サーバーの TZ に左右されないよう明示する。
+ */
+function formatTokyoDate(date) {
+    return new Intl.DateTimeFormat('ja-JP', {
+        timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).format(date);
+}
+
+/**
+ * requested_at（SQLite の CURRENT_TIMESTAMP）を日本時間の日付にする。UTC なのに
+ * タイムゾーンの表記がないので、そのまま new Date() に渡すとサーバーの時刻として読まれる。
+ * 読めない値なら空にする（1 行のために CSV 全体が出せなくなるのを避ける）。
+ */
+function formatRequestedAt(text) {
+    const date = new Date(String(text).replace(' ', 'T') + 'Z');
+    return Number.isNaN(date.getTime()) ? '' : formatTokyoDate(date);
+}
 
 // 発注依頼作成
 //
@@ -74,6 +103,53 @@ router.get('/', requireAuth, async (req, res) => {
     } catch (err) {
         console.error('Orders error:', err);
         res.status(500).json({ error: 'データ取得エラー' });
+    }
+});
+
+// 未入荷の発注依頼を CSV で出す。「発注依頼」タブの一覧と同じ行・同じ列にする
+router.get('/export', requireAuth, async (req, res) => {
+    const db = getLocationDatabase(req.session.locationCode);
+    const placeholders = ACTIVE_ORDER_STATUSES.map(() => '?').join(', ');
+
+    try {
+        const orders = await db.all(`
+            SELECT o.*, p.name as product_name, p.current_stock, p.reorder_point
+            FROM order_requests o
+            JOIN products p ON o.product_id = p.id
+            WHERE o.status IN (${placeholders})
+            ORDER BY o.requested_at DESC
+        `, ACTIVE_ORDER_STATUSES);
+
+        await attachOperatorNames(mainDb, orders);
+
+        // 商品名・備考・名前は保存時に HTML 用にエスケープしてある。画面ではそれで
+        // 元の文字に見えるが、CSV では「&amp;」「&#x2F;」のまま出てしまうので戻す
+        const csv = toCsv(
+            ['商品名', '状況', '依頼日', '現在庫', '発注点', '依頼者', '備考'],
+            orders.map(order => [
+                unescapeHtml(order.product_name),
+                ORDER_STATUS_LABELS[order.status] || order.status,
+                formatRequestedAt(order.requested_at),
+                order.current_stock,
+                order.reorder_point,
+                unescapeHtml(order.username),
+                unescapeHtml(order.note || '')
+            ])
+        );
+
+        // ファイル名は日本語にする（filename* で渡す）。古いブラウザ向けに英字の名前も付ける
+        const today = formatTokyoDate(new Date()).replace(/\//g, '');
+        const fileName = encodeURIComponent(`発注依頼_${today}.csv`);
+
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="order_requests_${today}.csv"; filename*=UTF-8''${fileName}`
+        );
+        res.send(csv);
+    } catch (err) {
+        console.error('発注依頼の CSV 出力エラー:', err);
+        res.status(500).json({ error: 'エクスポートエラー' });
     }
 });
 

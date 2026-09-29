@@ -23,6 +23,33 @@ function escapeHtml(text) {
 }
 
 /**
+ * escapeHtml の逆。保存時にエスケープした文字列を元の文字に戻す。
+ *
+ * 画面（innerHTML）ではエスケープしたまま渡せば元の文字で見えるが、CSV では
+ * そのまま文字として出るので「&amp;」「&#x2F;」が残ってしまう。
+ * 1 回の置換で戻す（&amp; を先に戻すと「&amp;lt;」が「<」まで戻ってしまう）。
+ *
+ * @param {string} text - エスケープ済みの文字列
+ * @returns {string} - 元の文字列
+ */
+function unescapeHtml(text) {
+    if (typeof text !== 'string') {
+        return text;
+    }
+
+    const map = {
+        '&amp;': '&',
+        '&lt;': '<',
+        '&gt;': '>',
+        '&quot;': '"',
+        '&#039;': "'",
+        '&#x2F;': '/'
+    };
+
+    return text.replace(/&amp;|&lt;|&gt;|&quot;|&#039;|&#x2F;/g, (entity) => map[entity]);
+}
+
+/**
  * HTMLタグとスクリプトを除去するサニタイズ
  * @param {string} dirty - サニタイズする文字列
  * @returns {string} - サニタイズされた文字列
@@ -69,6 +96,7 @@ function sanitizeObject(obj, fields) {
 
 module.exports = {
     escapeHtml,
+    unescapeHtml,
     sanitizeHtml,
     sanitizeObject
 };

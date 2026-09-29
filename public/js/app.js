@@ -87,6 +87,7 @@ function setupEventListeners() {
     document.getElementById('export-current-id').addEventListener('click', () => exportCurrentStock('id'));
     document.getElementById('export-current-category').addEventListener('click', () => exportCurrentStock('category'));
     document.getElementById('export-history').addEventListener('click', exportHistory);
+    document.getElementById('export-orders').addEventListener('click', exportOrders);
     document.getElementById('refresh-history').addEventListener('click', loadHistory);
     document.getElementById('load-chart-btn').addEventListener('click', loadStockChart);
     document.getElementById('show-feedback-btn').addEventListener('click', showFeedbackModal);
@@ -1779,6 +1780,11 @@ function exportCurrentStock(sort = 'id') {
 
 function exportHistory() {
     window.location.href = '/api/inventory/export?type=history';
+}
+
+// 「発注依頼」タブの一覧（未入荷の依頼）を CSV で落とす
+function exportOrders() {
+    window.location.href = '/api/orders/export';
 }
 
 // モーダル閉じる

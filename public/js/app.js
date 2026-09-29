@@ -128,6 +128,9 @@ async function showPage(pageName) {
         case 'dashboard':
             await showDashboard();
             break;
+        case 'orders':
+            await showOrdersPage();
+            break;
         case 'products':
             await showProducts();
             break;
@@ -695,8 +698,8 @@ function renderPendingOrders(showAll) {
 
     ordersToShow.forEach(order => {
         const row = tbody.insertRow();
-        const requestedDateTime = new Date(order.requested_at);
-        const formattedDate = requestedDateTime.toLocaleDateString('ja-JP');
+        const requestedDateTime = parseUtcTimestamp(order.requested_at);
+        const formattedDate = requestedDateTime.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo' });
 
         // ステータスの表示
         const statusMap = {
@@ -829,7 +832,7 @@ async function showOrderDialog(productId) {
                 if (response.ok) {
                     closeModal();
                     alert('発注依頼を送信しました');
-                    showDashboard();
+                    await refreshAfterOrderChange();
                 } else {
                     // すでに依頼が出ている商品などは、理由をそのまま見せる
                     const result = await response.json().catch(() => ({}));
@@ -892,7 +895,7 @@ async function completeOrder(orderId, productId, productName) {
 
         if (statusResponse.ok) {
             alert(`${receivedQty}個入荷しました`);
-            showDashboard();
+            await refreshAfterOrderChange();
         }
     } catch (error) {
         console.error('Complete order error:', error);
@@ -912,11 +915,158 @@ async function updateOrderStatus(orderId, status) {
 
         if (response.ok) {
             alert('ステータスを更新しました');
-            showDashboard();
+            await refreshAfterOrderChange();
         }
     } catch (error) {
         alert('ステータス更新に失敗しました');
     }
+}
+
+// 発注依頼が変わったあと、開いているページを描き直す。
+// 発注依頼ページから押したのにダッシュボードだけ描き直すと、押した行が残って見える。
+async function refreshAfterOrderChange() {
+    if (document.getElementById('orders').classList.contains('active')) {
+        await showOrdersPage();
+    } else {
+        await showDashboard();
+    }
+}
+
+// ========== 発注依頼ページ ==========
+
+const ORDER_STATUS_LABELS = {
+    pending: '発注依頼中',
+    ordered: '発注済',
+    received: '受領済',
+    cancelled: 'キャンセル'
+};
+
+const ORDER_STATUS_COLORS = {
+    pending: '#f57c00',
+    ordered: '#1976d2',
+    received: '#388e3c',
+    cancelled: '#757575'
+};
+
+// requested_at は SQLite の CURRENT_TIMESTAMP で、UTC なのにタイムゾーンの表記がない
+// （例: "2026-09-29 06:03:39"）。そのまま new Date() に渡すと端末の時刻として読まれ、
+// 朝 9 時より前の依頼が前日の日付になる。Safari では読めずに Invalid Date になる。
+function parseUtcTimestamp(text) {
+    return new Date(String(text).replace(' ', 'T') + 'Z');
+}
+
+// 日本時間での年・月・日
+function tokyoDateParts(date) {
+    const parts = new Intl.DateTimeFormat('ja-JP', {
+        timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric'
+    }).formatToParts(date);
+    const pick = type => parts.find(part => part.type === type).value;
+
+    return { year: pick('year'), month: pick('month'), day: pick('day') };
+}
+
+// 依頼日を短く出す。今年のものは「9/29」、それより前は年を付ける。
+// スマホでは表の列幅が狭く、年まで入れると切れてしまう。
+function formatOrderDate(requestedAt) {
+    const date = parseUtcTimestamp(requestedAt);
+    if (Number.isNaN(date.getTime())) {
+        return '-';
+    }
+
+    const { year, month, day } = tokyoDateParts(date);
+    const thisYear = tokyoDateParts(new Date()).year;
+
+    return year === thisYear ? `${month}/${day}` : `${year}/${month}/${day}`;
+}
+
+// 発注依頼ページを表示する
+async function showOrdersPage() {
+    await loadProducts();
+    await loadPendingOrders();
+    renderActiveOrders();
+    renderMissingOrders();
+}
+
+// 未入荷の発注依頼（依頼中・発注済）の一覧
+function renderActiveOrders() {
+    const table = document.getElementById('orders-active-table');
+    const tbody = table.querySelector('tbody');
+    const empty = document.getElementById('orders-active-empty');
+
+    document.getElementById('orders-active-count').textContent = `${allActiveOrders.length}件`;
+
+    // 0 件でも欄は消さない。「無い」ことが分かるのもこのページの役目
+    if (allActiveOrders.length === 0) {
+        tbody.innerHTML = '';
+        table.style.display = 'none';
+        empty.style.display = 'block';
+        return;
+    }
+
+    table.style.display = '';
+    empty.style.display = 'none';
+
+    // 商品名・備考・依頼者はサーバーで保存時にエスケープ済み（他の一覧と同じ）
+    tbody.innerHTML = allActiveOrders.map(order => {
+        const isLow = order.current_stock <= order.reorder_point;
+        const actions = order.status === 'pending'
+            ? `<button class="btn btn-secondary" onclick="receiveOrder(${order.id})">入荷完了</button>
+               <button class="btn btn-secondary" onclick="updateOrderStatus(${order.id}, 'cancelled')">キャンセル</button>`
+            : `<button class="btn btn-secondary" onclick="receiveOrder(${order.id})">入荷完了</button>`;
+
+        return `
+            <tr data-order-id="${order.id}">
+                <td>${order.product_name}</td>
+                <td style="color: ${ORDER_STATUS_COLORS[order.status] || '#333'}; font-weight: bold;">
+                    ${ORDER_STATUS_LABELS[order.status] || order.status}
+                </td>
+                <td>${formatOrderDate(order.requested_at)}</td>
+                <td class="${isLow ? 'stock-low' : ''}">${order.current_stock}</td>
+                <td>${order.reorder_point}</td>
+                <td>${order.username || '-'}</td>
+                <td>${order.note || '-'}</td>
+                <td style="white-space: nowrap;">${actions}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// 在庫が発注点以下なのに、未入荷の依頼が無い商品
+function renderMissingOrders() {
+    const section = document.getElementById('orders-missing-section');
+    const tbody = document.querySelector('#orders-missing-table tbody');
+    const requested = new Set(allActiveOrders.map(order => order.product_id));
+    const missing = products.filter(product =>
+        product.current_stock <= product.reorder_point && !requested.has(product.id)
+    );
+
+    if (missing.length === 0) {
+        section.style.display = 'none';
+        tbody.innerHTML = '';
+        return;
+    }
+
+    section.style.display = 'block';
+    document.getElementById('orders-missing-count').textContent = `${missing.length}件`;
+
+    tbody.innerHTML = missing.map(product => `
+        <tr data-product-id="${product.id}">
+            <td>${product.name}</td>
+            <td class="stock-low">${product.current_stock}</td>
+            <td>${product.reorder_point}</td>
+            <td style="white-space: nowrap;">
+                <button class="btn btn-primary" onclick="showOrderDialog(${product.id})">発注依頼する</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+// 一覧の行から入荷完了する。商品名を onclick の文字列に埋め込まずに済むよう、ID で引く
+function receiveOrder(orderId) {
+    const order = allActiveOrders.find(o => o.id === orderId);
+    if (!order) return;
+
+    completeOrder(order.id, order.product_id, order.product_name);
 }
 
 // 商品一覧表示

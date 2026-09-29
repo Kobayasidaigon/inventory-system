@@ -18,6 +18,7 @@
 
     <nav>
         <button class="nav-btn active" data-page="dashboard">ダッシュボード</button>
+        <button class="nav-btn" data-page="orders">発注依頼</button>
         <button class="nav-btn" data-page="products">商品管理</button>
         <button class="nav-btn" data-page="history">履歴確認</button>
         <button class="nav-btn" data-page="chart">在庫推移グラフ</button>
@@ -67,7 +68,7 @@
                         <strong>🔔 自動通知：</strong>
                         <ul>
                             <li>在庫が発注点を下回ると自動でLINE通知が届きます</li>
-                            <li>発注依頼済みの商品は「発注依頼済み商品」セクションに表示されます</li>
+                            <li>発注依頼済みの商品は「発注依頼済み商品」セクションに表示されます（上の「発注依頼」タブでも一覧で確認できます）</li>
                             <li>商品が届いたら「発注依頼済み商品」の「入庫完了」ボタンを押してください</li>
                         </ul>
                     </div>
@@ -108,6 +109,58 @@
                 <h3>現在庫一覧 <span id="stock-count" class="badge"></span></h3>
                 <div id="stock-cards-container" class="stock-cards-container">
                     <!-- カードがJavaScriptで動的に追加されます -->
+                </div>
+            </div>
+        </div>
+
+        <!-- 発注依頼 -->
+        <!-- ダッシュボードの欄は依頼が 0 件だと消えるので、いつでも開ける場所として別に置く -->
+        <div id="orders" class="page">
+            <h2>発注依頼</h2>
+            <p class="orders-page-note">
+                発注依頼を出していて、まだ届いていない商品です。商品が届いたら「入荷完了」を押してください。
+            </p>
+
+            <div class="dashboard-section">
+                <h3>発注依頼済み商品 <span id="orders-active-count" class="badge"></span></h3>
+                <div class="table-container">
+                    <table id="orders-active-table">
+                        <thead>
+                            <tr>
+                                <th>商品名</th>
+                                <th>状況</th>
+                                <th>依頼日</th>
+                                <th>現在庫</th>
+                                <th>発注点</th>
+                                <th>依頼者</th>
+                                <th>備考</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <p id="orders-active-empty" class="orders-empty" style="display: none;">
+                    発注依頼が出ている商品はありません
+                </p>
+            </div>
+
+            <!-- 在庫が発注点以下なのに依頼が無いもの。キャンセルした後や、棚卸で減ったときに起きる -->
+            <div id="orders-missing-section" class="dashboard-section" style="display: none;">
+                <h3>発注依頼が出ていない商品 <span id="orders-missing-count" class="badge"></span></h3>
+                <p class="orders-section-note">在庫が発注点以下ですが、発注依頼が出ていません。</p>
+                <div class="table-container">
+                    <table id="orders-missing-table">
+                        <thead>
+                            <tr>
+                                <th>商品名</th>
+                                <th>現在庫</th>
+                                <th>発注点</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
                 </div>
             </div>
         </div>

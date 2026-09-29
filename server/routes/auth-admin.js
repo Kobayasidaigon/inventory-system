@@ -691,11 +691,12 @@ router.get('/admin/all-inventory', async (req, res) => {
 
             // 各商品に拠点情報と発注状況を追加
             for (const product of products) {
-                // 未処理の発注依頼があるかチェック
+                // 未入荷の発注依頼があるかチェック。発注済（ordered）も含める。
+                // 依頼中だけを見ていると、「発注済み」にした途端に「発注必要」へ戻って見える。
                 const pendingOrder = await db.get(
-                    `SELECT id, requested_quantity, requested_at
+                    `SELECT id, status, requested_quantity, requested_at
                      FROM order_requests
-                     WHERE product_id = ? AND status = 'pending'
+                     WHERE product_id = ? AND status IN ('pending', 'ordered')
                      ORDER BY requested_at DESC
                      LIMIT 1`,
                     [product.id]
@@ -707,6 +708,7 @@ router.get('/admin/all-inventory', async (req, res) => {
                     location_name: location.location_name,
                     location_code: location.location_code,
                     has_pending_order: !!pendingOrder,
+                    pending_order_status: pendingOrder ? pendingOrder.status : null,
                     pending_order_quantity: pendingOrder ? pendingOrder.requested_quantity : null
                 });
             }

@@ -481,7 +481,9 @@ async function loadAllInventoryData() {
             let orderStatusColor = '';
 
             if (product.has_pending_order) {
-                orderStatus = `発注依頼済 (${product.pending_order_quantity}個)`;
+                orderStatus = product.pending_order_status === 'ordered'
+                    ? `発注済 (${product.pending_order_quantity}個)`
+                    : `発注依頼済 (${product.pending_order_quantity}個)`;
                 orderStatusColor = '#1976d2';
             } else if (product.current_stock <= 0) {
                 orderStatus = '在庫切れ';

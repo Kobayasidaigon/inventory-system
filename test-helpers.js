@@ -214,10 +214,87 @@ async function setupLocationUser(client, { password = 'test-password-1234' } = {
     };
 }
 
+/**
+ * 利用者画面（index.html + app.js）を jsdom で開く。
+ *
+ * CI にはブラウザが無いので、実物の HTML と JS を jsdom で動かして画面の配線を確かめる。
+ * HTML 内の <script src> は jsdom が読みに行かない（外部リソースを読まない設定のため）。
+ * そこで csrf.js と app.js を順に流し込む。グラフ用の Chart.js は読まない。
+ *
+ * jsdom は作った直後はまだ読み込み中で、DOMContentLoaded はあとで自分から出す。
+ * その前にスクリプトを入れておけば、ブラウザと同じく初期化は 1 回だけ走る。
+ * ここで合図を自分でも出すと初期化が 2 回走り、一覧の読み込みが二重に飛んで
+ * 後から届いた結果で画面が上書きされる。
+ *
+ * fetch は jsdom に無いので、ログイン済みのテスト用クライアントと同じクッキーで
+ * 実サーバーへ送る。alert / confirm / prompt は記録して、confirm は常に OK を返す。
+ *
+ * @param {object} client - createClient() で作り、ログイン済みのもの
+ * @param {string} baseUrl - テスト用サーバーの URL
+ * @returns {{window: object, errors: string[], dialogs: string[], state: {promptAnswer: string|null}}}
+ */
+function openUserScreen(client, baseUrl) {
+    // jsdom は画面のテストでしか使わないので、ここで読み込む
+    const { JSDOM, VirtualConsole } = require('jsdom');
+    const errors = [];
+    const dialogs = [];
+    const state = { promptAnswer: null };
+
+    const virtualConsole = new VirtualConsole();
+    virtualConsole.on('jsdomError', err => errors.push(err.message));
+    virtualConsole.on('error', (...args) => errors.push(args.map(String).join(' ')));
+
+    const html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+    const dom = new JSDOM(html, { url: `${baseUrl}/`, runScripts: 'dangerously', virtualConsole });
+    const { window } = dom;
+
+    window.fetch = (url, options = {}) => fetch(new URL(url, baseUrl), {
+        ...options,
+        headers: { ...(options.headers || {}), Cookie: client.state.cookie }
+    });
+    window.alert = message => dialogs.push(`alert: ${message}`);
+    window.confirm = message => {
+        dialogs.push(`confirm: ${message}`);
+        return true;
+    };
+    window.prompt = message => {
+        dialogs.push(`prompt: ${message}`);
+        return state.promptAnswer;
+    };
+
+    if (window.document.readyState !== 'loading') {
+        throw new Error('jsdom の読み込みが先に終わってしまい、画面の初期化を走らせられません');
+    }
+
+    for (const file of ['csrf.js', 'app.js']) {
+        const script = window.document.createElement('script');
+        script.textContent = fs.readFileSync(path.join(__dirname, 'public', 'js', file), 'utf8');
+        window.document.body.appendChild(script);
+    }
+
+    return { window, errors, dialogs, state };
+}
+
+/** 条件が満たされるまで待つ（画面の処理は非同期で進むため） */
+async function waitFor(check, label, timeout = 5000) {
+    const start = Date.now();
+
+    while (Date.now() - start < timeout) {
+        if (check()) {
+            return;
+        }
+        await new Promise(resolve => setTimeout(resolve, 50));
+    }
+
+    throw new Error(`画面が期待した状態になりませんでした: ${label}`);
+}
+
 module.exports = {
     createResults,
     createTempDbDir,
     createClient,
     startServer,
-    setupLocationUser
+    setupLocationUser,
+    openUserScreen,
+    waitFor
 };

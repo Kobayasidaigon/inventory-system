@@ -19,13 +19,14 @@ process.env.TZ = 'Asia/Tokyo';
 
 const fs = require('fs');
 const path = require('path');
-const { JSDOM, VirtualConsole } = require('jsdom');
 const {
     createResults,
     createTempDbDir,
     createClient,
     startServer,
-    setupLocationUser
+    setupLocationUser,
+    openUserScreen,
+    waitFor
 } = require('./test-helpers');
 
 const PORT = 3995;
@@ -228,65 +229,6 @@ async function testApi(location) {
 // 2. 画面（jsdom）
 // ---------------------------------------------------------------------------
 
-/**
- * 利用者画面を jsdom で開く。
- *
- * HTML 内の <script src> は jsdom が読みに行かない（外部リソースを読まない設定のため）。
- * そこで csrf.js と app.js を順に流し込み、読み込み完了の合図を自分で出す。
- * グラフ用の Chart.js は読まない（このテストでは使わない）。
- */
-function openUserScreen() {
-    const errors = [];
-    const dialogs = [];
-    const state = { promptAnswer: null };
-
-    const virtualConsole = new VirtualConsole();
-    virtualConsole.on('jsdomError', err => errors.push(err.message));
-    virtualConsole.on('error', (...args) => errors.push(args.map(String).join(' ')));
-
-    const html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
-    const dom = new JSDOM(html, { url: `${BASE_URL}/`, runScripts: 'dangerously', virtualConsole });
-    const { window } = dom;
-
-    window.fetch = (url, options = {}) => fetch(new URL(url, BASE_URL), {
-        ...options,
-        headers: { ...(options.headers || {}), Cookie: client.state.cookie }
-    });
-    window.alert = message => dialogs.push(`alert: ${message}`);
-    window.confirm = message => {
-        dialogs.push(`confirm: ${message}`);
-        return true;
-    };
-    window.prompt = message => {
-        dialogs.push(`prompt: ${message}`);
-        return state.promptAnswer;
-    };
-
-    for (const file of ['csrf.js', 'app.js']) {
-        const script = window.document.createElement('script');
-        script.textContent = fs.readFileSync(path.join(__dirname, 'public', 'js', file), 'utf8');
-        window.document.body.appendChild(script);
-    }
-
-    window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
-
-    return { window, errors, dialogs, state };
-}
-
-/** 条件が満たされるまで待つ（画面の処理は非同期で進むため） */
-async function waitFor(check, label, timeout = 5000) {
-    const start = Date.now();
-
-    while (Date.now() - start < timeout) {
-        if (check()) {
-            return;
-        }
-        await new Promise(resolve => setTimeout(resolve, 50));
-    }
-
-    throw new Error(`画面が期待した状態になりませんでした: ${label}`);
-}
-
 /** 表の行を [商品名, 2 列目, ...] の配列で返す */
 function tableRows(window, selector) {
     return [...window.document.querySelectorAll(`${selector} tbody tr`)]
@@ -332,7 +274,7 @@ async function testScreen(location) {
     await request('PUT', `/api/orders/${(await activeOrdersOf(received))[0].id}`, { status: 'received' });
 
     const productCount = (await request('GET', '/api/products')).body.length;
-    const { window, errors, dialogs, state } = openUserScreen();
+    const { window, errors, dialogs, state } = openUserScreen(client, BASE_URL);
 
     try {
         // --- ダッシュボードのカード ---

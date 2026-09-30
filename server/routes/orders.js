@@ -3,7 +3,7 @@ const { getLocationDatabase, mainDb } = require('../db/database-admin');
 const { requireAuth } = require('../middleware/auth');
 const { attachOperatorNames } = require('../utils/operator-name');
 const { sanitizeHtml, unescapeHtml } = require('../utils/xss-protection');
-const { toCsv } = require('../utils/csv');
+const { toCsv, attachmentHeader } = require('../utils/csv');
 const {
     ACTIVE_ORDER_STATUSES,
     StockError,
@@ -137,14 +137,12 @@ router.get('/export', requireAuth, async (req, res) => {
             ])
         );
 
-        // ファイル名は日本語にする（filename* で渡す）。古いブラウザ向けに英字の名前も付ける
         const today = formatTokyoDate(new Date()).replace(/\//g, '');
-        const fileName = encodeURIComponent(`発注依頼_${today}.csv`);
 
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
         res.setHeader(
             'Content-Disposition',
-            `attachment; filename="order_requests_${today}.csv"; filename*=UTF-8''${fileName}`
+            attachmentHeader(`発注依頼_${today}.csv`, `order_requests_${today}.csv`)
         );
         res.send(csv);
     } catch (err) {

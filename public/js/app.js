@@ -1559,29 +1559,27 @@ function onHistoryCategoryChange() {
     document.getElementById('history-filter').value = '';
 }
 
-// 履歴読み込み（日付表示改善）
-async function loadHistory() {
+// 履歴の画面で選んでいる条件（カテゴリ・商品・期間）。
+// 一覧と CSV 出力で同じものを使う。別々に組み立てると、画面と CSV の中身がずれる。
+function historyFilterParams() {
+    const params = new URLSearchParams();
+    const category = document.getElementById('history-category-filter').value;
     const productId = document.getElementById('history-filter').value;
     const startDate = document.getElementById('history-start-date').value;
     const endDate = document.getElementById('history-end-date').value;
+
+    if (category) params.set('category', category);
+    if (productId) params.set('productId', productId);
+    if (startDate) params.set('startDate', startDate);
+    if (endDate) params.set('endDate', endDate);
+
+    return params;
+}
+
+// 履歴読み込み（日付表示改善）
+async function loadHistory() {
     const groupEnabled = document.getElementById('group-history-toggle').checked;
-
-    let url = '/api/inventory/history?';
-    const params = [];
-
-    if (productId) {
-        params.push(`productId=${productId}`);
-    }
-
-    if (startDate) {
-        params.push(`startDate=${startDate}`);
-    }
-
-    if (endDate) {
-        params.push(`endDate=${endDate}`);
-    }
-
-    url += params.join('&');
+    const url = `/api/inventory/history?${historyFilterParams()}`;
 
     try {
         const response = await fetch(url);
@@ -1775,16 +1773,24 @@ async function editHistory(historyId) {
 
 // CSVエクスポート
 function exportCurrentStock(sort = 'id') {
-    window.location.href = `/api/inventory/export?type=current&sort=${sort}`;
+    downloadFile(`/api/inventory/export?type=current&sort=${sort}`);
 }
 
+// 履歴確認の画面で選んでいる条件（カテゴリ・商品・期間）に合うものだけを出す
 function exportHistory() {
-    window.location.href = '/api/inventory/export?type=history';
+    const params = historyFilterParams();
+    params.set('type', 'history');
+    downloadFile(`/api/inventory/export?${params}`);
 }
 
 // 「発注依頼」タブの一覧（未入荷の依頼）を CSV で落とす
 function exportOrders() {
-    window.location.href = '/api/orders/export';
+    downloadFile('/api/orders/export');
+}
+
+// ファイルを落とす。サーバーが attachment で返すので、画面は移動しない
+function downloadFile(url) {
+    window.location.href = url;
 }
 
 // モーダル閉じる

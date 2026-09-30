@@ -23,4 +23,22 @@ function toCsv(headers, rows) {
     return '﻿' + lines.join('\n');
 }
 
-module.exports = { toCsv };
+/**
+ * ダウンロードさせるときの Content-Disposition を作る。
+ *
+ * 日本語のファイル名は filename*（RFC 5987）で渡す。encodeURIComponent は
+ * ' ( ) * をそのまま残すが、filename* では使えない文字なので、それも % にする
+ * （商品名に「(Ｍサイズ)」のような括弧はよくある）。filename* を読めない古い
+ * ブラウザ向けに、英字の名前も添える。
+ *
+ * @param {string} fileName - 付けたいファイル名（日本語可）
+ * @param {string} asciiFallback - 英数字だけのファイル名
+ */
+function attachmentHeader(fileName, asciiFallback) {
+    const encoded = encodeURIComponent(fileName)
+        .replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+
+    return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
+}
+
+module.exports = { toCsv, attachmentHeader };

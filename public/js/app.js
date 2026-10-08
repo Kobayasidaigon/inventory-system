@@ -88,8 +88,6 @@ function setupEventListeners() {
     document.getElementById('export-current-category').addEventListener('click', () => exportCurrentStock('category'));
     document.getElementById('export-history').addEventListener('click', exportHistory);
     document.getElementById('export-orders').addEventListener('click', exportOrders);
-    document.getElementById('refresh-takeouts').addEventListener('click', loadTakeouts);
-    document.getElementById('export-takeouts').addEventListener('click', exportTakeouts);
     document.getElementById('refresh-history').addEventListener('click', loadHistory);
     document.getElementById('load-chart-btn').addEventListener('click', loadStockChart);
     document.getElementById('show-feedback-btn').addEventListener('click', showFeedbackModal);
@@ -97,7 +95,6 @@ function setupEventListeners() {
     // カテゴリフィルター変更イベント
     document.getElementById('chart-category-filter').addEventListener('change', onChartCategoryChange);
     document.getElementById('history-category-filter').addEventListener('change', onHistoryCategoryChange);
-    document.getElementById('takeout-category-filter').addEventListener('change', onTakeoutCategoryChange);
 
     // 履歴グループ化トグル
     document.getElementById('group-history-toggle').addEventListener('change', loadHistory);
@@ -143,9 +140,6 @@ async function showPage(pageName) {
             loadHistoryCategoryFilter();
             loadHistoryProductFilter();
             loadHistory();
-            break;
-        case 'takeouts':
-            await showTakeoutsPage();
             break;
         case 'chart':
             await loadProducts();
@@ -1803,13 +1797,6 @@ function exportHistory() {
     downloadFile(`/api/inventory/export?${params}`);
 }
 
-// 出庫記録の画面で選んでいる条件（期間・カテゴリ・商品・出した人）に合うものだけを出す
-function exportTakeouts() {
-    const params = takeoutFilterParams();
-    params.set('type', 'takeouts');
-    downloadFile(`/api/inventory/export?${params}`);
-}
-
 // 「発注依頼」タブの一覧（未入荷の依頼）を CSV で落とす
 function exportOrders() {
     downloadFile('/api/orders/export');
@@ -2895,7 +2882,7 @@ async function loadTakerCandidates() {
     } catch (error) {
         // 候補が取れなくても、名前を打てば出庫はできる
         console.error('名前の候補の取得エラー:', error);
-        return { scheduledToday: [], recent: [], all: [], operatorName: null };
+        return { scheduledToday: [], recent: [], operatorName: null };
     }
 }
 
@@ -3038,217 +3025,6 @@ async function openTakeoutDialog(productId, quantity) {
     });
 
     modal.classList.add('show');
-}
-
-// ========== 出庫記録 ==========
-
-// 出した人の絞り込みで「（未記入）」を選んだときの値。サーバーには unrecorded=1 で渡す
-const UNRECORDED_TAKER = '__unrecorded__';
-
-// 出庫記録の明細で見せる件数（サーバーの TAKEOUT_LIST_LIMIT と同じ）
-const TAKEOUT_LIST_LIMIT = 100;
-
-async function showTakeoutsPage() {
-    await loadProducts();
-    await loadTakeoutFilters();
-    await loadTakeouts();
-}
-
-// 絞り込みの選択肢を作る。選んでいた値は残す
-async function loadTakeoutFilters() {
-    // 期間は最初に開いたときだけ直近 30 日にする
-    const start = document.getElementById('takeout-start-date');
-    const end = document.getElementById('takeout-end-date');
-    if (!start.value && !end.value) {
-        const today = new Date();
-        const from = new Date(today);
-        from.setDate(today.getDate() - 30);
-        start.value = formatDate(from);
-        end.value = formatDate(today);
-    }
-
-    const categorySelect = document.getElementById('takeout-category-filter');
-    const category = categorySelect.value;
-    const categories = [...new Set(products.map(p => p.category).filter(c => c))];
-    categorySelect.innerHTML = '<option value="">全カテゴリ</option>' +
-        categories.map(c => `<option value="${c}">${c}</option>`).join('');
-    categorySelect.value = category;
-
-    const productSelect = document.getElementById('takeout-product-filter');
-    const productId = productSelect.value;
-    loadTakeoutProductFilter(categorySelect.value);
-    productSelect.value = productId;
-
-    const takerSelect = document.getElementById('takeout-taker-filter');
-    const taker = takerSelect.value;
-    const candidates = await loadTakerCandidates();
-    takerSelect.innerHTML = '<option value="">全員</option>' +
-        candidates.all.map(name => `<option value="${escapeAttribute(name)}">${escapeAttribute(name)}</option>`).join('') +
-        `<option value="${UNRECORDED_TAKER}">（未記入）</option>`;
-    takerSelect.value = taker;
-}
-
-function loadTakeoutProductFilter(category = '') {
-    const select = document.getElementById('takeout-product-filter');
-    const list = category ? products.filter(p => p.category === category) : products;
-    select.innerHTML = '<option value="">全商品</option>' +
-        list.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
-}
-
-function onTakeoutCategoryChange() {
-    loadTakeoutProductFilter(document.getElementById('takeout-category-filter').value);
-    document.getElementById('takeout-product-filter').value = '';
-}
-
-// 出庫記録の画面で選んでいる条件。一覧と CSV 出力で同じものを使う
-function takeoutFilterParams() {
-    const params = new URLSearchParams();
-    const startDate = document.getElementById('takeout-start-date').value;
-    const endDate = document.getElementById('takeout-end-date').value;
-    const category = document.getElementById('takeout-category-filter').value;
-    const productId = document.getElementById('takeout-product-filter').value;
-    const taker = document.getElementById('takeout-taker-filter').value;
-
-    if (startDate) params.set('startDate', startDate);
-    if (endDate) params.set('endDate', endDate);
-    if (category) params.set('category', category);
-    if (productId) params.set('productId', productId);
-    if (taker === UNRECORDED_TAKER) {
-        params.set('unrecorded', '1');
-    } else if (taker) {
-        params.set('takenBy', taker);
-    }
-
-    return params;
-}
-
-async function loadTakeouts() {
-    try {
-        const response = await fetch(`/api/inventory/takeouts?${takeoutFilterParams()}`);
-        const data = await response.json();
-
-        if (!response.ok) {
-            alert(data.error || '出庫記録の取得に失敗しました');
-            return;
-        }
-
-        renderQuickRestocks(data.quickRestocks);
-        renderTakeoutPeople(data);
-        renderTakeoutRows(data);
-    } catch (error) {
-        console.error('出庫記録の取得エラー:', error);
-    }
-}
-
-// 出した人の名前。名前の無い出庫（この機能より前の記録など）は「（未記入）」
-function takerLabel(name) {
-    return name
-        ? escapeAttribute(name)
-        : '<span class="taker-unrecorded">（未記入）</span>';
-}
-
-// 日付を短く出す。今年のものは「9/29」、それより前は年を付ける
-function takeoutDate(iso) {
-    const [year] = String(iso).split('-');
-    return year === String(new Date().getFullYear()) ? shortDate(iso) : `${year}/${shortDate(iso)}`;
-}
-
-// 補充が早すぎる商品
-function renderQuickRestocks(list) {
-    const section = document.getElementById('quick-restock-section');
-    const tbody = document.querySelector('#quick-restock-table tbody');
-
-    if (list.length === 0) {
-        section.style.display = 'none';
-        tbody.innerHTML = '';
-        return;
-    }
-
-    section.style.display = 'block';
-    document.getElementById('quick-restock-count').textContent = `${list.length}件`;
-
-    tbody.innerHTML = list.map(item => {
-        const takers = item.takers.length > 0
-            ? item.takers.map(t => `${takerLabel(t.name)} ${t.quantity}個`).join('、')
-            : '出庫の記録なし';
-
-        return `
-            <tr data-product-id="${item.productId}">
-                <td>${item.productName}</td>
-                <td>${takeoutDate(item.date)}<br><small>${item.quantity}個</small></td>
-                <td class="stock-low">${item.days}日<br>
-                    <small>${takeoutDate(item.previousDate)} に ${item.previousQuantity}個 補充</small></td>
-                <td>約${item.expectedDays}日</td>
-                <td>${takers}<br>
-                    <small>${takeoutDate(item.previousDate)}〜${takeoutDate(item.date)} の出庫の記録は計 ${item.recordedOut}個</small></td>
-            </tr>
-        `;
-    }).join('');
-}
-
-// 人ごとの集計
-function renderTakeoutPeople(data) {
-    const table = document.getElementById('takeout-people-table');
-    const tbody = table.querySelector('tbody');
-    const empty = document.getElementById('takeout-empty');
-
-    document.getElementById('takeout-total').textContent = `${data.total}件・${data.totalQuantity}個`;
-
-    if (data.people.length === 0) {
-        tbody.innerHTML = '';
-        table.style.display = 'none';
-        empty.style.display = 'block';
-        return;
-    }
-
-    table.style.display = '';
-    empty.style.display = 'none';
-
-    tbody.innerHTML = data.people.map(person => {
-        const breakdown = person.products.slice(0, 5)
-            .map(p => `${p.name} ${p.quantity}`)
-            .join('、') + (person.products.length > 5 ? ` ほか${person.products.length - 5}品` : '');
-
-        return `
-            <tr>
-                <td><strong>${takerLabel(person.name)}</strong></td>
-                <td>${person.count}回</td>
-                <td><strong>${person.quantity}個</strong></td>
-                <td class="takeout-breakdown">${breakdown}</td>
-            </tr>
-        `;
-    }).join('');
-}
-
-// 明細（新しい順）
-function renderTakeoutRows(data) {
-    const tbody = document.querySelector('#takeout-rows-table tbody');
-    const note = document.getElementById('takeout-rows-note');
-
-    document.getElementById('takeout-rows-count').textContent = `${data.total}件`;
-
-    if (data.total > data.rows.length) {
-        note.textContent = `新しい順に ${TAKEOUT_LIST_LIMIT} 件を表示しています（全 ${data.total} 件）。全件は「出庫記録CSV出力」で出せます。`;
-        note.style.display = 'block';
-    } else {
-        note.style.display = 'none';
-    }
-
-    tbody.innerHTML = data.rows.map(row => {
-        const time = parseUtcTimestamp(row.created_at).toLocaleTimeString('ja-JP', {
-            timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit'
-        });
-
-        return `
-            <tr>
-                <td>${takeoutDate(row.transaction_date)} ${time}</td>
-                <td>${row.product_name}</td>
-                <td>${row.quantity}</td>
-                <td>${takerLabel(row.taken_by)}</td>
-                <td>${row.username}</td>
-            </tr>
-        `;
-    }).join('');
 }
 
 // クイック操作のフィードバック表示

@@ -4,11 +4,13 @@ const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { mainDb, getLocationDatabase } = require('../db/database-admin');
 const { backupDatabase, listBackups, restoreDatabase, BACKUP_DIR } = require('../services/backup');
-const { sanitizeHtml } = require('../utils/xss-protection');
+const { sanitizeHtml, unescapeHtml } = require('../utils/xss-protection');
 const path = require('path');
-const { buildStockChartData, parseChartDays } = require('../utils/stock');
+const { buildStockChartData, parseChartDays, respondWithStockError } = require('../utils/stock');
 const { restoreSessionFromRememberToken } = require('../middleware/auth');
 const { attachOperatorNames } = require('../utils/operator-name');
+const { attachmentHeader } = require('../utils/csv');
+const { buildTakeoutReport, buildTakeoutCsv } = require('../services/takeouts');
 const router = express.Router();
 
 /**
@@ -617,6 +619,64 @@ router.get('/admin/locations/:locationId/chart/:productId', async (req, res) => 
     } catch (err) {
         console.error('Get chart error:', err);
         res.status(500).json({ error: 'データ取得エラー' });
+    }
+});
+
+/**
+ * 管理者の確認と、URL の拠点を引くところ。出庫記録の API で使う。
+ * 通せないときはここで応答を返し、null を返す。
+ */
+async function findLocationForAdmin(req, res) {
+    if (!req.session.isAdmin) {
+        res.status(403).json({ error: '管理者権限が必要です' });
+        return null;
+    }
+
+    const location = await mainDb.get('SELECT * FROM locations WHERE id = ?', [req.params.locationId]);
+
+    if (!location) {
+        res.status(404).json({ error: '拠点が見つかりません' });
+        return null;
+    }
+
+    return location;
+}
+
+// 拠点の出庫記録（誰が何個出したか・補充が早すぎる商品）（管理者のみ）
+//
+// 人ごとの集計は利用者画面には出さない。店の共用アカウントで入る全員に
+// 「誰が多いか」が見えると、確かめる前に人を疑う空気になるため。
+router.get('/admin/locations/:locationId/takeouts', async (req, res) => {
+    try {
+        const location = await findLocationForAdmin(req, res);
+        if (!location) return;
+
+        const db = getLocationDatabase(location.location_code);
+        const report = await buildTakeoutReport(db, mainDb, req.query);
+
+        res.json({ locationName: location.location_name, ...report });
+    } catch (err) {
+        respondWithStockError(res, err, '出庫記録の取得に失敗しました');
+    }
+});
+
+// 拠点の出庫記録を CSV で出す（管理者のみ）。画面で選んでいる条件に合うものを全件
+router.get('/admin/locations/:locationId/takeouts/export', async (req, res) => {
+    try {
+        const location = await findLocationForAdmin(req, res);
+        if (!location) return;
+
+        const db = getLocationDatabase(location.location_code);
+        // 拠点ごとに出すので、どの拠点のものかをファイル名の先頭に入れる
+        const { csv, fileName } = await buildTakeoutCsv(
+            db, mainDb, req.query, `出庫記録_${unescapeHtml(location.location_name)}`
+        );
+
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', attachmentHeader(fileName, `takeouts_${location.location_code}.csv`));
+        res.send(csv);
+    } catch (err) {
+        respondWithStockError(res, err, 'エクスポートエラー');
     }
 });
 

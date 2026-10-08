@@ -19,11 +19,12 @@ const {
 const { attachOperatorNames } = require('../utils/operator-name');
 const { toCsv, attachmentHeader } = require('../utils/csv');
 const {
-    parseTakerName,
-    findQuickRestocks,
-    summarizeByTaker,
-    listTakerCandidates
-} = require('../services/takeouts');
+    HISTORY_SELECT,
+    buildHistoryFilter,
+    formatHistoryDateTime,
+    exportFileName
+} = require('../utils/history-query');
+const { parseTakerName, listTakerCandidates } = require('../services/takeouts');
 const router = express.Router();
 
 /**
@@ -232,80 +233,6 @@ router.post('/weekly', requireAuth, async (req, res) => {
     }
 });
 
-// 履歴の一覧と CSV で共通の SELECT。transaction_date は取引日（無ければ登録日）
-const HISTORY_SELECT = `
-    SELECT h.*, p.name as product_name, p.category,
-           CASE
-               WHEN h.date IS NOT NULL THEN h.date
-               ELSE DATE(h.created_at)
-           END as transaction_date
-    FROM inventory_history h
-    JOIN products p ON h.product_id = p.id
-`;
-
-/**
- * 履歴の絞り込み条件（商品・カテゴリ・期間）を SQL の条件にする。
- *
- * 画面の一覧と CSV 出力で同じものを使う。別々に書くと、画面に出ている行と
- * CSV の行が食い違う。期間は取引日（date、無ければ登録日）で見る。
- *
- * 出庫記録（takeoutsOnly）では出庫だけに絞り、出した人（takenBy）でも絞れる。
- * unrecorded=1 なら、出した人が空の出庫だけ。
- *
- * @returns {{where: string, params: Array, filter: object}}
- */
-function buildHistoryFilter(query, { takeoutsOnly = false } = {}) {
-    const conditions = [];
-    const params = [];
-    const filter = {
-        productId: query.productId ? parseProductId(query.productId) : null,
-        category: query.category ? String(query.category) : null,
-        startDate: parseTransactionDate(query.startDate),
-        endDate: parseTransactionDate(query.endDate),
-        takenBy: takeoutsOnly ? parseTakerName(query.takenBy) : null,
-        unrecorded: takeoutsOnly && query.unrecorded === '1'
-    };
-
-    if (takeoutsOnly) {
-        conditions.push("h.type = 'out'");
-    }
-
-    if (filter.takenBy) {
-        conditions.push('h.taken_by = ?');
-        params.push(filter.takenBy);
-    } else if (filter.unrecorded) {
-        conditions.push('h.taken_by IS NULL');
-    }
-
-    if (filter.productId) {
-        conditions.push('h.product_id = ?');
-        params.push(filter.productId);
-    }
-
-    if (filter.category) {
-        // カテゴリは保存時にエスケープしてある（sanitizeHtml）。画面の選択肢は
-        // 元の文字で届くので、保存されている形にそろえた値でも比べる
-        conditions.push('(p.category = ? OR p.category = ?)');
-        params.push(filter.category, sanitizeHtml(filter.category));
-    }
-
-    if (filter.startDate) {
-        conditions.push('DATE(COALESCE(h.date, h.created_at)) >= ?');
-        params.push(filter.startDate);
-    }
-
-    if (filter.endDate) {
-        conditions.push('DATE(COALESCE(h.date, h.created_at)) <= ?');
-        params.push(filter.endDate);
-    }
-
-    return {
-        where: conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '',
-        params,
-        filter
-    };
-}
-
 // 在庫履歴取得（日付フィールド対応）
 router.get('/history', requireAuth, async (req, res) => {
     const db = getLocationDatabase(req.session.locationCode);
@@ -327,68 +254,9 @@ router.get('/history', requireAuth, async (req, res) => {
     }
 });
 
-// 出庫記録の画面に出す明細の件数。CSV は条件に合うものを全件出す
-const TAKEOUT_LIST_LIMIT = 100;
-
-/**
- * 早すぎる補充が、出庫記録の画面で選んでいる商品・カテゴリ・期間に入るか。
- * 補充は人に付くものではないので、出した人の条件では絞らない。期間は補充した日で見る。
- */
-function matchesRestockFilter(restock, filter) {
-    if (filter.productId && restock.productId !== filter.productId) {
-        return false;
-    }
-    // カテゴリは保存時にエスケープしてあるので、履歴の絞り込みと同じく両方の形で比べる
-    if (filter.category &&
-        restock.category !== filter.category && restock.category !== sanitizeHtml(filter.category)) {
-        return false;
-    }
-    if (filter.startDate && restock.date < filter.startDate) {
-        return false;
-    }
-    if (filter.endDate && restock.date > filter.endDate) {
-        return false;
-    }
-    return true;
-}
-
-/**
- * 出庫記録の行（出庫だけ）を、画面と CSV で同じ条件・同じ並び（取引日の新しい順）で取る。
- */
-async function queryTakeouts(db, query) {
-    const { where, params, filter } = buildHistoryFilter(query, { takeoutsOnly: true });
-    const rows = await db.all(
-        `${HISTORY_SELECT}${where} ORDER BY transaction_date DESC, h.created_at DESC`,
-        params
-    );
-
-    await attachOperatorNames(mainDb, rows);
-
-    return { rows, filter };
-}
-
-// 出庫記録（誰が何個出したか）。人ごとの集計・明細・早すぎる補充をまとめて返す
-router.get('/takeouts', requireAuth, async (req, res) => {
-    const db = getLocationDatabase(req.session.locationCode);
-
-    try {
-        const { rows, filter } = await queryTakeouts(db, req.query);
-        const quickRestocks = (await findQuickRestocks(db))
-            .filter(restock => matchesRestockFilter(restock, filter));
-
-        res.json({
-            total: rows.length,
-            totalQuantity: rows.reduce((sum, row) => sum + (Number(row.quantity) || 0), 0),
-            people: summarizeByTaker(rows),
-            rows: rows.slice(0, TAKEOUT_LIST_LIMIT),
-            quickRestocks
-        });
-    } catch (err) {
-        respondWithStockError(res, err, '出庫記録の取得に失敗しました');
-    }
-});
-
-// 出庫のダイアログで選べる名前の候補（今日の勤務予定・最近使われた名前）
+// 出庫のダイアログで選べる名前の候補（今日の勤務予定・最近使われた名前）。
+// 誰が何個出したかの集計は、ここ（利用者画面）には出さない。管理画面だけで見る
+// （server/routes/auth-admin.js の /admin/locations/:locationId/takeouts）
 router.get('/takers', requireAuth, async (req, res) => {
     const db = getLocationDatabase(req.session.locationCode);
 
@@ -523,45 +391,6 @@ router.get('/export', requireAuth, async (req, res) => {
                 attachmentHeader(await exportFileName(db, filter, '入出庫履歴'), 'inventory_history.csv')
             );
             res.send(csv);
-        } else if (type === 'takeouts') {
-            // 出庫記録（誰が何個出したか）。「出庫記録」タブで選んでいる条件で絞り、全件出す
-            const { rows, filter } = await queryTakeouts(db, req.query);
-
-            // 補充が早すぎた区間に入る出庫には、その区間を書いておく。
-            // Excel でこの列を絞れば、早すぎた区間に誰が何個出したかが分かる
-            const quickRestocks = await findQuickRestocks(db);
-            const quickCycleOf = (row) => quickRestocks.find(r =>
-                r.productId === row.product_id &&
-                row.transaction_date >= r.previousDate && row.transaction_date <= r.date
-            );
-
-            const csv = toCsv(
-                ['ID', '日時', '商品名', 'カテゴリ', '数量', '出した人', '入力者', '備考', '補充が早い期間'],
-                rows.map(row => {
-                    const quick = quickCycleOf(row);
-                    return [
-                        row.id,
-                        formatHistoryDateTime(row),
-                        unescapeHtml(row.product_name),
-                        unescapeHtml(row.category || ''),
-                        row.quantity,
-                        row.taken_by || '（未記入）',
-                        unescapeHtml(row.username),
-                        unescapeHtml(row.note || ''),
-                        quick
-                            ? `${slashDate(quick.previousDate)}〜${slashDate(quick.date)}` +
-                              `（${quick.days}日で再補充・いつもは約${quick.expectedDays}日）`
-                            : ''
-                    ];
-                })
-            );
-
-            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-            res.setHeader(
-                'Content-Disposition',
-                attachmentHeader(await exportFileName(db, filter, '出庫記録'), 'takeouts.csv')
-            );
-            res.send(csv);
         } else {
             res.status(400).json({ error: '不明なエクスポート種別です' });
         }
@@ -569,65 +398,6 @@ router.get('/export', requireAuth, async (req, res) => {
         respondWithStockError(res, error, 'エクスポートエラー');
     }
 });
-
-/**
- * 履歴 CSV の「日時」。画面の一覧と同じく、取引日と登録した時刻（日本時間）を並べる。
- *
- * 期間の絞り込みは取引日で見ているので、日付も取引日にしておかないと、期間の外の
- * 日付に見える行が混ざる（週次入力は後日まとめて登録するため）。created_at は UTC で
- * 保存されているので、時刻は日本時間に直す。
- */
-function formatHistoryDateTime(row) {
-    const date = String(row.transaction_date || '').replace(/-/g, '/');
-    const createdAt = new Date(String(row.created_at).replace(' ', 'T') + 'Z');
-
-    if (Number.isNaN(createdAt.getTime())) {
-        return date;
-    }
-
-    const time = new Intl.DateTimeFormat('ja-JP', {
-        timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
-    }).format(createdAt);
-
-    return `${date} ${time}`;
-}
-
-/** YYYY-MM-DD を 2025/09/01 の形にする */
-function slashDate(text) {
-    return String(text || '').replace(/-/g, '/');
-}
-
-/**
- * CSV のファイル名。何を絞って出したものか、名前で分かるようにする。
- * 例: 入出庫履歴_掃除用ゴム手袋 Mサイズ_20250801-20260930.csv
- *     出庫記録_田中_全商品_20250801-20250930.csv（出した人で絞ったとき）
- */
-async function exportFileName(db, filter, prefix) {
-    let target = '全商品';
-
-    if (filter.productId) {
-        const product = await db.get('SELECT name FROM products WHERE id = ?', [filter.productId]);
-        target = product ? unescapeHtml(product.name) : `商品${filter.productId}`;
-    } else if (filter.category) {
-        target = unescapeHtml(filter.category);
-    }
-
-    const period = filter.startDate || filter.endDate
-        ? `_${(filter.startDate || '').replace(/-/g, '')}-${(filter.endDate || '').replace(/-/g, '')}`
-        : '';
-
-    // 出した人で絞ったときは、その人の名前を先頭に付ける
-    if (filter.takenBy) {
-        target = `${filter.takenBy}_${target}`;
-    } else if (filter.unrecorded) {
-        target = `未記入_${target}`;
-    }
-
-    // ファイル名に使えない文字は _ に置き換える。長すぎる商品名は切る
-    const safeTarget = target.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim().slice(0, 60);
-
-    return `${prefix}_${safeTarget}${period}.csv`;
-}
 
 // 在庫推移グラフデータ取得
 router.get('/chart', requireAuth, async (req, res) => {

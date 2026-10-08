@@ -1899,9 +1899,29 @@ table tbody tr:hover {
     font-size: 14px;
 }
 
-/* 出庫記録 */
+/* 出庫記録（管理画面） */
 .quick-restock-section {
     border-left: 4px solid #e53e3e;
+}
+
+.takeout-note {
+    margin: 0 0 12px;
+    font-size: 13px;
+    color: #666;
+}
+
+.takeout-badge {
+    margin-left: 6px;
+    padding: 2px 10px;
+    border-radius: 12px;
+    background: #eef1fd;
+    color: #4c5fd5;
+    font-size: 14px;
+    font-weight: normal;
+}
+
+#takeouts .filter-group {
+    margin-bottom: 0;
 }
 
 .quick-restock-section small,

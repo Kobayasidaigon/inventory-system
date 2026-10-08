@@ -7,8 +7,21 @@
 // あわせて、前回補充した量がいつもよりずっと早くなくなり、また補充した商品を拾う。
 // 出庫の登録漏れや持ち出しがあると、記録とは関係なく棚から物が減るので、
 // 補充の間隔が縮む。
+//
+// 集計と早すぎる補充は管理画面だけで見る（API も管理者用だけ）。店の共用アカウントで
+// 入る全員に「誰が多いか」が見えると、確かめる前に人を疑う空気になるため。
 
 const { StockError } = require('../utils/stock');
+const { sanitizeHtml, unescapeHtml } = require('../utils/xss-protection');
+const { attachOperatorNames } = require('../utils/operator-name');
+const { toCsv } = require('../utils/csv');
+const {
+    HISTORY_SELECT,
+    buildHistoryFilter,
+    toWhere,
+    formatHistoryDateTime,
+    exportFileName
+} = require('../utils/history-query');
 
 /** 出した人の名前の長さの上限。入場リンクの操作者名（by）と同じにしている。 */
 const TAKER_MAX_LENGTH = 40;
@@ -39,6 +52,9 @@ const BASELINE_CYCLES = 6;
 
 /** いつものペースを決めるのに最低限要る補充間隔の数。1 回だけでは、たまたまの長さに引きずられる。 */
 const MIN_BASELINE_CYCLES = 2;
+
+/** 出庫記録の画面に出す明細の件数。CSV は条件に合うものを全件出す */
+const TAKEOUT_LIST_LIMIT = 100;
 
 /**
  * 出した人の名前を検証して整える。
@@ -260,7 +276,6 @@ function tokyoToday() {
  *
  * - scheduledToday: ジョブカンの勤務予定で、今日この拠点に入っている人
  * - recent: 最近（90 日）出庫で使われた名前。新しく使われた順
- * - all: これまでに使われた名前すべて（出庫記録の絞り込み用）
  *
  * 毎回打つより選ぶ方が速く、同じ人の名前の書き方もそろう。
  */
@@ -273,13 +288,6 @@ async function listTakerCandidates(db, mainDb, locationId) {
         GROUP BY taken_by
         ORDER BY last_used DESC
         LIMIT 30
-    `);
-
-    const all = await db.all(`
-        SELECT DISTINCT taken_by AS name
-        FROM inventory_history
-        WHERE type = 'out' AND taken_by IS NOT NULL
-        ORDER BY taken_by
     `);
 
     let scheduledToday = [];
@@ -296,18 +304,151 @@ async function listTakerCandidates(db, mainDb, locationId) {
 
     return {
         scheduledToday: scheduledToday.map(row => row.name),
-        recent: recent.map(row => row.name),
-        all: all.map(row => row.name)
+        recent: recent.map(row => row.name)
     };
+}
+
+/**
+ * 出庫記録の行（出庫だけ）を、画面と CSV で同じ条件・同じ並び（取引日の新しい順）で取る。
+ *
+ * 履歴と同じ条件（商品・カテゴリ・期間）に加えて、出した人（takenBy）で絞れる。
+ * unrecorded=1 なら、出した人が空の出庫だけ。
+ *
+ * @returns {Promise<{rows: Array<object>, filter: object}>}
+ */
+async function queryTakeouts(db, mainDb, query) {
+    const base = buildHistoryFilter(query);
+    const takenBy = parseTakerName(query.takenBy);
+    const unrecorded = !takenBy && query.unrecorded === '1';
+
+    const conditions = ["h.type = 'out'", ...base.conditions];
+    const params = [...base.params];
+
+    if (takenBy) {
+        conditions.push('h.taken_by = ?');
+        params.push(takenBy);
+    } else if (unrecorded) {
+        conditions.push('h.taken_by IS NULL');
+    }
+
+    const rows = await db.all(
+        `${HISTORY_SELECT}${toWhere(conditions)} ORDER BY transaction_date DESC, h.created_at DESC`,
+        params
+    );
+
+    await attachOperatorNames(mainDb, rows);
+
+    return { rows, filter: { ...base.filter, takenBy, unrecorded } };
+}
+
+/**
+ * 早すぎる補充が、出庫記録で選んでいる商品・カテゴリ・期間に入るか。
+ * 補充は人に付くものではないので、出した人の条件では絞らない。期間は補充した日で見る。
+ */
+function matchesRestockFilter(restock, filter) {
+    if (filter.productId && restock.productId !== filter.productId) {
+        return false;
+    }
+    // カテゴリは保存時にエスケープしてあるので、履歴の絞り込みと同じく両方の形で比べる
+    if (filter.category &&
+        restock.category !== filter.category && restock.category !== sanitizeHtml(filter.category)) {
+        return false;
+    }
+    if (filter.startDate && restock.date < filter.startDate) {
+        return false;
+    }
+    if (filter.endDate && restock.date > filter.endDate) {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * 出庫記録の画面に出すものをまとめて作る。
+ *
+ * @returns {Promise<object>} total・totalQuantity・people（人ごとの集計）・rows（明細、
+ *          新しい順に TAKEOUT_LIST_LIMIT 件まで）・quickRestocks（早すぎる補充）・
+ *          names（これまでに使われた出した人の名前。絞り込みの選択肢用）
+ */
+async function buildTakeoutReport(db, mainDb, query) {
+    const { rows, filter } = await queryTakeouts(db, mainDb, query);
+    const quickRestocks = (await findQuickRestocks(db))
+        .filter(restock => matchesRestockFilter(restock, filter));
+
+    const names = await db.all(`
+        SELECT DISTINCT taken_by AS name
+        FROM inventory_history
+        WHERE type = 'out' AND taken_by IS NOT NULL
+        ORDER BY taken_by
+    `);
+
+    return {
+        total: rows.length,
+        totalQuantity: rows.reduce((sum, row) => sum + (Number(row.quantity) || 0), 0),
+        people: summarizeByTaker(rows),
+        rows: rows.slice(0, TAKEOUT_LIST_LIMIT),
+        quickRestocks,
+        names: names.map(row => row.name)
+    };
+}
+
+/** YYYY-MM-DD を 2025/09/01 の形にする */
+function slashDate(text) {
+    return String(text || '').replace(/-/g, '/');
+}
+
+/**
+ * 出庫記録の CSV を作る。条件に合う出庫を全件出す。
+ *
+ * 補充が早すぎた区間に入る出庫には、その区間を書いておく。
+ * Excel でこの列を絞れば、早すぎた区間に誰が何個出したかが分かる。
+ *
+ * @param {string} fileNamePrefix - ファイル名の先頭（拠点名を入れる）
+ * @returns {Promise<{csv: string, fileName: string}>}
+ */
+async function buildTakeoutCsv(db, mainDb, query, fileNamePrefix) {
+    const { rows, filter } = await queryTakeouts(db, mainDb, query);
+    const quickRestocks = await findQuickRestocks(db);
+    const quickCycleOf = (row) => quickRestocks.find(r =>
+        r.productId === row.product_id &&
+        row.transaction_date >= r.previousDate && row.transaction_date <= r.date
+    );
+
+    // 商品名・カテゴリ・備考・名前は保存時に HTML 用にエスケープしてあるので戻す
+    const csv = toCsv(
+        ['ID', '日時', '商品名', 'カテゴリ', '数量', '出した人', '入力者', '備考', '補充が早い期間'],
+        rows.map(row => {
+            const quick = quickCycleOf(row);
+            return [
+                row.id,
+                formatHistoryDateTime(row),
+                unescapeHtml(row.product_name),
+                unescapeHtml(row.category || ''),
+                row.quantity,
+                row.taken_by || '（未記入）',
+                unescapeHtml(row.username),
+                unescapeHtml(row.note || ''),
+                quick
+                    ? `${slashDate(quick.previousDate)}〜${slashDate(quick.date)}` +
+                      `（${quick.days}日で再補充・いつもは約${quick.expectedDays}日）`
+                    : ''
+            ];
+        })
+    );
+
+    return { csv, fileName: await exportFileName(db, filter, fileNamePrefix) };
 }
 
 module.exports = {
     TAKER_MAX_LENGTH,
     QUICK_OPERATION_NOTE,
     QUICK_RESTOCK_RATIO,
+    TAKEOUT_LIST_LIMIT,
     parseTakerName,
     detectQuickRestocks,
     findQuickRestocks,
     summarizeByTaker,
-    listTakerCandidates
+    listTakerCandidates,
+    buildTakeoutReport,
+    buildTakeoutCsv
 };

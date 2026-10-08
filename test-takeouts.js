@@ -3,10 +3,12 @@
  *
  * 1. 計算: 早すぎる補充の判定（データベースに触らない部分）
  * 2. 登録: 出庫に「出した人」が残る。おかしな名前は弾く
- * 3. 出庫記録 API: 人ごとの集計・絞り込み・早すぎる補充と、その間に出した人
- * 4. CSV: 条件どおりの行を全件、出した人・補充が早い期間の列、ファイル名
+ * 3. 出庫記録 API（管理者だけ）: 人ごとの集計・絞り込み・早すぎる補充と、その間に出した人。
+ *    店の利用者からは見られない
+ * 4. CSV（管理者だけ）: 条件どおりの行を全件、出した人・補充が早い期間の列、ファイル名
  * 5. 名前の候補: 今日の勤務予定・最近使った名前、入場リンクの名前
- * 6. 画面: -1 で出したダイアログから登録できる、出庫記録タブが描ける（jsdom）
+ * 6. 画面（jsdom）: 店の画面は -1 のダイアログから登録でき、出庫記録タブは無い。
+ *    管理画面の出庫記録タブが描ける
  *
  * 使い方: node test-takeouts.js
  * 一時ディレクトリに専用のデータベースを作り、サーバーを別プロセスで起動する。
@@ -23,6 +25,7 @@ const {
     startServer,
     setupLocationUser,
     openUserScreen,
+    openAdminScreen,
     waitFor
 } = require('./test-helpers');
 const { detectQuickRestocks, parseTakerName } = require('./server/services/takeouts');
@@ -36,8 +39,11 @@ const LINK_SECRET = 'test-link-secret-takeouts-0123';
 
 const { results, addResult, printSummary } = createResults();
 
+// 店の利用者（出庫を登録する側）と、管理者（出庫記録を見る側）
 const client = createClient(BASE_URL);
 const { request } = client;
+const admin = createClient(BASE_URL);
+let locationId = null;
 
 // 取引日は 2025 年にそろえる。商品登録の初期在庫は「今日」の調整履歴で入るので、
 // 2025 年で絞ればテストを流す日に左右されない
@@ -92,8 +98,26 @@ async function findHistory(key, type, date) {
     return res.body.find(row => row.type === type && row.transaction_date === date);
 }
 
+/** 管理者として、テスト店の出庫記録を取る */
 async function takeouts(query) {
-    return request('GET', `/api/inventory/takeouts?${new URLSearchParams(query)}`);
+    return admin.request('GET', `/api/auth/admin/locations/${locationId}/takeouts?${new URLSearchParams(query)}`);
+}
+
+/** 管理者用の出庫記録 CSV の URL */
+function takeoutsCsvUrl(query) {
+    return `/api/auth/admin/locations/${locationId}/takeouts/export?${new URLSearchParams(query)}`;
+}
+
+async function loginAdmin() {
+    await admin.refreshCsrfToken();
+    const res = await admin.request('POST', '/api/auth/admin/login', {
+        username: 'admin', password: 'test-password-1234'
+    });
+    await admin.refreshCsrfToken();
+
+    if (res.status !== 200) {
+        throw new Error(`管理者のログインに失敗しました: ${JSON.stringify(res.body)}`);
+    }
 }
 
 /** CSV を取ってくる。ヘッダーも見たいので fetch を直接使う */
@@ -312,6 +336,13 @@ async function testTakeoutsApi() {
     const badName = await takeouts({ takenBy: '<script>' });
     addResult('出庫記録: 名前の条件がおかしければ拒否する', badName.status === 400, `status ${badName.status}`);
 
+    addResult(
+        '出庫記録: 店舗名と、絞り込みに使う出した人の名前（条件に関係なく全員）が付く',
+        all.body.locationName === 'テスト店' &&
+            JSON.stringify(tanaka.body.names) === JSON.stringify(['佐藤', '田中 花子', '鈴木']),
+        `${all.body.locationName} / ${JSON.stringify(tanaka.body.names)}`
+    );
+
     // --- 早すぎる補充 ---
     const quick = all.body.quickRestocks;
     const paper = quick[0];
@@ -341,12 +372,37 @@ async function testTakeoutsApi() {
     );
 }
 
+/**
+ * 人ごとの集計は管理者だけが見る。店の共用アカウントで入る全員に見えると、
+ * 確かめる前に人を疑う空気になるため
+ */
+async function testAccess() {
+    const staffReport = await request('GET', `/api/auth/admin/locations/${locationId}/takeouts`);
+    const staffCsv = await fetchCsv(takeoutsCsvUrl(YEAR_2025));
+    addResult(
+        '権限: 店の利用者は出庫記録（人ごとの集計）も CSV も取れない',
+        staffReport.status === 403 && staffCsv.status === 403,
+        `一覧 ${staffReport.status} / CSV ${staffCsv.status}`
+    );
+
+    const oldReport = await request('GET', '/api/inventory/takeouts');
+    const oldCsv = await request('GET', '/api/inventory/export?type=takeouts');
+    addResult(
+        '権限: 店の画面用の出庫記録 API・CSV は無い',
+        oldReport.status === 404 && oldCsv.status === 400,
+        `一覧 ${oldReport.status} / CSV ${oldCsv.status}`
+    );
+
+    const missing = await admin.request('GET', '/api/auth/admin/locations/9999/takeouts');
+    addResult('権限: 無い店舗を指定したら 404', missing.status === 404, `status ${missing.status}`);
+}
+
 // ---------------------------------------------------------------------------
 // 4. CSV
 // ---------------------------------------------------------------------------
 
 async function testCsv() {
-    const all = await fetchCsv(`/api/inventory/export?${new URLSearchParams({ type: 'takeouts', ...YEAR_2025 })}`);
+    const all = await fetchCsv(takeoutsCsvUrl(YEAR_2025), admin.state.cookie);
     addResult(
         'CSV: 見出し',
         all.header === 'ID,日時,商品名,カテゴリ,数量,出した人,入力者,備考,補充が早い期間',
@@ -382,18 +438,18 @@ async function testCsv() {
     );
 
     addResult(
-        'CSV: ファイル名で何を絞ったか分かる',
-        all.fileName === '出庫記録_全商品_20250101-20251231.csv',
+        'CSV: ファイル名で店舗と、何を絞ったかが分かる',
+        all.fileName === '出庫記録_テスト店_全商品_20250101-20251231.csv',
         all.fileName
     );
 
-    const tanaka = await fetchCsv(`/api/inventory/export?${new URLSearchParams({
-        type: 'takeouts', ...YEAR_2025, takenBy: '田中 花子', productId: String(products.paper)
-    })}`);
+    const tanaka = await fetchCsv(takeoutsCsvUrl({
+        ...YEAR_2025, takenBy: '田中 花子', productId: String(products.paper)
+    }), admin.state.cookie);
     addResult(
         'CSV: 出した人・商品で絞ると、その行だけ。ファイル名にも出る',
         tanaka.lines.length === 3 && tanaka.lines.every(line => cells(line)[5] === '田中 花子') &&
-            tanaka.fileName === '出庫記録_田中 花子_トイレットペーパー_20250101-20251231.csv',
+            tanaka.fileName === '出庫記録_テスト店_田中 花子_トイレットペーパー_20250101-20251231.csv',
         `${tanaka.lines.length} 行 / ${tanaka.fileName}`
     );
 
@@ -431,10 +487,9 @@ async function testCandidates() {
         JSON.stringify(res.body.scheduledToday)
     );
     addResult(
-        '候補: 最近出庫で使われた名前と、これまでの名前すべて',
-        ['鈴木', '田中 花子', '佐藤'].every(name => res.body.recent.includes(name)) &&
-            JSON.stringify(res.body.all) === JSON.stringify(['佐藤', '田中 花子', '鈴木']),
-        `recent ${JSON.stringify(res.body.recent)} / all ${JSON.stringify(res.body.all)}`
+        '候補: 最近出庫で使われた名前',
+        ['鈴木', '田中 花子', '佐藤'].every(name => res.body.recent.includes(name)),
+        JSON.stringify(res.body.recent)
     );
     addResult(
         '候補: 普通のログインでは、最初から入れる名前は無い',
@@ -485,7 +540,6 @@ async function testEntryLinkName(locationCode) {
 async function testScreen() {
     const { window, errors } = openUserScreen(client, BASE_URL);
     const doc = window.document;
-    let downloaded = null;
 
     const paperCard = () => [...doc.querySelectorAll('.stock-card')]
         .find(card => card.querySelector('.stock-card-name').textContent === 'トイレットペーパー');
@@ -550,74 +604,11 @@ async function testScreen() {
         );
         window.closeModal();
 
-        // --- 出庫記録タブ ---
-        doc.querySelector('.nav-btn[data-page="takeouts"]').click();
-        await waitFor(
-            () => [...doc.querySelectorAll('#takeout-taker-filter option')].some(o => o.value === '田中 花子'),
-            '出庫記録タブが開く'
-        );
+        // 人ごとの集計は管理画面だけ。店の画面には出庫記録のタブが無い
         addResult(
-            '画面: 出庫記録タブは直近 30 日で開き、出した人を選べる',
-            doc.getElementById('takeout-start-date').value !== '' && doc.getElementById('takeout-end-date').value !== '' &&
-                [...doc.querySelectorAll('#takeout-taker-filter option')].some(o => o.textContent === '（未記入）'),
-            `${doc.getElementById('takeout-start-date').value}〜${doc.getElementById('takeout-end-date').value}`
-        );
-
-        // 開いた直後の読み込み（直近 30 日）が終わるのを待つ。読み込み中に条件を変えると、
-        // あとから届いた直近 30 日の結果で上書きされることがある
-        const total = doc.getElementById('takeout-total');
-        await waitFor(() => total.textContent !== '', '最初の集計が描かれる');
-
-        doc.getElementById('takeout-start-date').value = '2025-01-01';
-        doc.getElementById('takeout-end-date').value = '2025-12-31';
-        total.textContent = '';
-        doc.getElementById('refresh-takeouts').click();
-        await waitFor(() => total.textContent.startsWith('108件'), '2025 年の集計が描かれる');
-
-        const quickRows = doc.querySelectorAll('#quick-restock-table tbody tr');
-        addResult(
-            '画面: 補充が早すぎる商品と、その間に出した人が出る',
-            doc.getElementById('quick-restock-section').style.display === 'block' && quickRows.length === 1 &&
-                quickRows[0].textContent.includes('トイレットペーパー') &&
-                quickRows[0].textContent.includes('田中 花子 12個') && quickRows[0].textContent.includes('約14日'),
-            quickRows[0] && quickRows[0].textContent.replace(/\s+/g, ' ').trim()
-        );
-
-        const peopleRows = [...doc.querySelectorAll('#takeout-people-table tbody tr')]
-            .map(tr => tr.textContent.replace(/\s+/g, ' ').trim());
-        addResult(
-            '画面: 人ごとの集計（未記入も 1 行）',
-            peopleRows[0].startsWith('鈴木') && peopleRows.some(r => r.startsWith('（未記入）')),
-            peopleRows.join(' / ')
-        );
-        addResult(
-            '画面: 明細が 100 件を超えるときは、その旨を出す',
-            doc.querySelectorAll('#takeout-rows-table tbody tr').length === 100 &&
-                doc.getElementById('takeout-rows-note').style.display === 'block',
-            doc.getElementById('takeout-rows-note').textContent
-        );
-
-        // CSV に画面の条件がそのまま渡る
-        window.downloadFile = url => { downloaded = url; };
-        doc.getElementById('takeout-taker-filter').value = '田中 花子';
-        doc.getElementById('export-takeouts').click();
-        const params = new URL(downloaded, BASE_URL).searchParams;
-        addResult(
-            '画面: 「出庫記録CSV出力」に画面の条件（期間・出した人）が渡る',
-            params.get('type') === 'takeouts' && params.get('startDate') === '2025-01-01' &&
-                params.get('endDate') === '2025-12-31' && params.get('takenBy') === '田中 花子',
-            downloaded
-        );
-
-        doc.getElementById('takeout-taker-filter').value = '__unrecorded__';
-        doc.getElementById('export-takeouts').click();
-        const unrecordedParams = new URL(downloaded, BASE_URL).searchParams;
-        const unrecordedCsv = await fetchCsv(downloaded);
-        addResult(
-            '画面: 「（未記入）」を選ぶと、出した人が無い出庫だけの CSV になる',
-            unrecordedParams.get('unrecorded') === '1' && !unrecordedParams.has('takenBy') &&
-                unrecordedCsv.lines.length === 1,
-            `${downloaded} / ${unrecordedCsv.lines.length} 行`
+            '画面: 店の画面には出庫記録（人ごとの集計）のタブが無い',
+            !doc.querySelector('.nav-btn[data-page="takeouts"]') && !doc.getElementById('takeout-people-table'),
+            'タブなし'
         );
 
         // --- 履歴確認にも出した人が出る ---
@@ -632,6 +623,100 @@ async function testScreen() {
 
         addResult(
             '画面: 操作中にエラーが出ていない',
+            errors.length === 0,
+            errors.length === 0 ? 'エラーなし' : errors.join(' / ')
+        );
+    } finally {
+        window.close();
+    }
+}
+
+async function testAdminScreen() {
+    const { window, errors } = openAdminScreen(admin, BASE_URL);
+    const doc = window.document;
+    let downloaded = null;
+
+    try {
+        await waitFor(() => doc.getElementById('admin-name').textContent !== '', '管理画面が開く');
+
+        doc.querySelector('.admin-tab[data-tab="takeouts"]').click();
+        // 開いた直後の読み込み（直近 30 日）が終わるのを待つ。読み込み中に条件を変えると、
+        // あとから届いた直近 30 日の結果で上書きされることがある
+        const total = doc.getElementById('takeout-total');
+        await waitFor(() => total.textContent !== '', '出庫記録タブが開く');
+
+        addResult(
+            '管理画面: 出庫記録タブは店舗を選んだ状態・直近 30 日で開く',
+            doc.getElementById('takeout-location').value === String(locationId) &&
+                doc.getElementById('takeout-start-date').value !== '' && doc.getElementById('takeout-end-date').value !== '',
+            `店舗 ${doc.getElementById('takeout-location').value} / ` +
+                `${doc.getElementById('takeout-start-date').value}〜${doc.getElementById('takeout-end-date').value}`
+        );
+
+        doc.getElementById('takeout-start-date').value = '2025-01-01';
+        doc.getElementById('takeout-end-date').value = '2025-12-31';
+        total.textContent = '';
+        doc.getElementById('refresh-takeouts').click();
+        await waitFor(() => total.textContent.startsWith('108件'), '2025 年の集計が描かれる');
+
+        const takerOptions = [...doc.querySelectorAll('#takeout-taker-filter option')].map(o => o.textContent);
+        addResult(
+            '管理画面: 出した人の絞り込みに、これまでの名前と「（未記入）」が並ぶ',
+            ['佐藤', '田中 花子', '鈴木', '遅番 二郎', '（未記入）'].every(name => takerOptions.includes(name)),
+            takerOptions.join(' , ')
+        );
+
+        const quickRows = doc.querySelectorAll('#quick-restock-table tbody tr');
+        addResult(
+            '管理画面: 補充が早すぎる商品と、その間に出した人が出る',
+            doc.getElementById('quick-restock-section').style.display === 'block' && quickRows.length === 1 &&
+                quickRows[0].textContent.includes('トイレットペーパー') &&
+                quickRows[0].textContent.includes('田中 花子 12個') && quickRows[0].textContent.includes('約14日'),
+            quickRows[0] && quickRows[0].textContent.replace(/\s+/g, ' ').trim()
+        );
+
+        const peopleRows = [...doc.querySelectorAll('#takeout-people-table tbody tr')]
+            .map(tr => tr.textContent.replace(/\s+/g, ' ').trim());
+        addResult(
+            '管理画面: 人ごとの集計（未記入も 1 行）',
+            peopleRows[0].startsWith('鈴木') && peopleRows.some(r => r.startsWith('（未記入）')),
+            peopleRows.join(' / ')
+        );
+        addResult(
+            '管理画面: 明細が 100 件を超えるときは、その旨を出す',
+            doc.querySelectorAll('#takeout-rows-table tbody tr').length === 100 &&
+                doc.getElementById('takeout-rows-note').style.display === 'block',
+            doc.getElementById('takeout-rows-note').textContent
+        );
+
+        // CSV に画面の店舗と条件がそのまま渡る
+        window.downloadFile = url => { downloaded = url; };
+        doc.getElementById('takeout-taker-filter').value = '田中 花子';
+        doc.getElementById('export-takeouts').click();
+        const exported = new URL(downloaded, BASE_URL);
+        const tanakaCsv = await fetchCsv(downloaded, admin.state.cookie);
+        addResult(
+            '管理画面: 「出庫記録CSV出力」に店舗と画面の条件（期間・出した人）が渡る',
+            exported.pathname === `/api/auth/admin/locations/${locationId}/takeouts/export` &&
+                exported.searchParams.get('startDate') === '2025-01-01' &&
+                exported.searchParams.get('endDate') === '2025-12-31' &&
+                exported.searchParams.get('takenBy') === '田中 花子' && tanakaCsv.lines.length === 3,
+            `${downloaded} / ${tanakaCsv.lines.length} 行`
+        );
+
+        doc.getElementById('takeout-taker-filter').value = '__unrecorded__';
+        doc.getElementById('export-takeouts').click();
+        const unrecordedParams = new URL(downloaded, BASE_URL).searchParams;
+        const unrecordedCsv = await fetchCsv(downloaded, admin.state.cookie);
+        addResult(
+            '管理画面: 「（未記入）」を選ぶと、出した人が無い出庫だけの CSV になる',
+            unrecordedParams.get('unrecorded') === '1' && !unrecordedParams.has('takenBy') &&
+                unrecordedCsv.lines.length === 1,
+            `${downloaded} / ${unrecordedCsv.lines.length} 行`
+        );
+
+        addResult(
+            '管理画面: 操作中にエラーが出ていない',
             errors.length === 0,
             errors.length === 0 ? 'エラーなし' : errors.join(' / ')
         );
@@ -657,7 +742,9 @@ async function testScreen() {
 
     try {
         await waitUntilReady(BASE_URL);
-        const { locationCode } = await setupLocationUser(client);
+        const location = await setupLocationUser(client);
+        locationId = location.locationId;
+        await loginAdmin();
 
         await createProduct('paper', 'トイレットペーパー', '衛生用品', 500);
         await createProduct('glove', 'ニトリルグローブ(Ｍサイズ)', '衛生用品', 500);
@@ -666,11 +753,13 @@ async function testScreen() {
         await testRegister();
         await prepareRestocks();
         await testTakeoutsApi();
+        await testAccess();
         await testCsv();
         await testCandidates();
         await testScreen();
+        await testAdminScreen();
         // 入場リンクの出庫は最後に入れる（件数を数えるテストに混ざらないように）
-        await testEntryLinkName(locationCode);
+        await testEntryLinkName(location.locationCode);
     } catch (err) {
         results.failed++;
         console.error('\n❌ テストの実行中にエラーが発生しました:', err.stack || err.message);

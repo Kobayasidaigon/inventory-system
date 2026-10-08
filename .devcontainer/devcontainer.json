@@ -1,0 +1,23 @@
+// GitHub Codespaces（ブラウザだけで動く作業環境）で、デモをすぐ試すための設定。
+//
+// 開くと依存を入れて npm run demo を起動し、画面を別のタブで開く。
+// 手元のパソコンに Node などを入れなくても、出庫記録などの画面を確かめられる。
+{
+    "name": "在庫管理システム（デモ）",
+    // CI（.github/workflows/test.yml）と同じ Node 22
+    "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+    // テストはブラウザを使わないので、puppeteer の Chromium は落とさない（CI と同じ）
+    "containerEnv": {
+        "PUPPETEER_SKIP_DOWNLOAD": "true"
+    },
+    "postCreateCommand": "npm ci",
+    // 開くたびにデモを起動する。データは demo-db/ に残る（作り直しは npm run demo -- --reset）
+    "postAttachCommand": "npm run demo",
+    "forwardPorts": [3000],
+    "portsAttributes": {
+        "3000": {
+            "label": "在庫管理システム（デモ）",
+            "onAutoForward": "openBrowser"
+        }
+    }
+}

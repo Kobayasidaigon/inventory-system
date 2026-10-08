@@ -263,6 +263,8 @@ const locationTablesSql = [
     // user_id のアカウントは店舗で共用することがあり（清掃管理表からの入場）、
     // それだけでは誰が入力したのか分からないため、名前を行にも残す。
     // 普通のログインで入ったときは空のままで、表示にはアカウント名を使う。
+    // taken_by は出庫のときの「出した人」。入力した人（operator_name）とは別に残す。
+    // 代わりに登録することもあるので、誰が入力したかと誰が出したかを分けて持つ。
     `CREATE TABLE IF NOT EXISTS inventory_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         product_id INTEGER NOT NULL,
@@ -272,6 +274,7 @@ const locationTablesSql = [
         note TEXT,
         user_id INTEGER NOT NULL,
         operator_name TEXT,
+        taken_by TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (product_id) REFERENCES products(id)
     )`,
@@ -392,7 +395,9 @@ const locationColumnMigrations = [
     // 列を足す前の記録は空のままで、これまで通りアカウント名で表示される。
     { table: 'inventory_history', column: 'operator_name', definition: 'TEXT' },
     { table: 'order_requests', column: 'operator_name', definition: 'TEXT' },
-    { table: 'inventory_counts', column: 'operator_name', definition: 'TEXT' }
+    { table: 'inventory_counts', column: 'operator_name', definition: 'TEXT' },
+    // 出庫で「出した人」。列を足す前の出庫は空のままで、出庫記録では「未記入」になる。
+    { table: 'inventory_history', column: 'taken_by', definition: 'TEXT' }
 ];
 
 async function migrateLocationTables(db) {

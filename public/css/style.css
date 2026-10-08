@@ -1857,3 +1857,144 @@ table tbody tr:hover {
         max-width: 100%;
     }
 }
+/* 出庫のダイアログ（誰が何個出したか） */
+.takeout-dialog-product {
+    margin: 4px 0 16px;
+    font-weight: bold;
+    color: #333;
+}
+
+.taker-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+/* 共用のタブレットで押しやすいよう、指で押せる大きさにする */
+.taker-chip {
+    min-height: 40px;
+    padding: 8px 14px;
+    border: 1px solid #c3cbe8;
+    border-radius: 20px;
+    background: #f0f3ff;
+    color: #3c4a8a;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.taker-chip.selected {
+    background: #667eea;
+    border-color: #667eea;
+    color: white;
+    font-weight: bold;
+}
+
+.takeout-error {
+    margin: 0 0 12px;
+    padding: 8px 12px;
+    border-radius: 5px;
+    background: #fff5f5;
+    color: #c53030;
+    font-size: 14px;
+}
+
+/* 出庫記録 */
+.quick-restock-section {
+    border-left: 4px solid #e53e3e;
+}
+
+.quick-restock-section small,
+#takeout-rows-table small,
+.history-input-by {
+    color: #718096;
+    font-size: 12px;
+}
+
+.taker-unrecorded {
+    color: #a0aec0;
+}
+
+.takeout-breakdown {
+    font-size: 13px;
+    color: #555;
+}
+
+/* スマホでは表が 1 行ずつの横並び（flex）になり、列の幅が決め打ちになる。
+   出庫記録の表は 2 行で見せるセルや長い名前があるので、列ごとに幅を決めて折り返す */
+@media (max-width: 768px) {
+    #quick-restock-table td,
+    #takeout-people-table td:last-child,
+    #takeout-rows-table td:nth-child(2) {
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: center;
+        white-space: normal;
+    }
+
+    #quick-restock-table th:nth-child(2),
+    #quick-restock-table td:nth-child(2) {
+        min-width: 80px;
+        max-width: 80px;
+        flex: 0 0 80px;
+    }
+
+    #quick-restock-table th:nth-child(3),
+    #quick-restock-table td:nth-child(3) {
+        min-width: 130px;
+        max-width: 130px;
+        flex: 0 0 130px;
+    }
+
+    #quick-restock-table th:nth-child(4),
+    #quick-restock-table td:nth-child(4) {
+        min-width: 80px;
+        max-width: 80px;
+        flex: 0 0 80px;
+    }
+
+    #quick-restock-table th:last-child,
+    #quick-restock-table td:last-child,
+    #takeout-people-table th:last-child,
+    #takeout-people-table td:last-child {
+        min-width: 220px;
+        max-width: 220px;
+        flex: 0 0 220px;
+        justify-content: flex-start;
+    }
+
+    #quick-restock-table th:last-child,
+    #takeout-people-table th:last-child,
+    #takeout-rows-table th:last-child,
+    #takeout-rows-table td:last-child {
+        flex-direction: row;
+        justify-content: flex-start;
+    }
+
+    #takeout-people-table th:nth-child(2),
+    #takeout-people-table td:nth-child(2),
+    #takeout-people-table th:nth-child(3),
+    #takeout-people-table td:nth-child(3),
+    #takeout-rows-table th:nth-child(3),
+    #takeout-rows-table td:nth-child(3) {
+        min-width: 64px;
+        max-width: 64px;
+        flex: 0 0 64px;
+    }
+
+    #takeout-rows-table th:nth-child(2),
+    #takeout-rows-table td:nth-child(2) {
+        min-width: 140px;
+        max-width: 140px;
+        flex: 0 0 140px;
+    }
+
+    #takeout-rows-table th:nth-child(4),
+    #takeout-rows-table td:nth-child(4),
+    #takeout-rows-table th:last-child,
+    #takeout-rows-table td:last-child {
+        min-width: 100px;
+        max-width: 100px;
+        flex: 0 0 100px;
+    }
+}

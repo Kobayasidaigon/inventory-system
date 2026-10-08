@@ -203,6 +203,7 @@ async function withTransaction(db, fn) {
  * @param {number} params.userId - 操作者のアカウント
  * @param {string|null} [params.operatorName] - 操作した人の名前。共用アカウントで
  *        入っているときに、誰が入力したかを行にも残すためのもの。省略すれば付かない
+ * @param {string|null} [params.takenBy] - 出庫で「出した人」（検証済みの名前）。出庫のときだけ残す
  * @param {boolean} [params.allowNegative] - 在庫がマイナスになるのを許すか
  * @returns {Promise<object>} 更新後の商品行
  */
@@ -215,6 +216,7 @@ async function applyStockChange(db, params) {
         note = '',
         userId,
         operatorName = null,
+        takenBy = null,
         allowNegative = false
     } = params;
 
@@ -234,9 +236,9 @@ async function applyStockChange(db, params) {
     }
 
     await db.run(
-        `INSERT INTO inventory_history (product_id, type, quantity, date, note, user_id, operator_name)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [productId, type, quantity, date, note, userId, operatorName || null]
+        `INSERT INTO inventory_history (product_id, type, quantity, date, note, user_id, operator_name, taken_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [productId, type, quantity, date, note, userId, operatorName || null, type === 'out' ? takenBy || null : null]
     );
 
     await db.run('UPDATE products SET current_stock = ? WHERE id = ?', [nextStock, productId]);

@@ -11,3 +11,6 @@ check-*.sh
 
 # 調査用に残す HTML。中身は伏せてあるが、リポジトリには入れない
 debug/
+
+# npm run demo で作る、手元確認用のデータベース
+demo-db/

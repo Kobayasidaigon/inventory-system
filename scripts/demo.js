@@ -44,7 +44,8 @@ const STORE = {
     locationCode: '1',
     locationName: 'デモ店',
     userId: 'demo',
-    userName: '店の端末',
+    // 店のユーザーは、その店の出す人の名簿に自動で載る（「ユーザー」の印）
+    userName: '店長 太郎',
     password: 'demo-store'
 };
 
@@ -158,8 +159,8 @@ async function seed() {
     const db = getLocationDatabase(STORE.locationCode);
     const productIds = {};
 
-    // 出す人の名簿のうち、手で足す人（出庫のダイアログでは、この人たちとシフトの人から選ぶ）。
-    // 早番・遅番・中番はシフトから自動で名簿に載るので、ここでは足さない
+    // 出す人の名簿のうち、手で足す人（出庫のダイアログでは、この人たちとシフト・ユーザーの人から選ぶ）。
+    // 早番・遅番・中番はシフトから、店長 太郎は店のユーザーから自動で載るので、ここでは足さない
     for (const name of ['田中 花子', '佐藤 健', '鈴木 一郎']) {
         await db.run('INSERT INTO taker_roster (name) VALUES (?)', [name]);
     }

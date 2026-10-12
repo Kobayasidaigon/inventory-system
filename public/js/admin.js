@@ -1,5 +1,8 @@
 let selectedLocationId = null;
 
+// 店を選んでいないときの案内。admin.html の初めの表示と同じ文にする
+const LOCATION_HINT = '※ 上の拠点リストで店名を押すと、その店のユーザー（編集・削除）と出す人の名簿が出ます';
+
 // 初期化
 document.addEventListener('DOMContentLoaded', async () => {
     await checkAdminAuth();
@@ -129,9 +132,11 @@ async function selectLocation(locationId, locationName, locationCode) {
     document.getElementById('selected-location-info').textContent =
         `選択中: ${locationName} (${locationCode})`;
 
-    // ユーザーフォームとテーブルを表示
+    // ユーザーフォームとテーブルを表示。表は display を空に戻すだけにする。
+    // 'table' と書くと、スマホ用の表示（横に動かせる表）が効かなくなり、
+    // 削除ボタンが画面の右の外に押し出される
     document.getElementById('user-form').style.display = 'flex';
-    document.getElementById('users-table').style.display = 'table';
+    document.getElementById('users-table').style.display = '';
 
     // ユーザー一覧と、出す人の名簿を読み込み
     await loadUsers(locationId);
@@ -254,6 +259,7 @@ document.getElementById('add-user-btn').addEventListener('click', async () => {
             document.getElementById('user-name').value = '';
             document.getElementById('user-password').value = '';
             await loadUsers(selectedLocationId);
+            await loadRoster();
         } else {
             alert(data.error || 'ユーザーの追加に失敗しました');
         }
@@ -311,9 +317,10 @@ async function deleteLocation(locationId, locationName) {
             // 削除した拠点が選択中の場合、選択をクリア
             if (selectedLocationId === locationId) {
                 selectedLocationId = null;
-                document.getElementById('selected-location-info').textContent = '※ 左側の拠点リストから拠点を選択してください';
+                document.getElementById('selected-location-info').textContent = LOCATION_HINT;
                 document.getElementById('user-form').style.display = 'none';
                 document.getElementById('users-table').style.display = 'none';
+                document.getElementById('roster-section').style.display = 'none';
             }
 
             await loadLocations();
@@ -405,6 +412,7 @@ async function editUser(userId) {
             alert('ユーザーを更新しました');
             closeEditUserModal();
             await loadUsers(selectedLocationId);
+            await loadRoster();
         } else {
             alert(data.error || 'ユーザーの更新に失敗しました');
         }
@@ -430,6 +438,7 @@ async function deleteUser(userId, userIdName) {
         if (response.ok) {
             alert('ユーザーを削除しました');
             await loadUsers(selectedLocationId);
+            await loadRoster();
         } else {
             alert(data.error || 'ユーザーの削除に失敗しました');
         }
@@ -1426,8 +1435,9 @@ async function loadRoster(locationId = selectedLocationId) {
     }
 }
 
-// 名簿の名前。手で足した人は × で外せる。シフトから載っている人は「シフト」と出し、
-// 外せない（シフトが無くなれば自然に外れる）。名前は textContent で入れる
+// 名簿の名前。手で足した人は × で外せる。シフトやユーザー管理から載っている人は
+// 「シフト」「ユーザー」と出し、外せない（シフトが無くなる・ユーザーを削除すると外れる）。
+// 名前は textContent で入れる
 function renderRoster(names) {
     const list = document.getElementById('roster-list');
     list.innerHTML = '';
@@ -1451,11 +1461,16 @@ function renderRoster(names) {
         label.textContent = name;
         item.appendChild(label);
 
-        if (source === 'shift') {
+        if (source === 'shift' || source === 'user') {
             const tag = document.createElement('small');
             tag.className = 'roster-source';
-            tag.textContent = 'シフト';
-            item.title = 'ジョブカンのシフトから自動で載っています';
+            if (source === 'shift') {
+                tag.textContent = 'シフト';
+                item.title = 'ジョブカンのシフトから自動で載っています';
+            } else {
+                tag.textContent = 'ユーザー';
+                item.title = '上の「ユーザー管理」に登録してあるので自動で載っています。外すときはユーザーを削除してください';
+            }
             item.appendChild(tag);
         } else {
             // 名簿を作ったときに記録から入った人。2 人組が紛れていないか見直してもらうため印を付ける

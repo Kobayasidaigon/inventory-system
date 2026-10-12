@@ -369,10 +369,11 @@ function normalizeName(value) {
 // 打てると「田中・佐藤」のように 2 人をまとめた名前や、同じ人の書き方違いが入り、
 // 誰が何個出したかが人ごとに集計できなくなるため。
 //
-// 名簿は 2 つを合わせたもの。
+// 名簿は 3 つを合わせたもの。
 //   - シフト: ジョブカンの勤務予定で、この店に入っている（入っていた）人。自動で載る。
 //     シフト表は 1 行 1 人なので、2 人をまとめた名前は入らない
-//   - 手で足した人: ジョブカンに載らない人のために、管理画面で管理者が足す
+//   - ユーザー: 管理画面の「ユーザー管理」で、この店に登録してある人。自動で載る
+//   - 手で足した人: どちらにも載らない人のために、管理画面で管理者が足す
 // ---------------------------------------------------------------------------
 
 /** シフトから名簿に載せる範囲。この間にこの店の勤務予定がある人（辞めた人は自然に外れる） */
@@ -396,18 +397,56 @@ async function listShiftMembers(mainDb, locationId) {
 }
 
 /**
+ * この店のユーザー（管理画面の「ユーザー管理」）の名前。名簿に自動で載る（名前順）。
+ * 2 人をまとめたように見える名前（「田中・佐藤」など）は載せない。
+ */
+async function listStoreUsers(mainDb, locationId) {
+    if (!locationId) {
+        return [];
+    }
+
+    const rows = await mainDb.all(
+        'SELECT user_name FROM users WHERE location_id = ? AND is_admin = 0',
+        [locationId]
+    );
+
+    // ユーザー名は登録のときにエスケープして保存しているので、元の文字に戻してからそろえる
+    const names = rows
+        .map(row => normalizeName(unescapeHtml(row.user_name)))
+        .filter(name => name && !MULTI_PERSON_NAME.test(name));
+
+    return [...new Set(names)].sort();
+}
+
+/**
+ * 名簿に自動で載る人（シフトとユーザー）。管理画面では外せない。
+ * 両方にいる人はシフトとして出す。
+ * @returns {Promise<Array<{name: string, source: 'shift'|'user'}>>}
+ */
+async function listAutoMembers(mainDb, locationId) {
+    const shift = await listShiftMembers(mainDb, locationId);
+    const shiftNames = new Set(shift);
+    const users = (await listStoreUsers(mainDb, locationId)).filter(name => !shiftNames.has(name));
+
+    return [
+        ...shift.map(name => ({ name, source: 'shift' })),
+        ...users.map(name => ({ name, source: 'user' }))
+    ];
+}
+
+/**
  * 名簿の全員を名前順に返す。
- * @returns {Promise<Array<{id: number|null, name: string, source: 'shift'|'manual'|'history'}>>}
+ * @returns {Promise<Array<{id: number|null, name: string, source: 'shift'|'user'|'manual'|'history'}>>}
  *          source の history は、名簿を作ったときに記録から入れた人（manual と同じく外せる）。
- *          id は名簿のテーブルにいる人だけ（外すときに使う）。シフトの人は null
+ *          id は名簿のテーブルにいる人だけ（外すときに使う）。シフト・ユーザーの人は null
  */
 async function listRoster(db, mainDb, locationId) {
     const manual = await db.all('SELECT id, name, source FROM taker_roster');
-    const shift = await listShiftMembers(mainDb, locationId);
+    const auto = await listAutoMembers(mainDb, locationId);
     const manualNames = new Set(manual.map(row => row.name));
 
     return [
-        ...shift.filter(name => !manualNames.has(name)).map(name => ({ id: null, name, source: 'shift' })),
+        ...auto.filter(row => !manualNames.has(row.name)).map(row => ({ id: null, ...row })),
         ...manual.map(row => ({ id: row.id, name: row.name, source: row.source === 'history' ? 'history' : 'manual' }))
     ].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
@@ -427,8 +466,10 @@ async function addToRoster(db, mainDb, locationId, value) {
     if (existing) {
         throw new StockError(`「${name}」はもう名簿にあります`, 409);
     }
-    if ((await listShiftMembers(mainDb, locationId)).includes(name)) {
-        throw new StockError(`「${name}」はシフトから名簿に載っています`, 409);
+    const auto = (await listAutoMembers(mainDb, locationId)).find(row => row.name === name);
+    if (auto) {
+        const from = auto.source === 'shift' ? 'シフト' : '店のユーザー';
+        throw new StockError(`「${name}」は${from}から名簿に載っています`, 409);
     }
 
     const result = await db.run('INSERT INTO taker_roster (name) VALUES (?)', [name]);
@@ -438,6 +479,7 @@ async function addToRoster(db, mainDb, locationId, value) {
 /**
  * 手で足した人を名簿から外す。これまでの出庫の記録に残った名前は、そのまま残る。
  * シフトから載っている人はここでは外せない（シフトが無くなれば自然に外れる）。
+ * ユーザーから載っている人も外せない（ユーザー管理でそのユーザーを削除すると外れる）。
  */
 async function removeFromRoster(db, id) {
     const result = await db.run('DELETE FROM taker_roster WHERE id = ?', [id]);
@@ -460,7 +502,7 @@ async function requireRosterName(db, mainDb, locationId, value) {
     }
 
     const manual = await db.get('SELECT name FROM taker_roster WHERE name = ?', [name]);
-    if (manual || (await listShiftMembers(mainDb, locationId)).includes(name)) {
+    if (manual || (await listAutoMembers(mainDb, locationId)).some(row => row.name === name)) {
         return name;
     }
 
@@ -500,7 +542,7 @@ async function listTakerCandidates(db, mainDb, locationId) {
 }
 
 /**
- * 名簿に足す候補。記録にある名前のうち、まだ名簿にないもの（シフトの人は自動で載るので出ない）。
+ * 名簿に足す候補。記録にある名前のうち、まだ名簿にないもの（シフト・ユーザーの人は自動で載るので出ない）。
  * 2 人をまとめたように見える名前は出さない。
  *
  * @returns {Promise<Array<{name: string, source: string}>>}

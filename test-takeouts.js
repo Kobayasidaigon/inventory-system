@@ -470,13 +470,16 @@ async function testCandidates() {
     const today = tokyoToday();
     const [year, month, day] = today.split('-');
 
-    // ジョブカンから今日の勤務予定を取り込む（拠点名「テスト店」で結びつく）
+    // ジョブカンから勤務予定を取り込む（拠点名「テスト店」で結びつく）。
+    // 中番さんは今日ではなく、同じ月の 3 日ずれた日に入っている
+    const otherDay = Number(day) >= 4 ? Number(day) - 3 : Number(day) + 3;
     const imported = await request('POST', '/api/staff/import-schedules', {
         secret: IMPORT_SECRET,
         targetMonth: `${year}-${month}`,
         schedules: [
             { staffName: '早番 一郎', day: Number(day), startTime: '09:00', endTime: '14:00', groupId: '3', groupName: 'テスト店' },
-            { staffName: '遅番 二郎', day: Number(day), startTime: '17:00', endTime: '22:00', groupId: '3', groupName: 'テスト店' }
+            { staffName: '遅番 二郎', day: Number(day), startTime: '17:00', endTime: '22:00', groupId: '3', groupName: 'テスト店' },
+            { staffName: '中番 三郎', day: otherDay, startTime: '12:00', endTime: '18:00', groupId: '3', groupName: 'テスト店' }
         ]
     });
 
@@ -490,6 +493,12 @@ async function testCandidates() {
         '候補: 最近出庫で使われた名前',
         ['鈴木', '田中 花子', '佐藤'].every(name => res.body.recent.includes(name)),
         JSON.stringify(res.body.recent)
+    );
+    addResult(
+        '候補: 今日でなくても、前後 30 日にこの店の勤務がある人も出る（今日の勤務には入らない）',
+        ['早番 一郎', '遅番 二郎', '中番 三郎'].every(name => res.body.storeStaff.includes(name)) &&
+            !res.body.scheduledToday.includes('中番 三郎'),
+        `storeStaff ${JSON.stringify(res.body.storeStaff)}`
     );
     addResult(
         '候補: 普通のログインでは、最初から入れる名前は無い',
@@ -522,6 +531,14 @@ async function testEntryLinkName(locationCode) {
     await visitor.request('POST', '/api/inventory/out', {
         productId: products.joy, quantity: 1, date: '2025-07-02', takenBy: '佐藤'
     });
+    // 入場リンクで記録を入れた人は、普通のログインで入った端末のダイアログにも候補として出る
+    const fromStore = await request('GET', '/api/inventory/takers');
+    addResult(
+        '候補: この店で記録を入れた人（入場リンクの担当者）も出る',
+        fromStore.body.operators.includes('山田'),
+        `operators ${JSON.stringify(fromStore.body.operators)}`
+    );
+
     const rows = (await takeouts({ productId: products.joy, startDate: '2025-07-01', endDate: '2025-07-02' })).body.rows;
     const byDate = Object.fromEntries(rows.map(r => [r.transaction_date, r]));
     addResult(
@@ -603,6 +620,24 @@ async function testScreen() {
             doc.getElementById('takeout-quantity').value
         );
         window.closeModal();
+
+        // 候補が 1 つも無い店（始めたばかりなど）では、空のまま「下から選んで」と出さずに、そう伝える
+        const realCandidates = window.loadTakerCandidates;
+        window.loadTakerCandidates = async () =>
+            ({ scheduledToday: [], recent: [], operators: [], storeStaff: [], operatorName: null });
+        doc.getElementById('modal-body').innerHTML = '';
+        paperCard().querySelector('button[title="1個出庫"]').click();
+        await waitFor(() => doc.getElementById('takeout-form'), '出庫のダイアログが開く（候補なし）');
+        const emptyNote = doc.querySelector('#takeout-taker-chips .taker-empty-note');
+        addResult(
+            '画面: 名前の候補が無いときは、名前を入れるよう案内する',
+            emptyNote && emptyNote.textContent.includes('名前の候補はまだありません') &&
+                doc.querySelectorAll('.taker-chip').length === 0 &&
+                doc.getElementById('takeout-taker').placeholder === '名前を入れてください',
+            emptyNote ? emptyNote.textContent : '案内なし'
+        );
+        window.closeModal();
+        window.loadTakerCandidates = realCandidates;
 
         // 人ごとの集計は管理画面だけ。店の画面には出庫記録のタブが無い
         addResult(

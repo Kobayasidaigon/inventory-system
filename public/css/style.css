@@ -1883,6 +1883,12 @@ table tbody tr:hover {
     cursor: pointer;
 }
 
+.taker-empty-note {
+    margin: 0;
+    font-size: 13px;
+    color: #718096;
+}
+
 .taker-chip.selected {
     background: #667eea;
     border-color: #667eea;

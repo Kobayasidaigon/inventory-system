@@ -264,18 +264,28 @@ function summarizeByTaker(rows) {
         .sort((a, b) => b.quantity - a.quantity);
 }
 
-/** 日本時間の今日（YYYY-MM-DD）。サーバーの TZ に左右されないよう明示する。 */
-function tokyoToday() {
+/**
+ * 日本時間の日付（YYYY-MM-DD）。サーバーの TZ に左右されないよう明示する。
+ * @param {number} [offsetDays=0] - 今日から何日ずらすか（前は負の数）
+ */
+function tokyoDate(offsetDays = 0) {
     return new Intl.DateTimeFormat('en-CA', {
         timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit'
-    }).format(new Date());
+    }).format(new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000));
 }
+
+/** 勤務予定から「この店のスタッフ」とみなす範囲（今日の前後の日数） */
+const STORE_STAFF_DAYS = 30;
 
 /**
  * 出庫のダイアログで選べるようにする名前の候補。
  *
- * - scheduledToday: ジョブカンの勤務予定で、今日この拠点に入っている人
+ * - scheduledToday: ジョブカンの勤務予定で、今日この拠点に入っている人（始業の早い順）
  * - recent: 最近（90 日）出庫で使われた名前。新しく使われた順
+ * - operators: 最近（90 日）この店で記録を入れた人の名前（清掃管理表の入場リンクの担当者）。
+ *   出庫の名前がまだたまっていない、始めたばかりの店でも候補が出るように
+ * - storeStaff: 今日の前後 30 日に、この店の勤務予定がある人（勤務の多い順）。
+ *   今日の予定が取り込まれていない日や、予定外に入った人のため
  *
  * 毎回打つより選ぶ方が速く、同じ人の名前の書き方もそろう。
  */
@@ -290,7 +300,23 @@ async function listTakerCandidates(db, mainDb, locationId) {
         LIMIT 30
     `);
 
+    const operators = await db.all(`
+        SELECT name, MAX(at) AS last_used
+        FROM (
+            SELECT operator_name AS name, created_at AS at FROM inventory_history WHERE operator_name IS NOT NULL
+            UNION ALL
+            SELECT operator_name, requested_at FROM order_requests WHERE operator_name IS NOT NULL
+            UNION ALL
+            SELECT operator_name, created_at FROM inventory_counts WHERE operator_name IS NOT NULL
+        )
+        WHERE at >= datetime('now', '-90 days')
+        GROUP BY name
+        ORDER BY last_used DESC
+        LIMIT 30
+    `);
+
     let scheduledToday = [];
+    let storeStaff = [];
     if (locationId) {
         scheduledToday = await mainDb.all(`
             SELECT st.name
@@ -299,12 +325,32 @@ async function listTakerCandidates(db, mainDb, locationId) {
             WHERE s.location_id = ? AND s.date = ? AND st.is_active = 1
             GROUP BY st.name
             ORDER BY MIN(s.start_time), st.name
-        `, [locationId, tokyoToday()]);
+        `, [locationId, tokyoDate()]);
+
+        storeStaff = await mainDb.all(`
+            SELECT st.name
+            FROM staff_schedules s
+            JOIN staff st ON s.staff_id = st.id
+            WHERE s.location_id = ? AND s.date BETWEEN ? AND ? AND st.is_active = 1
+            GROUP BY st.name
+            ORDER BY COUNT(*) DESC, st.name
+        `, [locationId, tokyoDate(-STORE_STAFF_DAYS), tokyoDate(STORE_STAFF_DAYS)]);
     }
 
+    // 名前の決まり（記号など）に合わないものは候補に出さない。押しても登録で弾かれるため
+    const usable = rows => rows.map(row => row.name).filter(name => {
+        try {
+            return parseTakerName(name) === name;
+        } catch (err) {
+            return false;
+        }
+    });
+
     return {
-        scheduledToday: scheduledToday.map(row => row.name),
-        recent: recent.map(row => row.name)
+        scheduledToday: usable(scheduledToday),
+        recent: usable(recent),
+        operators: usable(operators),
+        storeStaff: usable(storeStaff)
     };
 }
 

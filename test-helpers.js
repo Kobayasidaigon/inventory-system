@@ -215,11 +215,26 @@ async function setupLocationUser(client, { password = 'test-password-1234' } = {
 }
 
 /**
- * 利用者画面（index.html + app.js）を jsdom で開く。
+ * 利用者画面（index.html + app.js）を jsdom で開く。中身は openScreen を参照。
+ */
+function openUserScreen(client, baseUrl) {
+    return openScreen(client, baseUrl, 'index.html', ['csrf.js', 'app.js']);
+}
+
+/**
+ * 管理画面（admin.html + admin.js）を jsdom で開く。client は管理者でログイン済みのもの。
+ * Excel 出力用の xlsx は CDN から読むので、ここでは読まない。
+ */
+function openAdminScreen(client, baseUrl) {
+    return openScreen(client, baseUrl, 'admin.html', ['csrf.js', 'admin.js']);
+}
+
+/**
+ * 画面（HTML と、その画面の JS）を jsdom で開く。
  *
  * CI にはブラウザが無いので、実物の HTML と JS を jsdom で動かして画面の配線を確かめる。
  * HTML 内の <script src> は jsdom が読みに行かない（外部リソースを読まない設定のため）。
- * そこで csrf.js と app.js を順に流し込む。グラフ用の Chart.js は読まない。
+ * そこで画面の JS（csrf.js と app.js など）を順に流し込む。グラフ用の Chart.js は読まない。
  *
  * jsdom は作った直後はまだ読み込み中で、DOMContentLoaded はあとで自分から出す。
  * その前にスクリプトを入れておけば、ブラウザと同じく初期化は 1 回だけ走る。
@@ -231,9 +246,11 @@ async function setupLocationUser(client, { password = 'test-password-1234' } = {
  *
  * @param {object} client - createClient() で作り、ログイン済みのもの
  * @param {string} baseUrl - テスト用サーバーの URL
+ * @param {string} htmlFile - public/ の下の HTML（例 index.html）
+ * @param {string[]} scriptFiles - public/js/ の下の JS。この順に流し込む
  * @returns {{window: object, errors: string[], dialogs: string[], state: {promptAnswer: string|null}}}
  */
-function openUserScreen(client, baseUrl) {
+function openScreen(client, baseUrl, htmlFile, scriptFiles) {
     // jsdom は画面のテストでしか使わないので、ここで読み込む
     const { JSDOM, VirtualConsole } = require('jsdom');
     const errors = [];
@@ -244,7 +261,7 @@ function openUserScreen(client, baseUrl) {
     virtualConsole.on('jsdomError', err => errors.push(err.message));
     virtualConsole.on('error', (...args) => errors.push(args.map(String).join(' ')));
 
-    const html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+    const html = fs.readFileSync(path.join(__dirname, 'public', htmlFile), 'utf8');
     const dom = new JSDOM(html, { url: `${baseUrl}/`, runScripts: 'dangerously', virtualConsole });
     const { window } = dom;
 
@@ -266,7 +283,7 @@ function openUserScreen(client, baseUrl) {
         throw new Error('jsdom の読み込みが先に終わってしまい、画面の初期化を走らせられません');
     }
 
-    for (const file of ['csrf.js', 'app.js']) {
+    for (const file of scriptFiles) {
         const script = window.document.createElement('script');
         script.textContent = fs.readFileSync(path.join(__dirname, 'public', 'js', file), 'utf8');
         window.document.body.appendChild(script);
@@ -296,5 +313,6 @@ module.exports = {
     startServer,
     setupLocationUser,
     openUserScreen,
+    openAdminScreen,
     waitFor
 };

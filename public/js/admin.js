@@ -1088,3 +1088,300 @@ document.querySelectorAll('input[name="feedback-filter"]').forEach(radio => {
 
 // タブ切り替え時にご意見を読み込む
 document.querySelector('.admin-tab[data-tab="feedback"]').addEventListener('click', loadFeedbacks);
+
+// ========== 出庫記録（誰が何個出したか） ==========
+//
+// 人ごとの集計は店の画面には出さず、ここだけで見る。店の共用アカウントで入る
+// 全員に「誰が多いか」が見えると、確かめる前に人を疑う空気になるため。
+
+// 出した人の絞り込みで「（未記入）」を選んだときの値。サーバーには unrecorded=1 で渡す
+const UNRECORDED_TAKER = '__unrecorded__';
+
+// 明細で見せる件数（サーバーの TAKEOUT_LIST_LIMIT と同じ）
+const TAKEOUT_LIST_LIMIT = 100;
+
+// 出庫記録で選んでいる店舗の商品（カテゴリ・商品の絞り込みの選択肢）
+let takeoutProducts = [];
+
+document.querySelector('.admin-tab[data-tab="takeouts"]').addEventListener('click', showTakeoutsTab);
+document.getElementById('takeout-location').addEventListener('change', onTakeoutLocationChange);
+document.getElementById('takeout-category-filter').addEventListener('change', onTakeoutCategoryChange);
+document.getElementById('refresh-takeouts').addEventListener('click', loadTakeouts);
+document.getElementById('export-takeouts').addEventListener('click', exportTakeouts);
+
+// 画面に出す文字をエスケープする（出した人の名前は利用者の入力）
+function escapeHtml(text) {
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+// 端末の日付で YYYY-MM-DD（toISOString は UTC なので、朝 9 時前は前の日になる）
+function toDateInputValue(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
+// ファイルを落とす。サーバーが attachment で返すので、画面は移動しない
+function downloadFile(url) {
+    window.location.href = url;
+}
+
+async function showTakeoutsTab() {
+    const select = document.getElementById('takeout-location');
+
+    // 店舗の一覧は最初に開いたときだけ読む。選んでいた店舗は残す
+    if (select.options.length === 0) {
+        try {
+            const response = await fetch('/api/auth/admin/locations');
+            const locations = await response.json();
+            select.innerHTML = locations
+                .map(location => `<option value="${location.id}">${location.location_name}</option>`)
+                .join('');
+        } catch (error) {
+            console.error('店舗の読み込みエラー:', error);
+            return;
+        }
+    }
+
+    // 期間は最初に開いたときだけ直近 30 日にする
+    const start = document.getElementById('takeout-start-date');
+    const end = document.getElementById('takeout-end-date');
+    if (!start.value && !end.value) {
+        const today = new Date();
+        const from = new Date(today);
+        from.setDate(today.getDate() - 30);
+        start.value = toDateInputValue(from);
+        end.value = toDateInputValue(today);
+    }
+
+    await loadTakeoutProducts();
+    await loadTakeouts();
+}
+
+// 店舗を変えたら、商品と出した人の絞り込みは店ごとに違うので外す
+async function onTakeoutLocationChange() {
+    document.getElementById('takeout-category-filter').value = '';
+    document.getElementById('takeout-product-filter').value = '';
+    document.getElementById('takeout-taker-filter').value = '';
+    await loadTakeoutProducts();
+    await loadTakeouts();
+}
+
+// 選んでいる店舗の商品で、カテゴリと商品の選択肢を作る。選んでいた値は残す
+async function loadTakeoutProducts() {
+    const locationId = document.getElementById('takeout-location').value;
+    if (!locationId) return;
+
+    try {
+        const response = await fetch(`/api/auth/admin/locations/${locationId}/inventory`);
+        const data = await response.json();
+        takeoutProducts = response.ok ? data.products : [];
+    } catch (error) {
+        console.error('商品の読み込みエラー:', error);
+        takeoutProducts = [];
+    }
+
+    const categorySelect = document.getElementById('takeout-category-filter');
+    const category = categorySelect.value;
+    const categories = [...new Set(takeoutProducts.map(p => p.category).filter(c => c))];
+    categorySelect.innerHTML = '<option value="">全カテゴリ</option>' +
+        categories.map(c => `<option value="${c}">${c}</option>`).join('');
+    categorySelect.value = category;
+
+    const productSelect = document.getElementById('takeout-product-filter');
+    const productId = productSelect.value;
+    loadTakeoutProductFilter(categorySelect.value);
+    productSelect.value = productId;
+}
+
+function loadTakeoutProductFilter(category = '') {
+    const select = document.getElementById('takeout-product-filter');
+    const list = category ? takeoutProducts.filter(p => p.category === category) : takeoutProducts;
+    select.innerHTML = '<option value="">全商品</option>' +
+        list.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+}
+
+function onTakeoutCategoryChange() {
+    loadTakeoutProductFilter(document.getElementById('takeout-category-filter').value);
+    document.getElementById('takeout-product-filter').value = '';
+}
+
+// 出した人の選択肢。これまでに使われた名前と「（未記入）」。選んでいた値は残す
+function renderTakerFilter(names) {
+    const select = document.getElementById('takeout-taker-filter');
+    const taker = select.value;
+    select.innerHTML = '<option value="">全員</option>' +
+        names.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('') +
+        `<option value="${UNRECORDED_TAKER}">（未記入）</option>`;
+    select.value = taker;
+}
+
+// 出庫記録で選んでいる条件。一覧と CSV 出力で同じものを使う
+function takeoutFilterParams() {
+    const params = new URLSearchParams();
+    const startDate = document.getElementById('takeout-start-date').value;
+    const endDate = document.getElementById('takeout-end-date').value;
+    const category = document.getElementById('takeout-category-filter').value;
+    const productId = document.getElementById('takeout-product-filter').value;
+    const taker = document.getElementById('takeout-taker-filter').value;
+
+    if (startDate) params.set('startDate', startDate);
+    if (endDate) params.set('endDate', endDate);
+    if (category) params.set('category', category);
+    if (productId) params.set('productId', productId);
+    if (taker === UNRECORDED_TAKER) {
+        params.set('unrecorded', '1');
+    } else if (taker) {
+        params.set('takenBy', taker);
+    }
+
+    return params;
+}
+
+async function loadTakeouts() {
+    const locationId = document.getElementById('takeout-location').value;
+    if (!locationId) return;
+
+    try {
+        const response = await fetch(`/api/auth/admin/locations/${locationId}/takeouts?${takeoutFilterParams()}`);
+        const data = await response.json();
+
+        if (!response.ok) {
+            alert(data.error || '出庫記録の取得に失敗しました');
+            return;
+        }
+
+        renderTakerFilter(data.names);
+        renderQuickRestocks(data.quickRestocks);
+        renderTakeoutPeople(data);
+        renderTakeoutRows(data);
+    } catch (error) {
+        console.error('出庫記録の取得エラー:', error);
+    }
+}
+
+// 選んでいる店舗・条件の出庫記録を CSV で落とす
+function exportTakeouts() {
+    const locationId = document.getElementById('takeout-location').value;
+    if (!locationId) return;
+
+    downloadFile(`/api/auth/admin/locations/${locationId}/takeouts/export?${takeoutFilterParams()}`);
+}
+
+// 出した人の名前。名前の無い出庫（この機能より前の記録など）は「（未記入）」
+function takerLabel(name) {
+    return name
+        ? escapeHtml(name)
+        : '<span class="taker-unrecorded">（未記入）</span>';
+}
+
+// 日付を短く出す。今年のものは「9/29」、それより前は年を付ける
+function takeoutDate(iso) {
+    const [year, month, day] = String(iso).split('-');
+    const short = `${parseInt(month, 10)}/${parseInt(day, 10)}`;
+    return year === String(new Date().getFullYear()) ? short : `${year}/${short}`;
+}
+
+// 補充が早すぎる商品
+function renderQuickRestocks(list) {
+    const section = document.getElementById('quick-restock-section');
+    const tbody = document.querySelector('#quick-restock-table tbody');
+
+    if (list.length === 0) {
+        section.style.display = 'none';
+        tbody.innerHTML = '';
+        return;
+    }
+
+    section.style.display = 'block';
+    document.getElementById('quick-restock-count').textContent = `${list.length}件`;
+
+    tbody.innerHTML = list.map(item => {
+        const takers = item.takers.length > 0
+            ? item.takers.map(t => `${takerLabel(t.name)} ${t.quantity}個`).join('、')
+            : '出庫の記録なし';
+
+        return `
+            <tr data-product-id="${item.productId}">
+                <td>${item.productName}</td>
+                <td>${takeoutDate(item.date)}<br><small>${item.quantity}個</small></td>
+                <td class="stock-low">${item.days}日<br>
+                    <small>${takeoutDate(item.previousDate)} に ${item.previousQuantity}個 補充</small></td>
+                <td>約${item.expectedDays}日</td>
+                <td>${takers}<br>
+                    <small>${takeoutDate(item.previousDate)}〜${takeoutDate(item.date)} の出庫の記録は計 ${item.recordedOut}個</small></td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// 人ごとの集計
+function renderTakeoutPeople(data) {
+    const table = document.getElementById('takeout-people-table');
+    const tbody = table.querySelector('tbody');
+    const empty = document.getElementById('takeout-empty');
+
+    document.getElementById('takeout-total').textContent = `${data.total}件・${data.totalQuantity}個`;
+
+    if (data.people.length === 0) {
+        tbody.innerHTML = '';
+        table.style.display = 'none';
+        empty.style.display = 'block';
+        return;
+    }
+
+    table.style.display = '';
+    empty.style.display = 'none';
+
+    tbody.innerHTML = data.people.map(person => {
+        const breakdown = person.products.slice(0, 5)
+            .map(p => `${p.name} ${p.quantity}`)
+            .join('、') + (person.products.length > 5 ? ` ほか${person.products.length - 5}品` : '');
+
+        return `
+            <tr>
+                <td><strong>${takerLabel(person.name)}</strong></td>
+                <td>${person.count}回</td>
+                <td><strong>${person.quantity}個</strong></td>
+                <td class="takeout-breakdown">${breakdown}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// 明細（新しい順）
+function renderTakeoutRows(data) {
+    const tbody = document.querySelector('#takeout-rows-table tbody');
+    const note = document.getElementById('takeout-rows-note');
+
+    document.getElementById('takeout-rows-count').textContent = `${data.total}件`;
+
+    if (data.total > data.rows.length) {
+        note.textContent = `新しい順に ${TAKEOUT_LIST_LIMIT} 件を表示しています（全 ${data.total} 件）。全件は「出庫記録CSV出力」で出せます。`;
+        note.style.display = 'block';
+    } else {
+        note.style.display = 'none';
+    }
+
+    tbody.innerHTML = data.rows.map(row => {
+        // created_at は UTC なのにタイムゾーンの表記がないので、Z を付けて読む
+        const time = new Date(String(row.created_at).replace(' ', 'T') + 'Z').toLocaleTimeString('ja-JP', {
+            timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit'
+        });
+
+        return `
+            <tr>
+                <td>${takeoutDate(row.transaction_date)} ${time}</td>
+                <td>${row.product_name}</td>
+                <td>${row.quantity}</td>
+                <td>${takerLabel(row.taken_by)}</td>
+                <td>${row.username}</td>
+            </tr>
+        `;
+    }).join('');
+}

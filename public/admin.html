@@ -220,6 +220,7 @@
         <!-- タブナビゲーション -->
         <div class="admin-tabs">
             <button class="admin-tab active" data-tab="inventory-view">在庫・発注確認</button>
+            <button class="admin-tab" data-tab="takeouts">出庫記録</button>
             <button class="admin-tab" data-tab="management">ユーザー・拠点管理</button>
             <button class="admin-tab" data-tab="feedback">ご意見ボックス</button>
             <button class="admin-tab" data-tab="backup">バックアップ</button>
@@ -275,6 +276,112 @@
                     </thead>
                     <tbody id="inventory-list"></tbody>
                 </table>
+            </div>
+        </div>
+
+        <!-- 出庫記録タブ（誰が何個出したか）。人ごとの集計は店の画面には出さず、ここだけで見る -->
+        <div id="takeouts" class="tab-content">
+            <div class="admin-section">
+                <h2>出庫記録</h2>
+                <p class="takeout-note">
+                    店ごとに、誰が何個出したかと、補充が早すぎる商品を確かめられます。
+                    この画面は管理者だけが見られます（店の画面には出していません）。
+                </p>
+                <div class="filter-group">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <label for="takeout-location">店舗:</label>
+                        <select id="takeout-location"></select>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px; background: #f8f9fa; padding: 8px 12px; border-radius: 5px;">
+                        <label for="takeout-start-date">📅 期間:</label>
+                        <input type="date" id="takeout-start-date">
+                        <span>～</span>
+                        <input type="date" id="takeout-end-date">
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <label for="takeout-category-filter">カテゴリ:</label>
+                        <select id="takeout-category-filter">
+                            <option value="">全カテゴリ</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <label for="takeout-product-filter">商品:</label>
+                        <select id="takeout-product-filter">
+                            <option value="">全商品</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <label for="takeout-taker-filter">出した人:</label>
+                        <select id="takeout-taker-filter">
+                            <option value="">全員</option>
+                        </select>
+                    </div>
+                    <button id="refresh-takeouts" class="btn btn-secondary">🔄 表示</button>
+                    <button id="export-takeouts" class="btn btn-primary">出庫記録CSV出力</button>
+                </div>
+            </div>
+
+            <!-- 前回補充した量が、いつもの半分以下の日数でなくなったもの -->
+            <div id="quick-restock-section" class="admin-section quick-restock-section" style="display: none;">
+                <h2>⚠️ 補充が早すぎる商品 <span id="quick-restock-count" class="takeout-badge"></span></h2>
+                <p class="takeout-note">
+                    前回補充した量が、いつものペースの半分以下の日数でなくなり、また補充した商品です。
+                    まずその商品の現物を数えて、システムの在庫と比べてください。現物の方が少なければ、
+                    記録のない減り（登録漏れや持ち出し）があります。
+                </p>
+                <div class="table-container">
+                    <table id="quick-restock-table">
+                        <thead>
+                            <tr>
+                                <th>商品名</th>
+                                <th>補充した日</th>
+                                <th>前回の補充から</th>
+                                <th>いつもなら</th>
+                                <th>その間の出庫（出した人）</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="admin-section">
+                <h2>人ごとの集計 <span id="takeout-total" class="takeout-badge"></span></h2>
+                <div class="table-container">
+                    <table id="takeout-people-table">
+                        <thead>
+                            <tr>
+                                <th>出した人</th>
+                                <th>回数</th>
+                                <th>合計</th>
+                                <th>内訳</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <p id="takeout-empty" class="takeout-note" style="display: none;">
+                    この条件の出庫はありません
+                </p>
+            </div>
+
+            <div class="admin-section">
+                <h2>明細 <span id="takeout-rows-count" class="takeout-badge"></span></h2>
+                <p id="takeout-rows-note" class="takeout-note" style="display: none;"></p>
+                <div class="table-container">
+                    <table id="takeout-rows-table">
+                        <thead>
+                            <tr>
+                                <th>日時</th>
+                                <th>商品名</th>
+                                <th>数量</th>
+                                <th>出した人</th>
+                                <th>入力者</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
             </div>
         </div>
 

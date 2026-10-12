@@ -652,8 +652,8 @@ function updateDashboardDisplay() {
             </div>
 
             <div class="stock-card-actions">
-                <button class="btn-quick btn-quick-out" onclick="quickStockChange(${product.id}, -5)" title="5個出庫">-5</button>
-                <button class="btn-quick btn-quick-out" onclick="quickStockChange(${product.id}, -1)" title="1個出庫">-1</button>
+                <button class="btn-quick btn-quick-out" onclick="openTakeoutDialog(${product.id}, 5)" title="5個出庫">-5</button>
+                <button class="btn-quick btn-quick-out" onclick="openTakeoutDialog(${product.id}, 1)" title="1個出庫">-1</button>
                 <button class="btn-quick btn-quick-in" onclick="quickStockChange(${product.id}, 1)" title="1個入庫">+1</button>
                 <button class="btn-quick btn-quick-in" onclick="quickStockChange(${product.id}, 5)" title="5個入庫">+5</button>
             </div>
@@ -1618,7 +1618,7 @@ function renderNormalHistory(history, tbody) {
             <td>${item.category || '-'}</td>
             <td>${typeText}</td>
             <td>${item.quantity}</td>
-            <td>${item.username}</td>
+            <td>${historyPersonHtml(item.taken_by, item.username)}</td>
             <td>
                 <button class="btn btn-secondary" onclick="editHistory(${item.id})">修正</button>
             </td>
@@ -1638,7 +1638,8 @@ function renderGroupedHistory(history, tbody) {
             new Date(item.transaction_date).toLocaleDateString('ja-JP') :
             createdAtUTC.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo' });
 
-        const key = `${item.product_id}_${date}_${item.username}_${item.type}`;
+        // 出庫は出した人ごとに分ける（同じアカウントで入力していても、出した人は違う）
+        const key = `${item.product_id}_${date}_${item.username}_${item.taken_by || ''}_${item.type}`;
 
         if (!groups[key]) {
             groups[key] = {
@@ -1648,6 +1649,7 @@ function renderGroupedHistory(history, tbody) {
                 date: date,
                 type: item.type,
                 username: item.username,
+                taken_by: item.taken_by,
                 total_quantity: 0
             };
         }
@@ -1679,7 +1681,7 @@ function renderGroupedHistory(history, tbody) {
                 ${group.total_quantity}
                 ${isMultiple ? `<span style="color: #667eea; font-size: 12px;"> (${group.items.length}件)</span>` : ''}
             </td>
-            <td>${group.username}</td>
+            <td>${historyPersonHtml(group.taken_by, group.username)}</td>
             <td>
                 ${isMultiple ? `<button class="btn btn-secondary" onclick="toggleGroupDetails('${groupId}')">詳細</button>` : `<button class="btn btn-secondary" onclick="editHistory(${group.items[0].id})">修正</button>`}
             </td>
@@ -1732,6 +1734,18 @@ function renderGroupedHistory(history, tbody) {
             detailRow.innerHTML = detailHtml;
         }
     });
+}
+
+// 履歴の担当者欄。出庫で出した人が分かるときはその名前を出し、入力した人が違えば添える
+function historyPersonHtml(takenBy, username) {
+    if (!takenBy) {
+        return username;
+    }
+
+    const name = escapeAttribute(takenBy);
+    return takenBy === username
+        ? name
+        : `${name}<br><small class="history-input-by">入力: ${username}</small>`;
 }
 
 // グループの詳細を展開/折りたたみ
@@ -2787,43 +2801,39 @@ async function exportCountCSV() {
 
 // ========== ワンタップ登録機能 ==========
 
-// ワンタップで在庫変更
+// ワンタップで在庫を増やす（+1 / +5。誤操作の修正用）。
+// 出庫は「出した人」を入れてもらうので、openTakeoutDialog から登録する
 async function quickStockChange(productId, change) {
+    if (change <= 0) {
+        return openTakeoutDialog(productId, -change);
+    }
+
     const product = products.find(p => p.id === productId);
     if (!product) return;
 
-    // 出庫の場合は在庫不足チェック
-    if (change < 0 && product.current_stock + change < 0) {
-        alert('在庫が不足しています');
-        return;
-    }
-
     // 入庫操作(+1, +5)の場合、該当商品の発注依頼済みがあるかチェック
-    if (change > 0) {
-        const hasPendingOrder = allActiveOrders.some(order => order.product_id === productId);
-        if (hasPendingOrder) {
-            const shouldProceed = confirm(
-                `${product.name}は発注依頼済みです。\n\n` +
-                `商品が届いた場合は「入庫完了」ボタンを押してください。\n\n` +
-                `このまま在庫を増やしますか？`
-            );
-            if (!shouldProceed) {
-                return;
-            }
+    const hasPendingOrder = allActiveOrders.some(order => order.product_id === productId);
+    if (hasPendingOrder) {
+        const shouldProceed = confirm(
+            `${product.name}は発注依頼済みです。\n\n` +
+            `商品が届いた場合は「入庫完了」ボタンを押してください。\n\n` +
+            `このまま在庫を増やしますか？`
+        );
+        if (!shouldProceed) {
+            return;
         }
     }
 
     try {
-        const type = change < 0 ? 'out' : 'in';
-        const quantity = Math.abs(change);
-
-        const response = await fetchWithCsrf(`/api/inventory/${type}`, {
+        const response = await fetchWithCsrf('/api/inventory/in', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 productId: productId,
-                quantity: quantity,
-                date: new Date().toISOString().split('T')[0],
+                quantity: change,
+                // 端末の日付（toISOString は UTC なので、朝 9 時前は前の日になる）
+                date: formatDate(new Date()),
+                // この備考の入庫は補充として数えない（サーバーの QUICK_OPERATION_NOTE と同じ文字）
                 note: 'クイック操作'
             })
         });
@@ -2837,15 +2847,7 @@ async function quickStockChange(productId, change) {
         if (response.ok) {
             // 成功時のフィードバック（短い通知）
             showQuickFeedback(product.name, change);
-
-            // 商品データと発注依頼を読み直す。発注依頼を先に読むのは、カードの
-            // 「発注依頼済み」が依頼の有無で決まるため（出庫で自動発注ができることがある）
-            await loadProducts();
-            await loadPendingOrders();
-            updateDashboardDisplay();
-
-            // 区切りごとの登録件数も変わるので読み直す
-            await loadShiftStatus();
+            await refreshAfterStockChange();
         } else {
             alert('登録に失敗しました');
         }
@@ -2853,6 +2855,176 @@ async function quickStockChange(productId, change) {
         console.error('クイック操作エラー:', error);
         alert('登録に失敗しました');
     }
+}
+
+// 在庫を動かしたあとにダッシュボードを描き直す
+async function refreshAfterStockChange() {
+    // 商品データと発注依頼を読み直す。発注依頼を先に読むのは、カードの
+    // 「発注依頼済み」が依頼の有無で決まるため（出庫で自動発注ができることがある）
+    await loadProducts();
+    await loadPendingOrders();
+    updateDashboardDisplay();
+
+    // 区切りごとの登録件数も変わるので読み直す
+    await loadShiftStatus();
+}
+
+// ========== 出庫（誰が何個出したか） ==========
+
+// 出した人の名前の候補。ダイアログを開くたびに読み直す（今日の勤務・最近使った名前は変わるため）
+async function loadTakerCandidates() {
+    try {
+        const response = await fetch('/api/inventory/takers');
+        if (!response.ok) {
+            throw new Error(`status ${response.status}`);
+        }
+        return await response.json();
+    } catch (error) {
+        // 候補が取れなくても、名前を打てば出庫はできる
+        console.error('名前の候補の取得エラー:', error);
+        return { scheduledToday: [], recent: [], operatorName: null };
+    }
+}
+
+// 候補のボタンに並べる名前。入場リンクの名前 → 今日の勤務 → 最近使った名前の順
+function takerChipNames(candidates) {
+    const names = [candidates.operatorName, ...candidates.scheduledToday, ...candidates.recent]
+        .filter(Boolean);
+    return [...new Set(names)].slice(0, 15);
+}
+
+// 出庫のダイアログ。誰が何個出したかを入れてもらう。
+// 共用のアカウントで入っていると、ログインの名前だけでは誰が出したか分からないため
+async function openTakeoutDialog(productId, quantity) {
+    const product = products.find(p => p.id === productId);
+    if (!product) return;
+
+    if (product.current_stock <= 0) {
+        alert('在庫がありません');
+        return;
+    }
+
+    const candidates = await loadTakerCandidates();
+    const modal = document.getElementById('modal');
+    const modalBody = document.getElementById('modal-body');
+
+    modalBody.innerHTML = `
+        <h3>出庫の登録</h3>
+        <p class="takeout-dialog-product">${product.name}（現在庫 ${product.current_stock}）</p>
+        <form id="takeout-form" novalidate>
+            <div class="form-group">
+                <label for="takeout-quantity">何個出しますか</label>
+                <input type="number" id="takeout-quantity" min="1" step="1" inputmode="numeric"
+                    value="${quantity}" required>
+            </div>
+            <div class="form-group">
+                <label for="takeout-taker">出した人</label>
+                <input type="text" id="takeout-taker" maxlength="40" autocomplete="off"
+                    placeholder="名前を入れるか、下から選んでください" required>
+                <div id="takeout-taker-chips" class="taker-chips"></div>
+            </div>
+            <p id="takeout-error" class="takeout-error" style="display: none;"></p>
+            <button type="submit" id="takeout-submit" class="btn btn-primary">出庫する</button>
+        </form>
+    `;
+
+    const form = document.getElementById('takeout-form');
+    const quantityInput = document.getElementById('takeout-quantity');
+    const takerInput = document.getElementById('takeout-taker');
+    const chips = document.getElementById('takeout-taker-chips');
+    const errorText = document.getElementById('takeout-error');
+    const submitButton = document.getElementById('takeout-submit');
+
+    // 入場リンクで名前が分かっているときだけ最初から入れる。前の人の名前を残すと、
+    // 共用の端末で別の人がそのまま押してしまう
+    takerInput.value = candidates.operatorName || '';
+
+    // 名前は利用者の入力なので、innerHTML ではなく textContent で入れる
+    const markSelected = () => {
+        chips.querySelectorAll('.taker-chip').forEach(chip => {
+            chip.classList.toggle('selected', chip.dataset.name === takerInput.value.trim());
+        });
+    };
+
+    takerChipNames(candidates).forEach(name => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'taker-chip';
+        chip.dataset.name = name;
+        chip.textContent = name;
+        chip.addEventListener('click', () => {
+            takerInput.value = name;
+            markSelected();
+        });
+        chips.appendChild(chip);
+    });
+    takerInput.addEventListener('input', markSelected);
+    markSelected();
+
+    const showError = (message) => {
+        errorText.textContent = message;
+        errorText.style.display = 'block';
+    };
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        errorText.style.display = 'none';
+
+        const count = Number(quantityInput.value);
+        const takenBy = takerInput.value.replace(/\s+/g, ' ').trim();
+
+        if (!Number.isInteger(count) || count < 1) {
+            showError('個数は 1 以上の整数で入れてください');
+            return;
+        }
+        if (count > product.current_stock) {
+            showError(`在庫が足りません（現在庫 ${product.current_stock}）`);
+            return;
+        }
+        if (!takenBy) {
+            showError('出した人の名前を入れてください');
+            return;
+        }
+
+        submitButton.disabled = true;
+
+        try {
+            const response = await fetchWithCsrf('/api/inventory/out', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    productId: productId,
+                    quantity: count,
+                    date: formatDate(new Date()),
+                    takenBy
+                })
+            });
+
+            if (response.status === 401) {
+                alert('セッションが切れました。再度ログインしてください。');
+                window.location.href = '/';
+                return;
+            }
+
+            if (!response.ok) {
+                // 名前に使えない文字・在庫不足など、理由をそのまま見せる
+                const result = await response.json().catch(() => ({}));
+                showError(result.error || '登録に失敗しました');
+                return;
+            }
+
+            closeModal();
+            showQuickFeedback(`${product.name}（${takenBy}）`, -count);
+            await refreshAfterStockChange();
+        } catch (error) {
+            console.error('出庫エラー:', error);
+            showError('登録に失敗しました');
+        } finally {
+            submitButton.disabled = false;
+        }
+    });
+
+    modal.classList.add('show');
 }
 
 // クイック操作のフィードバック表示

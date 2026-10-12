@@ -345,6 +345,21 @@ const locationTablesSql = [
         FOREIGN KEY (shift_id) REFERENCES shifts(id)
     )`,
 
+    // 出す人の名簿テーブル
+    //
+    // 出庫のダイアログでは、この名簿から 1 人を選ぶ（自由に打たせない）。
+    // 「田中・佐藤」のように 2 人をまとめた名前や書き方違いが入ると、人ごとに
+    // 集計できなくなるため。管理画面の拠点管理で、管理者が 1 人ずつ登録する。
+    // source は入った経緯。manual = 管理者が足した / history = 名簿を作ったときに
+    // それまでの記録から入れた（管理者が見直せるよう、画面で印を付ける）
+    // ジョブカンのシフトの人は、ここには入れずに勤務予定から毎回引く。
+    `CREATE TABLE IF NOT EXISTS taker_roster (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        source TEXT NOT NULL DEFAULT 'manual',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`,
+
     // 棚卸テーブル
     `CREATE TABLE IF NOT EXISTS inventory_counts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -447,6 +462,82 @@ async function seedDefaultShifts(db) {
     console.log('既定のシフト区切り（朝・昼・晩）を登録しました');
 }
 
+// 名簿を記録から作るときに見る範囲（日数）
+const ROSTER_SEED_DAYS = 180;
+
+/**
+ * 出す人の名簿を、それまでの記録にある名前で作っておく。名簿ができたときに 1 回だけ。
+ *
+ * 名簿にない名前では出庫できないので、空のまま始めると、管理者が名簿を作るまで
+ * 店で出庫できなくなる。清掃管理表から入ったときの担当者名や、出庫で使われた名前が
+ * 記録にあるので、それを最初の名簿にする。
+ *
+ * 「田中・佐藤」のように 2 人をまとめたように見える名前は入れない。それでも混ざったものは、
+ * 管理画面で「記録から」の印を見て × で外してもらう。
+ */
+async function seedTakerRosterFromHistory(db) {
+    // ここでしか使わないので、ここで読み込む（名前の決まりは出庫と同じものを使う）
+    const { normalizeName, MULTI_PERSON_NAME } = require('../services/takeouts');
+
+    const rows = await db.all(`
+        SELECT name FROM (
+            SELECT operator_name AS name, created_at AS at FROM inventory_history WHERE operator_name IS NOT NULL
+            UNION ALL
+            SELECT taken_by, created_at FROM inventory_history WHERE taken_by IS NOT NULL
+            UNION ALL
+            SELECT operator_name, requested_at FROM order_requests WHERE operator_name IS NOT NULL
+            UNION ALL
+            SELECT operator_name, created_at FROM inventory_counts WHERE operator_name IS NOT NULL
+        )
+        WHERE at >= datetime('now', '-' || ? || ' days')
+        GROUP BY name
+    `, [ROSTER_SEED_DAYS]);
+
+    const names = new Set();
+    for (const { name } of rows) {
+        const normalized = normalizeName(name);
+        if (normalized && !MULTI_PERSON_NAME.test(normalized)) {
+            names.add(normalized);
+        }
+    }
+
+    for (const name of names) {
+        await db.run(
+            "INSERT OR IGNORE INTO taker_roster (name, source) VALUES (?, 'history')",
+            [name]
+        );
+    }
+
+    if (names.size > 0) {
+        console.log(`出す人の名簿を記録から作りました（${names.size} 人）`);
+    }
+}
+
+/**
+ * 拠点データベースの準備（テーブル作成・列の追加・初期データ）。
+ *
+ * @param {object} db - 素のメソッド（get/all/run）を持つデータベース
+ */
+async function prepareLocationDatabase(db) {
+    // 名簿のテーブルが無い ＝ この版で初めて起動した拠点。作ったあとで記録から名簿を作る。
+    // 列の追加より後にやる（古いデータベースには記録の名前の列がまだ無いことがある）
+    const rosterIsNew = !(await db.get(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'taker_roster'"
+    ));
+
+    await createLocationTables(db);
+    await migrateLocationTables(db);
+
+    if (rosterIsNew) {
+        try {
+            await seedTakerRosterFromHistory(db);
+        } catch (err) {
+            // 名簿は管理画面からも作れるので、ここで止めずに起動は続ける
+            console.error('出す人の名簿を記録から作れませんでした:', err);
+        }
+    }
+}
+
 // 拠点のデータベースを取得または作成
 function getLocationDatabase(locationCode) {
     if (dbConnections.has(locationCode)) {
@@ -461,11 +552,9 @@ function getLocationDatabase(locationCode) {
 
     // テーブル作成とマイグレーションが終わるまで、この接続へのクエリを待たせる
     gateUntilReady(db, raw =>
-        createLocationTables(raw)
-            .then(() => migrateLocationTables(raw))
-            .catch(err => {
-                console.error(`Error preparing tables for location ${locationCode}:`, err);
-            })
+        prepareLocationDatabase(raw).catch(err => {
+            console.error(`Error preparing tables for location ${locationCode}:`, err);
+        })
     );
 
     dbConnections.set(locationCode, db);
@@ -500,6 +589,7 @@ gateUntilReady(mainDb, raw =>
 module.exports = {
     mainDb,
     getLocationDatabase,
+    prepareLocationDatabase,
     closeLocationDatabase,
     closeAllDatabases
 };

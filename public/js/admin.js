@@ -133,8 +133,10 @@ async function selectLocation(locationId, locationName, locationCode) {
     document.getElementById('user-form').style.display = 'flex';
     document.getElementById('users-table').style.display = 'table';
 
-    // ユーザー一覧を読み込み
+    // ユーザー一覧と、出す人の名簿を読み込み
     await loadUsers(locationId);
+    document.getElementById('roster-section').style.display = 'block';
+    await loadRoster(locationId);
 }
 
 // ユーザー一覧読み込み
@@ -1384,4 +1386,171 @@ function renderTakeoutRows(data) {
             </tr>
         `;
     }).join('');
+}
+
+// ========== 出す人の名簿 ==========
+//
+// 店の出庫のダイアログでは、この名簿から 1 人を選ぶ（自由には打たせない）。
+// 「田中・佐藤」のように 2 人をまとめた名前を入れさせないため。
+
+document.getElementById('add-roster-btn').addEventListener('click', () => {
+    const input = document.getElementById('roster-name');
+    addRosterName(input.value).then(added => {
+        if (added) input.value = '';
+    });
+});
+
+document.getElementById('roster-name').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('add-roster-btn').click();
+    }
+});
+
+async function loadRoster(locationId = selectedLocationId) {
+    if (!locationId) return;
+
+    try {
+        const response = await fetch(`/api/auth/admin/locations/${locationId}/roster`);
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || '名簿の取得に失敗しました');
+        }
+
+        renderRoster(data.names);
+        renderRosterSuggestions(data.suggestions);
+    } catch (error) {
+        console.error('名簿の読み込みエラー:', error);
+        alert(error.message || '名簿の読み込みに失敗しました');
+    }
+}
+
+// 名簿の名前。手で足した人は × で外せる。シフトから載っている人は「シフト」と出し、
+// 外せない（シフトが無くなれば自然に外れる）。名前は textContent で入れる
+function renderRoster(names) {
+    const list = document.getElementById('roster-list');
+    list.innerHTML = '';
+    document.getElementById('roster-count').textContent = `${names.length}人`;
+
+    if (names.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'takeout-note';
+        empty.textContent = 'まだ誰もいません。この店では、名簿に登録するまで出庫できません。';
+        list.appendChild(empty);
+        return;
+    }
+
+    names.forEach(({ id, name, source }) => {
+        const item = document.createElement('span');
+        item.className = `roster-item roster-item-${source}`;
+        item.dataset.name = name;
+        item.dataset.source = source;
+
+        const label = document.createElement('span');
+        label.textContent = name;
+        item.appendChild(label);
+
+        if (source === 'shift') {
+            const tag = document.createElement('small');
+            tag.className = 'roster-source';
+            tag.textContent = 'シフト';
+            item.title = 'ジョブカンのシフトから自動で載っています';
+            item.appendChild(tag);
+        } else {
+            // 名簿を作ったときに記録から入った人。2 人組が紛れていないか見直してもらうため印を付ける
+            if (source === 'history') {
+                const tag = document.createElement('small');
+                tag.className = 'roster-source roster-source-history';
+                tag.textContent = '記録から';
+                item.title = 'それまでの記録から名簿に入れました。違う人なら × で外してください';
+                item.appendChild(tag);
+            }
+
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'roster-remove';
+            remove.title = `${name} を名簿から外す`;
+            remove.textContent = '×';
+            remove.addEventListener('click', () => removeRosterName(id, name));
+            item.appendChild(remove);
+        }
+
+        list.appendChild(item);
+    });
+}
+
+// 記録やシフトにある名前のうち、まだ名簿にないもの。押すと名簿に入る
+function renderRosterSuggestions(suggestions) {
+    const wrap = document.getElementById('roster-suggestions-wrap');
+    const list = document.getElementById('roster-suggestions');
+    list.innerHTML = '';
+    wrap.style.display = suggestions.length > 0 ? 'block' : 'none';
+
+    suggestions.forEach(({ name, source }) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'roster-suggestion';
+        button.dataset.name = name;
+        button.textContent = `＋ ${name}`;
+
+        const from = document.createElement('small');
+        from.textContent = `（${source}）`;
+        button.appendChild(from);
+
+        button.addEventListener('click', () => addRosterName(name));
+        list.appendChild(button);
+    });
+}
+
+/** @returns {Promise<boolean>} 足せたか */
+async function addRosterName(name) {
+    if (!selectedLocationId) return false;
+
+    if (!String(name).trim()) {
+        alert('名前を入れてください');
+        return false;
+    }
+
+    try {
+        const response = await fetchWithCsrf(`/api/auth/admin/locations/${selectedLocationId}/roster`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+            alert(data.error || '名簿への追加に失敗しました');
+            return false;
+        }
+
+        await loadRoster();
+        return true;
+    } catch (error) {
+        console.error('名簿への追加エラー:', error);
+        alert('名簿への追加に失敗しました');
+        return false;
+    }
+}
+
+async function removeRosterName(id, name) {
+    if (!confirm(`${name} を名簿から外しますか？\n（これまでの出庫の記録はそのまま残ります）`)) return;
+
+    try {
+        const response = await fetchWithCsrf(`/api/auth/admin/locations/${selectedLocationId}/roster/${id}`, {
+            method: 'DELETE'
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+            alert(data.error || '名簿からの削除に失敗しました');
+            return;
+        }
+
+        await loadRoster();
+    } catch (error) {
+        console.error('名簿からの削除エラー:', error);
+        alert('名簿からの削除に失敗しました');
+    }
 }

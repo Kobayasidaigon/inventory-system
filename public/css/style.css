@@ -2024,3 +2024,87 @@ table tbody tr:hover {
         flex: 0 0 100px;
     }
 }
+
+/* 出す人の名簿（管理画面） */
+.roster-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 12px 0;
+}
+
+.roster-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 6px 6px 14px;
+    border: 1px solid #c3cbe8;
+    border-radius: 20px;
+    background: #f0f3ff;
+    color: #3c4a8a;
+    font-size: 14px;
+}
+
+.roster-item-shift {
+    padding-right: 10px;
+    border-color: #b7e4c7;
+    background: #f0fff4;
+    color: #276749;
+}
+
+.roster-source {
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: #c6f6d5;
+    color: #276749;
+    font-size: 11px;
+}
+
+.roster-source-history {
+    background: #fefcbf;
+    color: #744210;
+}
+
+.roster-item .roster-remove {
+    border: none;
+    border-radius: 50%;
+    width: 26px;
+    height: 26px;
+    background: transparent;
+    color: #a0aec0;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.roster-item .roster-remove:hover {
+    background: #fed7d7;
+    color: #c53030;
+}
+
+.roster-suggestion {
+    padding: 6px 14px;
+    border: 1px dashed #a0aec0;
+    border-radius: 20px;
+    background: white;
+    color: #4a5568;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.roster-suggestion:hover {
+    border-color: #667eea;
+    color: #4c5fd5;
+}
+
+.roster-suggestion small {
+    margin-left: 4px;
+    color: #a0aec0;
+    font-size: 11px;
+}
+
+.roster-suggestions-title {
+    margin: 16px 0 4px;
+    font-size: 15px;
+    color: #4a5568;
+}

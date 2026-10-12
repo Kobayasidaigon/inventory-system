@@ -2052,12 +2052,24 @@ table tbody tr:hover {
     color: #276749;
 }
 
+.roster-item-user {
+    padding-right: 10px;
+    border-color: #bee3f8;
+    background: #ebf8ff;
+    color: #2c5282;
+}
+
 .roster-source {
     padding: 1px 6px;
     border-radius: 8px;
     background: #c6f6d5;
     color: #276749;
     font-size: 11px;
+}
+
+.roster-item-user .roster-source {
+    background: #bee3f8;
+    color: #2c5282;
 }
 
 .roster-source-history {
@@ -2107,4 +2119,38 @@ table tbody tr:hover {
     margin: 16px 0 4px;
     font-size: 15px;
     color: #4a5568;
+}
+
+/* 店のユーザーの表（管理画面）。スマホでは ID と登録日を隠して、
+   ユーザーID・ユーザー名・編集/削除が 1 画面（幅 360px から）に収まるようにする。
+   表の行は 1 行ずつの横並びなので、列の幅は決め打ちにして、長い名前は折り返す */
+@media (max-width: 768px) {
+    #users-table th:nth-child(1),
+    #users-table td:nth-child(1),
+    #users-table th:nth-child(4),
+    #users-table td:nth-child(4) {
+        display: none;
+    }
+
+    #users-table th:nth-child(2),
+    #users-table td:nth-child(2),
+    #users-table th:nth-child(3),
+    #users-table td:nth-child(3) {
+        min-width: 100px;
+        max-width: 100px;
+        flex: 0 0 100px;
+    }
+
+    #users-table td:nth-child(2),
+    #users-table td:nth-child(3) {
+        white-space: normal;
+        word-break: break-all;
+    }
+
+    #users-table th:last-child,
+    #users-table td:last-child {
+        min-width: 116px;
+        max-width: 116px;
+        flex: 0 0 116px;
+    }
 }

@@ -51,10 +51,12 @@ let locationId = null;
 // 2025 年で絞ればテストを流す日に左右されない
 const YEAR_2025 = { startDate: '2025-01-01', endDate: '2025-12-31' };
 // 出す人の名簿。出庫はこの人たちしかできない。
-// 手で足す人（MANUAL）と、ジョブカンのシフトから自動で載る人（SHIFT）を合わせたもの
+// 手で足す人（MANUAL）と、ジョブカンのシフトから自動で載る人（SHIFT）と、
+// 店のユーザー（setupLocationUser が作る「テスト担当」）から自動で載る人（USERS）を合わせたもの
 const MANUAL = ['田中 花子', '佐藤', '鈴木', '山田'];
 const SHIFT = ['早番 一郎', '遅番 二郎', '中番 三郎'];
-const ROSTER = [...MANUAL, ...SHIFT];
+const USERS = ['テスト担当'];
+const ROSTER = [...MANUAL, ...SHIFT, ...USERS];
 const products = {};
 
 /** 日本時間の今日（YYYY-MM-DD） */
@@ -968,7 +970,16 @@ async function testAdminScreen() {
         doc.querySelector('.admin-tab[data-tab="management"]').click();
         await waitFor(() => doc.querySelector('.location-item .location-info'), '拠点の一覧が出る');
         doc.querySelector('.location-item .location-info').click();
-        const rosterNames = () => [...doc.querySelectorAll('#roster-list .roster-item')].map(item => item.dataset.name);
+        await waitFor(() => doc.querySelector('#users-list .btn-delete'), '店のユーザーが出る');
+        const usersTable = doc.getElementById('users-table');
+        addResult(
+            '管理画面: 店を選ぶと、店のユーザーが削除ボタン付きで出る（表の display を決め打ちしない）',
+            // 'table' と決め打ちすると、スマホ用の表示が効かずに削除ボタンが画面の外に出る
+            usersTable.style.display === '' &&
+                doc.querySelector('#users-list tr').textContent.includes('tester'),
+            `display="${usersTable.style.display}" / ${doc.getElementById('users-list').textContent.replace(/\s+/g, ' ').trim()}`
+        );
+        const rosterNames =() => [...doc.querySelectorAll('#roster-list .roster-item')].map(item => item.dataset.name);
         const suggestionNames = () => [...doc.querySelectorAll('#roster-suggestions .roster-suggestion')].map(b => b.dataset.name);
         await waitFor(() => rosterNames().length === ROSTER.length, '名簿が出る');
         const shiftItems = [...doc.querySelectorAll('#roster-list .roster-item[data-source="shift"]')];
@@ -978,6 +989,13 @@ async function testAdminScreen() {
                 [...rosterNames()].sort().join(',') === [...ROSTER].sort().join(',') &&
                 suggestionNames().includes('臨時 花子'),
             `名簿 ${rosterNames().join(' , ')} / 候補 ${suggestionNames().join(' , ')}`
+        );
+        const userItem = doc.querySelector('#roster-list .roster-item[data-name="テスト担当"]');
+        addResult(
+            '管理画面: 店のユーザーから載っている人は「ユーザー」と出て、× で外せない',
+            userItem && userItem.dataset.source === 'user' && userItem.textContent.includes('ユーザー') &&
+                !userItem.querySelector('.roster-remove'),
+            userItem ? userItem.textContent : '（いない）'
         );
         addResult(
             '管理画面: シフトから載っている人は「シフト」と出て、× で外せない',
@@ -1015,6 +1033,76 @@ async function testAdminScreen() {
     } finally {
         window.close();
     }
+}
+
+/**
+ * 店のユーザー（管理画面の「ユーザー管理」）は、その店の名簿に自動で載る。
+ * 出庫を入れるので、件数を数えるテストのあとに流す
+ */
+async function testStoreUsersOnRoster() {
+    const rosterOf = async () => (await admin.request('GET', rosterUrl())).body.names;
+    const sourceIn = (names, name) => (names.find(n => n.name === name) || {}).source;
+
+    const initial = await rosterOf();
+    const manualUser = await admin.request('POST', rosterUrl(), { name: 'テスト担当' });
+    addResult(
+        '名簿(ユーザー): 店のユーザーは「ユーザー」として自動で載り、手で重ねて足すことはできない',
+        sourceIn(initial, 'テスト担当') === 'user' && manualUser.status === 409 &&
+            String(manualUser.body.error).includes('店のユーザー'),
+        `テスト担当: ${sourceIn(initial, 'テスト担当')} / 足す ${manualUser.status} ${manualUser.body.error || ''}`
+    );
+
+    // 同じ店に 2 人、別の店に 1 人足す
+    const other = await admin.request('POST', '/api/auth/admin/locations', { locationName: '別のテスト店' });
+    for (const [location, userId, userName] of [
+        [locationId, 'order1', '発注 担当'],
+        [locationId, 'pair1', '田中・佐藤'],
+        [other.body.locationId, 'other1', '他店 次郎']
+    ]) {
+        const res = await admin.request('POST', '/api/auth/admin/users', {
+            locationId: location, userId, userName, password: 'test-password-1234'
+        });
+        if (res.status !== 200) {
+            throw new Error(`ユーザーを作れませんでした: ${userName} / ${JSON.stringify(res.body)}`);
+        }
+    }
+
+    const added = await rosterOf();
+    addResult(
+        '名簿(ユーザー): ユーザーを足すと載る。2 人をまとめた名前と、別の店のユーザーは載らない',
+        sourceIn(added, '発注 担当') === 'user' && !sourceIn(added, '田中・佐藤') && !sourceIn(added, '他店 次郎'),
+        added.map(n => `${n.name}(${n.source})`).join(' , ')
+    );
+
+    const takeout = await request('POST', '/api/inventory/out', {
+        productId: products.joy, quantity: 1, date: '2025-12-30', takenBy: '発注 担当'
+    });
+    const otherStore = await request('POST', '/api/inventory/out', {
+        productId: products.joy, quantity: 1, date: '2025-12-30', takenBy: '他店 次郎'
+    });
+    const row = await findHistory('joy', 'out', '2025-12-30');
+    addResult(
+        '名簿(ユーザー): 店のユーザーの名前で出庫でき、別の店のユーザーの名前では出庫できない',
+        takeout.status === 200 && row && row.taken_by === '発注 担当' && otherStore.status === 400,
+        `この店 ${takeout.status} (${row && row.taken_by}) / 別の店 ${otherStore.status}`
+    );
+
+    const users = (await admin.request('GET', `/api/auth/admin/locations/${locationId}/users`)).body;
+    const orderUser = users.find(user => user.user_id === 'order1');
+    await admin.request('PUT', `/api/auth/admin/users/${orderUser.id}`, { userId: 'order1', userName: '発注 係' });
+    const renamed = await rosterOf();
+    await admin.request('DELETE', `/api/auth/admin/users/${orderUser.id}`);
+    const deleted = await rosterOf();
+    const afterDelete = await request('POST', '/api/inventory/out', {
+        productId: products.joy, quantity: 1, date: '2025-12-31', takenBy: '発注 係'
+    });
+    addResult(
+        '名簿(ユーザー): ユーザー名を直すと名簿も変わり、ユーザーを削除すると名簿から外れて出庫できない',
+        sourceIn(renamed, '発注 係') === 'user' && !sourceIn(renamed, '発注 担当') &&
+            !sourceIn(deleted, '発注 係') && afterDelete.status === 400 &&
+            !(await findHistory('joy', 'out', '2025-12-31')),
+        `直した後 ${renamed.map(n => n.name).join(' , ')} / 削除後の出庫 ${afterDelete.status}`
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1056,6 +1144,7 @@ async function testAdminScreen() {
         await testAdminScreen();
         // 入場リンクの出庫は最後に入れる（件数を数えるテストに混ざらないように）
         await testEntryLinkName(location.locationCode);
+        await testStoreUsersOnRoster();
     } catch (err) {
         results.failed++;
         console.error('\n❌ テストの実行中にエラーが発生しました:', err.stack || err.message);

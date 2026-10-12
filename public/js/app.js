@@ -2882,15 +2882,21 @@ async function loadTakerCandidates() {
     } catch (error) {
         // 候補が取れなくても、名前を打てば出庫はできる
         console.error('名前の候補の取得エラー:', error);
-        return { scheduledToday: [], recent: [], operatorName: null };
+        return { scheduledToday: [], recent: [], operators: [], storeStaff: [], operatorName: null };
     }
 }
 
-// 候補のボタンに並べる名前。入場リンクの名前 → 今日の勤務 → 最近使った名前の順
+// 候補のボタンに並べる名前。入場リンクの名前 → 今日の勤務 → 最近出庫で使った名前 →
+// この店で記録を入れた人 → この店の前後 30 日の勤務の順
 function takerChipNames(candidates) {
-    const names = [candidates.operatorName, ...candidates.scheduledToday, ...candidates.recent]
-        .filter(Boolean);
-    return [...new Set(names)].slice(0, 15);
+    const names = [
+        candidates.operatorName,
+        ...(candidates.scheduledToday || []),
+        ...(candidates.recent || []),
+        ...(candidates.operators || []),
+        ...(candidates.storeStaff || [])
+    ].filter(Boolean);
+    return [...new Set(names)].slice(0, 20);
 }
 
 // 出庫のダイアログ。誰が何個出したかを入れてもらう。
@@ -2946,7 +2952,19 @@ async function openTakeoutDialog(productId, quantity) {
         });
     };
 
-    takerChipNames(candidates).forEach(name => {
+    const chipNames = takerChipNames(candidates);
+
+    // 候補が 1 つも無いとき（始めたばかりの店など）は、そう伝える。
+    // 「下から選んで」と出したまま空だと、壊れているように見える
+    if (chipNames.length === 0) {
+        takerInput.placeholder = '名前を入れてください';
+        const note = document.createElement('p');
+        note.className = 'taker-empty-note';
+        note.textContent = '名前の候補はまだありません。名前を入れてください（一度入れた名前は、次から下に並びます）';
+        chips.appendChild(note);
+    }
+
+    chipNames.forEach(name => {
         const chip = document.createElement('button');
         chip.type = 'button';
         chip.className = 'taker-chip';

@@ -397,17 +397,18 @@ async function listShiftMembers(mainDb, locationId) {
 
 /**
  * 名簿の全員を名前順に返す。
- * @returns {Promise<Array<{id: number|null, name: string, source: 'shift'|'manual'}>>}
- *          id は手で足した人だけ（外すときに使う）。シフトの人は null
+ * @returns {Promise<Array<{id: number|null, name: string, source: 'shift'|'manual'|'history'}>>}
+ *          source の history は、名簿を作ったときに記録から入れた人（manual と同じく外せる）。
+ *          id は名簿のテーブルにいる人だけ（外すときに使う）。シフトの人は null
  */
 async function listRoster(db, mainDb, locationId) {
-    const manual = await db.all('SELECT id, name FROM taker_roster');
+    const manual = await db.all('SELECT id, name, source FROM taker_roster');
     const shift = await listShiftMembers(mainDb, locationId);
     const manualNames = new Set(manual.map(row => row.name));
 
     return [
         ...shift.filter(name => !manualNames.has(name)).map(name => ({ id: null, name, source: 'shift' })),
-        ...manual.map(row => ({ id: row.id, name: row.name, source: 'manual' }))
+        ...manual.map(row => ({ id: row.id, name: row.name, source: row.source === 'history' ? 'history' : 'manual' }))
     ].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
@@ -658,10 +659,12 @@ async function buildTakeoutCsv(db, mainDb, query, fileNamePrefix) {
 
 module.exports = {
     TAKER_MAX_LENGTH,
+    MULTI_PERSON_NAME,
     QUICK_OPERATION_NOTE,
     QUICK_RESTOCK_RATIO,
     TAKEOUT_LIST_LIMIT,
     parseTakerName,
+    normalizeName,
     detectQuickRestocks,
     findQuickRestocks,
     summarizeByTaker,

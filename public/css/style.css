@@ -2060,6 +2060,11 @@ table tbody tr:hover {
     font-size: 11px;
 }
 
+.roster-source-history {
+    background: #fefcbf;
+    color: #744210;
+}
+
 .roster-item .roster-remove {
     border: none;
     border-radius: 50%;

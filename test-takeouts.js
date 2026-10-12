@@ -2,7 +2,8 @@
  * 出庫記録（誰が何個出したか）と、補充が早すぎる商品の見張りのテスト。
  *
  * 1. 計算: 早すぎる補充の判定（データベースに触らない部分）
- * 2. 名簿と登録: 出す人は店の名簿から選ぶ。名簿にない名前（2 人をまとめた名前など）は弾く
+ * 2. 名簿と登録: 出す人は店の名簿から選ぶ。名簿にない名前（2 人をまとめた名前など）は弾く。
+ *    名簿ができたときに 1 回だけ、それまでの記録の名前で名簿を作る
  * 3. 出庫記録 API（管理者だけ）: 人ごとの集計・絞り込み・早すぎる補充と、その間に出した人。
  *    店の利用者からは見られない
  * 4. CSV（管理者だけ）: 条件どおりの行を全件、出した人・補充が早い期間の列、ファイル名
@@ -18,6 +19,7 @@
 process.env.TZ = 'Asia/Tokyo';
 
 const fs = require('fs');
+const path = require('path');
 const {
     createResults,
     createTempDbDir,
@@ -243,8 +245,82 @@ function testDetect() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. 登録
+// 2. 名簿と登録
 // ---------------------------------------------------------------------------
+
+/** sqlite3 の接続を、アプリと同じ Promise の形（get/all/run）にする */
+function promised(raw) {
+    const call = method => (sql, params = []) => new Promise((resolve, reject) => {
+        raw[method](sql, params, function (err, result) {
+            if (err) return reject(err);
+            resolve(method === 'run' ? { lastID: this.lastID, changes: this.changes } : result);
+        });
+    });
+    return { get: call('get'), all: call('all'), run: call('run') };
+}
+
+/**
+ * 今の本番と同じ「名簿のテーブルが無く、記録はある」データベースで、名簿が記録から
+ * 作られるか。サーバーは起動せず、データベースの準備の処理を直接呼ぶ。
+ */
+async function testRosterSeed() {
+    // database-admin は読み込むと DB_DIR に main.db を開くので、使い捨ての場所にする
+    const seedDir = createTempDbDir('inventory-roster-seed');
+    process.env.DB_DIR = seedDir;
+    const { prepareLocationDatabase } = require('./server/db/database-admin');
+    const sqlite3 = require('sqlite3');
+    const raw = new sqlite3.Database(path.join(seedDir, 'location_seed.db'));
+    const db = promised(raw);
+
+    try {
+        // 前の版のデータベースを作る（テーブルを作ってから、名簿のテーブルだけ消す）
+        await prepareLocationDatabase(db);
+        await db.run('DROP TABLE taker_roster');
+
+        const history = (operator, takenBy = null, at = "datetime('now')") => db.run(
+            `INSERT INTO inventory_history (product_id, type, quantity, user_id, operator_name, taken_by, created_at)
+             VALUES (1, 'out', 1, 1, ?, ?, ${at})`,
+            [operator, takenBy]
+        );
+        await history('田中 花子');
+        await history('田中・佐藤');
+        await history('山本•川口');
+        await history('佐藤　健');
+        await history(null, '鈴木');
+        await history('昔 太郎', null, "datetime('now', '-200 days')");
+        await db.run("INSERT INTO order_requests (product_id, requested_quantity, user_id, operator_name) VALUES (1, 1, 1, '発注 さん')");
+        await db.run("INSERT INTO inventory_counts (count_date, user_id, operator_name) VALUES ('2026-10-01', 1, '棚卸 さん')");
+
+        // 新しい版で開く
+        await prepareLocationDatabase(db);
+        const seeded = await db.all('SELECT name, source FROM taker_roster ORDER BY name');
+        const names = seeded.map(row => row.name);
+        addResult(
+            '名簿の作成: 名簿ができたとき、それまでの記録（清掃管理表の担当者・出した人・発注・棚卸）から名前を入れる',
+            JSON.stringify(names) === JSON.stringify(['佐藤 健', '棚卸 さん', '田中 花子', '発注 さん', '鈴木'].sort()) &&
+                seeded.every(row => row.source === 'history'),
+            JSON.stringify(seeded)
+        );
+        addResult(
+            '名簿の作成: 2 人をまとめた名前（・ •）と、180 日より前の名前は入れない',
+            !names.includes('田中・佐藤') && !names.includes('山本•川口') && !names.includes('昔 太郎'),
+            names.join(' , ')
+        );
+
+        // 2 回目からは作らない（管理者が外した人を、再起動のたびに戻さない）
+        await db.run("DELETE FROM taker_roster WHERE name = '発注 さん'");
+        await prepareLocationDatabase(db);
+        const again = await db.all('SELECT name FROM taker_roster');
+        addResult(
+            '名簿の作成: 1 回だけ。外した人が、次に起動したときに戻ってこない',
+            again.length === 4 && !again.some(row => row.name === '発注 さん'),
+            again.map(row => row.name).join(' , ')
+        );
+    } finally {
+        raw.close();
+        fs.rmSync(seedDir, { recursive: true, force: true });
+    }
+}
 
 async function testRoster() {
     const list = await admin.request('GET', rosterUrl());
@@ -949,6 +1025,7 @@ async function testAdminScreen() {
     console.log('========================================\n');
 
     testDetect();
+    await testRosterSeed();
 
     const { server, waitUntilReady } = startServer({
         port: PORT,

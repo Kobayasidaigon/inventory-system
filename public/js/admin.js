@@ -1458,6 +1458,15 @@ function renderRoster(names) {
             item.title = 'ジョブカンのシフトから自動で載っています';
             item.appendChild(tag);
         } else {
+            // 名簿を作ったときに記録から入った人。2 人組が紛れていないか見直してもらうため印を付ける
+            if (source === 'history') {
+                const tag = document.createElement('small');
+                tag.className = 'roster-source roster-source-history';
+                tag.textContent = '記録から';
+                item.title = 'それまでの記録から名簿に入れました。違う人なら × で外してください';
+                item.appendChild(tag);
+            }
+
             const remove = document.createElement('button');
             remove.type = 'button';
             remove.className = 'roster-remove';

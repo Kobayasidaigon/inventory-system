@@ -278,18 +278,22 @@ function tokyoDate(offsetDays = 0) {
 const STORE_STAFF_DAYS = 30;
 
 /**
- * 出庫のダイアログで選べるようにする名前の候補。
+ * 2 人以上をまとめて書いたように見える名前（「田中・佐藤」「田中、佐藤」など）。
+ * 名簿の候補には出さない。名簿は 1 人ずつにしたいため。
+ * 外国の方の「マイケル・ジョーダン」のような名前も引っかかるが、候補に出ないだけで、
+ * 管理画面で打てば名簿には入れられる。
+ */
+const MULTI_PERSON_NAME = /[・•･、，,\/／&＆+＋]/;
+
+/**
+ * この店に関係のある名前を、出どころごとに集める。名簿の並び順と、名簿に足す候補に使う。
  *
  * - scheduledToday: ジョブカンの勤務予定で、今日この拠点に入っている人（始業の早い順）
  * - recent: 最近（90 日）出庫で使われた名前。新しく使われた順
- * - operators: 最近（90 日）この店で記録を入れた人の名前（清掃管理表の入場リンクの担当者）。
- *   出庫の名前がまだたまっていない、始めたばかりの店でも候補が出るように
- * - storeStaff: 今日の前後 30 日に、この店の勤務予定がある人（勤務の多い順）。
- *   今日の予定が取り込まれていない日や、予定外に入った人のため
- *
- * 毎回打つより選ぶ方が速く、同じ人の名前の書き方もそろう。
+ * - operators: 最近（90 日）この店で記録を入れた人の名前（清掃管理表の入場リンクの担当者）
+ * - storeStaff: 今日の前後 30 日に、この店の勤務予定がある人（勤務の多い順）
  */
-async function listTakerCandidates(db, mainDb, locationId) {
+async function collectKnownNames(db, mainDb, locationId) {
     const recent = await db.all(`
         SELECT taken_by AS name, MAX(created_at) AS last_used
         FROM inventory_history
@@ -337,7 +341,7 @@ async function listTakerCandidates(db, mainDb, locationId) {
         `, [locationId, tokyoDate(-STORE_STAFF_DAYS), tokyoDate(STORE_STAFF_DAYS)]);
     }
 
-    // 名前の決まり（記号など）に合わないものは候補に出さない。押しても登録で弾かれるため
+    // 名前の決まり（記号など）に合わないものは使わない。名簿にも入れられないため
     const usable = rows => rows.map(row => row.name).filter(name => {
         try {
             return parseTakerName(name) === name;
@@ -352,6 +356,128 @@ async function listTakerCandidates(db, mainDb, locationId) {
         operators: usable(operators),
         storeStaff: usable(storeStaff)
     };
+}
+
+// ---------------------------------------------------------------------------
+// 出す人の名簿
+//
+// 出庫のダイアログでは、店ごとの名簿から 1 人を選ぶ（自由に打たせない）。
+// 打てると「田中・佐藤」のように 2 人をまとめた名前や、同じ人の書き方違いが入り、
+// 誰が何個出したかが人ごとに集計できなくなるため。名簿は管理画面で管理者が作る。
+// ---------------------------------------------------------------------------
+
+/** 名簿の名前を、登録した id つきで名前順に返す */
+async function listRoster(db) {
+    return db.all('SELECT id, name FROM taker_roster ORDER BY name');
+}
+
+/**
+ * 名簿に 1 人足す。名前の決まりは出庫と同じ（parseTakerName）。
+ * @returns {Promise<{id: number, name: string}>}
+ */
+async function addToRoster(db, value) {
+    const name = parseTakerName(value);
+
+    if (!name) {
+        throw new StockError('名前を入れてください');
+    }
+
+    const existing = await db.get('SELECT id FROM taker_roster WHERE name = ?', [name]);
+    if (existing) {
+        throw new StockError(`「${name}」はもう名簿にあります`, 409);
+    }
+
+    const result = await db.run('INSERT INTO taker_roster (name) VALUES (?)', [name]);
+    return { id: result.lastID, name };
+}
+
+/** 名簿から外す。これまでの出庫の記録に残った名前は、そのまま残る */
+async function removeFromRoster(db, id) {
+    const result = await db.run('DELETE FROM taker_roster WHERE id = ?', [id]);
+    if (result.changes === 0) {
+        throw new StockError('名簿にその人はいません', 404);
+    }
+}
+
+/**
+ * 出庫で送られてきた「出した人」を確かめる。名簿にない名前は受け付けない。
+ *
+ * @param {*} value - 送られてきた名前
+ * @returns {Promise<string|null>} 名簿にある名前。送られてこなければ null
+ */
+async function requireRosterName(db, value) {
+    const name = parseTakerName(value);
+
+    if (!name) {
+        return null;
+    }
+
+    const found = await db.get('SELECT name FROM taker_roster WHERE name = ?', [name]);
+    if (!found) {
+        throw new StockError(`「${name}」は出す人の名簿にありません。名簿から選んでください`);
+    }
+
+    return found.name;
+}
+
+/** name が名簿にあれば、その名前を返す（入場リンクの名前を最初から選んでおくかの判断用） */
+async function rosterNameOrNull(db, value) {
+    try {
+        return await requireRosterName(db, value);
+    } catch (err) {
+        return null;
+    }
+}
+
+/**
+ * 出庫のダイアログに並べる名前。名簿の全員を、選ばれそうな順に並べる。
+ *
+ * 今日の勤務 → 最近出庫で使った人 → この店で記録を入れた人 → 前後 30 日の勤務 → 残り（名前順）。
+ * 名簿にない名前は出さない。
+ *
+ * @returns {Promise<string[]>}
+ */
+async function listTakerCandidates(db, mainDb, locationId) {
+    const roster = (await listRoster(db)).map(row => row.name);
+    const known = await collectKnownNames(db, mainDb, locationId);
+    const onRoster = new Set(roster);
+
+    const ordered = [
+        ...known.scheduledToday,
+        ...known.recent,
+        ...known.operators,
+        ...known.storeStaff
+    ].filter(name => onRoster.has(name));
+
+    return [...new Set([...ordered, ...roster])];
+}
+
+/**
+ * 名簿に足す候補。記録やジョブカンの勤務予定にある名前のうち、まだ名簿にないもの。
+ * 2 人をまとめたように見える名前は出さない。
+ *
+ * @returns {Promise<Array<{name: string, source: string}>>}
+ */
+async function listRosterSuggestions(db, mainDb, locationId) {
+    const onRoster = new Set((await listRoster(db)).map(row => row.name));
+    const known = await collectKnownNames(db, mainDb, locationId);
+    const sources = [
+        ['シフト', known.storeStaff],
+        ['出庫の記録', known.recent],
+        ['清掃管理表から入った人', known.operators]
+    ];
+
+    const suggestions = new Map();
+    for (const [source, names] of sources) {
+        for (const name of names) {
+            if (onRoster.has(name) || MULTI_PERSON_NAME.test(name) || suggestions.has(name)) {
+                continue;
+            }
+            suggestions.set(name, { name, source });
+        }
+    }
+
+    return [...suggestions.values()];
 }
 
 /**
@@ -495,6 +621,12 @@ module.exports = {
     findQuickRestocks,
     summarizeByTaker,
     listTakerCandidates,
+    listRoster,
+    addToRoster,
+    removeFromRoster,
+    requireRosterName,
+    rosterNameOrNull,
+    listRosterSuggestions,
     buildTakeoutReport,
     buildTakeoutCsv
 };

@@ -434,6 +434,30 @@
                 <tbody id="users-list"></tbody>
             </table>
         </div>
+
+        <!-- 出す人の名簿。店の出庫のダイアログでは、ここに登録した人から 1 人を選ぶ -->
+        <div class="admin-section" id="roster-section" style="display: none;">
+            <h2>出す人の名簿 <span id="roster-count" class="takeout-badge"></span></h2>
+            <p class="takeout-note">
+                店の画面で「-1」「-5」を押したときに選ぶ名前です。名簿にない名前では出庫できません。<br>
+                <strong>1 人ずつ登録してください。</strong>「田中・佐藤」のように 2 人をまとめた名前は登録しないでください。
+                名簿から外しても、これまでの出庫の記録はそのまま残ります。
+            </p>
+            <div class="form-inline">
+                <div class="form-group">
+                    <label for="roster-name">名前</label>
+                    <input type="text" id="roster-name" maxlength="40" placeholder="例: 田中 花子">
+                </div>
+                <button id="add-roster-btn" class="btn btn-primary">名簿に追加</button>
+            </div>
+            <div id="roster-list" class="roster-list"></div>
+
+            <div id="roster-suggestions-wrap" style="display: none;">
+                <h3 class="roster-suggestions-title">記録やシフトにある名前（押すと名簿に追加）</h3>
+                <p class="takeout-note">2 人をまとめたように見える名前（「・」「、」などを含むもの）は出していません。</p>
+                <div id="roster-suggestions" class="roster-list"></div>
+            </div>
+        </div>
         </div>
 
         <!-- ご意見ボックスタブ -->

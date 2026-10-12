@@ -2,7 +2,7 @@
  * 出庫記録（誰が何個出したか）と、補充が早すぎる商品の見張りのテスト。
  *
  * 1. 計算: 早すぎる補充の判定（データベースに触らない部分）
- * 2. 登録: 出庫に「出した人」が残る。おかしな名前は弾く
+ * 2. 名簿と登録: 出す人は店の名簿から選ぶ。名簿にない名前（2 人をまとめた名前など）は弾く
  * 3. 出庫記録 API（管理者だけ）: 人ごとの集計・絞り込み・早すぎる補充と、その間に出した人。
  *    店の利用者からは見られない
  * 4. CSV（管理者だけ）: 条件どおりの行を全件、出した人・補充が早い期間の列、ファイル名
@@ -48,6 +48,8 @@ let locationId = null;
 // 取引日は 2025 年にそろえる。商品登録の初期在庫は「今日」の調整履歴で入るので、
 // 2025 年で絞ればテストを流す日に左右されない
 const YEAR_2025 = { startDate: '2025-01-01', endDate: '2025-12-31' };
+// 出す人の名簿。出庫はこの人たちしかできない
+const ROSTER = ['田中 花子', '佐藤', '鈴木', '早番 一郎', '遅番 二郎', '山田'];
 const products = {};
 
 /** 日本時間の今日（YYYY-MM-DD） */
@@ -106,6 +108,20 @@ async function takeouts(query) {
 /** 管理者用の出庫記録 CSV の URL */
 function takeoutsCsvUrl(query) {
     return `/api/auth/admin/locations/${locationId}/takeouts/export?${new URLSearchParams(query)}`;
+}
+
+function rosterUrl(suffix = '') {
+    return `/api/auth/admin/locations/${locationId}/roster${suffix}`;
+}
+
+/** 管理者として、出す人の名簿に入れる（出庫は名簿にある人しかできない） */
+async function seedRoster(names) {
+    for (const name of names) {
+        const res = await admin.request('POST', rosterUrl(), { name });
+        if (res.status !== 200) {
+            throw new Error(`名簿に入れられませんでした: ${name} / ${JSON.stringify(res.body)}`);
+        }
+    }
 }
 
 async function loginAdmin() {
@@ -205,6 +221,44 @@ function testDetect() {
 // 2. 登録
 // ---------------------------------------------------------------------------
 
+async function testRoster() {
+    const list = await admin.request('GET', rosterUrl());
+    addResult(
+        '名簿: 管理者は店の名簿を見られる（名前順）',
+        list.status === 200 && list.body.locationName === 'テスト店' &&
+            JSON.stringify(list.body.names.map(n => n.name)) === JSON.stringify([...ROSTER].sort()),
+        JSON.stringify(list.body.names.map(n => n.name))
+    );
+
+    const duplicate = await admin.request('POST', rosterUrl(), { name: ' 佐藤 ' });
+    const bad = await admin.request('POST', rosterUrl(), { name: '<b>佐藤</b>' });
+    const empty = await admin.request('POST', rosterUrl(), { name: '   ' });
+    addResult(
+        '名簿: 同じ名前・使えない文字・空の名前は入れない',
+        duplicate.status === 409 && bad.status === 400 && empty.status === 400,
+        `重複 ${duplicate.status} / 記号 ${bad.status} / 空 ${empty.status}`
+    );
+
+    const added = await admin.request('POST', rosterUrl(), { name: '一時 退職' });
+    const removed = await admin.request('DELETE', rosterUrl(`/${added.body.id}`));
+    const again = await admin.request('DELETE', rosterUrl(`/${added.body.id}`));
+    const afterRemove = await admin.request('GET', rosterUrl());
+    addResult(
+        '名簿: 外せる（外した人はもう名簿にいない）',
+        added.status === 200 && removed.status === 200 && again.status === 404 &&
+            !afterRemove.body.names.some(n => n.name === '一時 退職'),
+        `追加 ${added.status} / 削除 ${removed.status} / もう一度 ${again.status}`
+    );
+
+    const staffRead = await request('GET', rosterUrl());
+    const staffWrite = await request('POST', rosterUrl(), { name: '勝手 登録' });
+    addResult(
+        '名簿: 店の利用者は名簿を見たり変えたりできない（管理者だけ）',
+        staffRead.status === 403 && staffWrite.status === 403,
+        `見る ${staffRead.status} / 足す ${staffWrite.status}`
+    );
+}
+
 async function testRegister() {
     await out('paper', '2025-01-05', 2, '  田中　花子 ');
     const row = await findHistory('paper', 'out', '2025-01-05');
@@ -217,6 +271,8 @@ async function testRegister() {
     const before = (await request('GET', '/api/products')).body.find(p => p.id === products.paper).current_stock;
 
     const badCases = [
+        ['名簿にない名前', '高橋'],
+        ['2 人をまとめた名前', '田中・佐藤'],
         ['HTML になる文字', '<b>田中</b>'],
         ['& を含む', '田中&佐藤'],
         ['長すぎる名前', 'あ'.repeat(41)]
@@ -230,6 +286,15 @@ async function testRegister() {
 
     const after = (await request('GET', '/api/products')).body.find(p => p.id === products.paper).current_stock;
     addResult('登録: 拒否したときは在庫が動かない', before === after, `${before} → ${after}`);
+
+    const notOnRoster = await request('POST', '/api/inventory/out', {
+        productId: products.paper, quantity: 1, date: '2025-01-05', takenBy: '高橋'
+    });
+    addResult(
+        '登録: 名簿にない名前は、名簿から選ぶよう伝える',
+        notOnRoster.body.error && notOnRoster.body.error.includes('名簿にありません'),
+        notOnRoster.body.error
+    );
 
     // 開きっぱなしの古い画面は名前を送らない。それでも出庫はできる（未記入として残る）
     await out('paper', '2025-01-06', 1);
@@ -484,26 +549,32 @@ async function testCandidates() {
     });
 
     const res = await request('GET', '/api/inventory/takers');
+    const names = res.body.names;
     addResult(
-        '候補: 今日の勤務予定の人が、始業の早い順に並ぶ',
-        imported.status === 200 && JSON.stringify(res.body.scheduledToday) === JSON.stringify(['早番 一郎', '遅番 二郎']),
-        JSON.stringify(res.body.scheduledToday)
+        '候補: ダイアログには名簿の全員が並ぶ（名簿にない人は出ない）',
+        imported.status === 200 && [...names].sort().join(',') === [...ROSTER].sort().join(',') &&
+            !names.includes('中番 三郎'),
+        JSON.stringify(names)
     );
     addResult(
-        '候補: 最近出庫で使われた名前',
-        ['鈴木', '田中 花子', '佐藤'].every(name => res.body.recent.includes(name)),
-        JSON.stringify(res.body.recent)
+        '候補: 今日の勤務の人（始業の早い順）→ 最近出庫で使った人 → 残りの順',
+        names[0] === '早番 一郎' && names[1] === '遅番 二郎' &&
+            ['鈴木', '田中 花子', '佐藤'].every(name => names.indexOf(name) > 1 && names.indexOf(name) < names.indexOf('山田')),
+        names.join(' , ')
     );
     addResult(
-        '候補: 今日でなくても、前後 30 日にこの店の勤務がある人も出る（今日の勤務には入らない）',
-        ['早番 一郎', '遅番 二郎', '中番 三郎'].every(name => res.body.storeStaff.includes(name)) &&
-            !res.body.scheduledToday.includes('中番 三郎'),
-        `storeStaff ${JSON.stringify(res.body.storeStaff)}`
-    );
-    addResult(
-        '候補: 普通のログインでは、最初から入れる名前は無い',
+        '候補: 普通のログインでは、最初から選んでおく名前は無い',
         res.body.operatorName === null,
         `operatorName: ${res.body.operatorName}`
+    );
+
+    // 名簿に足す候補（管理画面）: シフトにいて名簿にない人
+    const roster = await admin.request('GET', rosterUrl());
+    const suggested = roster.body.suggestions.map(s => s.name);
+    addResult(
+        '名簿の候補: シフトや記録にあって、まだ名簿にない人が出る（名簿の人は出ない）',
+        suggested.includes('中番 三郎') && !suggested.some(name => ROSTER.includes(name)),
+        JSON.stringify(roster.body.suggestions)
     );
 }
 
@@ -531,12 +602,43 @@ async function testEntryLinkName(locationCode) {
     await visitor.request('POST', '/api/inventory/out', {
         productId: products.joy, quantity: 1, date: '2025-07-02', takenBy: '佐藤'
     });
-    // 入場リンクで記録を入れた人は、普通のログインで入った端末のダイアログにも候補として出る
-    const fromStore = await request('GET', '/api/inventory/takers');
+    // 清掃管理表で 2 人組の担当者（「田中・佐藤」）として入ってきた場合
+    const pair = createClient(BASE_URL);
+    const pairParams = {
+        loc: locationCode,
+        user: 'tester',
+        exp: Math.floor(Date.now() / 1000) + 300,
+        nonce: `nonce-takeouts-pair-${Date.now()}`,
+        by: '田中・佐藤'
+    };
+    await pair.request('GET', `/enter?${canonicalString(pairParams)}&sig=${sign(pairParams, LINK_SECRET)}`, undefined, { redirect: 'manual' });
+    await pair.refreshCsrfToken();
+
+    const pairCandidates = await pair.request('GET', '/api/inventory/takers');
+    const pairTyped = await pair.request('POST', '/api/inventory/out', {
+        productId: products.joy, quantity: 1, date: '2025-07-03', takenBy: '田中・佐藤'
+    });
+    await pair.request('POST', '/api/inventory/out', { productId: products.joy, quantity: 1, date: '2025-07-03' });
+    const pairRow = await findHistory('joy', 'out', '2025-07-03');
     addResult(
-        '候補: この店で記録を入れた人（入場リンクの担当者）も出る',
-        fromStore.body.operators.includes('山田'),
-        `operators ${JSON.stringify(fromStore.body.operators)}`
+        '2 人組: 「田中・佐藤」で入っても最初から選ばれず、その名前では出庫できない（送らなければ未記入）',
+        pairCandidates.body.operatorName === null && pairTyped.status === 400 &&
+            pairRow && pairRow.taken_by === null && pairRow.operator_name === '田中・佐藤',
+        `operatorName ${pairCandidates.body.operatorName} / 名前つき ${pairTyped.status} / 名前なし taken_by=${pairRow && pairRow.taken_by}`
+    );
+
+    // 比べるために、1 人の名前（名簿にはまだいない）でも入っておく
+    const single = createClient(BASE_URL);
+    const singleParams = { ...pairParams, nonce: `nonce-takeouts-single-${Date.now()}`, by: '臨時 花子' };
+    await single.request('GET', `/enter?${canonicalString(singleParams)}&sig=${sign(singleParams, LINK_SECRET)}`, undefined, { redirect: 'manual' });
+    await single.refreshCsrfToken();
+    await single.request('POST', '/api/inventory/out', { productId: products.joy, quantity: 1, date: '2025-07-04' });
+
+    const suggestions = (await admin.request('GET', rosterUrl())).body.suggestions.map(s => s.name);
+    addResult(
+        '2 人組: 2 人をまとめた名前は名簿の候補に出ない（1 人の名前なら出る）',
+        suggestions.includes('臨時 花子') && !suggestions.includes('田中・佐藤'),
+        JSON.stringify(suggestions)
     );
 
     const rows = (await takeouts({ productId: products.joy, startDate: '2025-07-01', endDate: '2025-07-02' })).body.rows;
@@ -573,25 +675,27 @@ async function testScreen() {
 
         const chips = [...doc.querySelectorAll('#takeout-taker-chips .taker-chip')].map(c => c.textContent);
         addResult(
-            '画面: -1 を押すと、何個・誰が出したかを入れるダイアログが開く',
+            '画面: -1 を押すと、何個・誰が出したかを入れるダイアログが開く（まだ誰も選ばれていない）',
             doc.getElementById('modal').classList.contains('show') &&
                 doc.getElementById('takeout-quantity').value === '1' &&
-                doc.getElementById('takeout-taker').value === '' &&
+                doc.querySelectorAll('.taker-chip.selected').length === 0 &&
                 (await paperStock()) === before,
             `個数 ${doc.getElementById('takeout-quantity').value} / 在庫 ${before}`
         );
         addResult(
-            '画面: 名前の候補は今日の勤務の人 → 最近使った名前の順',
-            chips[0] === '早番 一郎' && chips[1] === '遅番 二郎' && chips.includes('田中 花子'),
+            '画面: 名前は打てず、名簿の人のボタンだけ（今日の勤務の人が先頭）',
+            !doc.querySelector('#takeout-form input[type="text"]') &&
+                chips[0] === '早番 一郎' && chips[1] === '遅番 二郎' &&
+                [...chips].sort().join(',') === [...ROSTER].sort().join(','),
             chips.join(' , ')
         );
 
-        // 名前を入れずに押すと止める
+        // 誰も選ばずに押すと止める
         doc.getElementById('takeout-submit').click();
         await waitFor(() => doc.getElementById('takeout-error').style.display === 'block', 'エラーが出る');
         addResult(
-            '画面: 名前が空なら登録しない',
-            doc.getElementById('takeout-error').textContent.includes('名前') && (await paperStock()) === before,
+            '画面: 出した人を選ばなければ登録しない',
+            doc.getElementById('takeout-error').textContent.includes('選んでください') && (await paperStock()) === before,
             doc.getElementById('takeout-error').textContent
         );
 
@@ -621,19 +725,18 @@ async function testScreen() {
         );
         window.closeModal();
 
-        // 候補が 1 つも無い店（始めたばかりなど）では、空のまま「下から選んで」と出さずに、そう伝える
+        // 名簿が空の店では、選べる人がいないので出庫できない。理由とどうすればよいかを出す
         const realCandidates = window.loadTakerCandidates;
-        window.loadTakerCandidates = async () =>
-            ({ scheduledToday: [], recent: [], operators: [], storeStaff: [], operatorName: null });
+        window.loadTakerCandidates = async () => ({ names: [], operatorName: null });
         doc.getElementById('modal-body').innerHTML = '';
         paperCard().querySelector('button[title="1個出庫"]').click();
-        await waitFor(() => doc.getElementById('takeout-form'), '出庫のダイアログが開く（候補なし）');
+        await waitFor(() => doc.getElementById('takeout-form'), '出庫のダイアログが開く（名簿なし）');
         const emptyNote = doc.querySelector('#takeout-taker-chips .taker-empty-note');
         addResult(
-            '画面: 名前の候補が無いときは、名前を入れるよう案内する',
-            emptyNote && emptyNote.textContent.includes('名前の候補はまだありません') &&
+            '画面: 名簿が空なら、管理者に登録を頼むよう案内し、出庫ボタンを押せない',
+            emptyNote && emptyNote.textContent.includes('名簿がまだありません') &&
                 doc.querySelectorAll('.taker-chip').length === 0 &&
-                doc.getElementById('takeout-taker').placeholder === '名前を入れてください',
+                doc.getElementById('takeout-submit').disabled === true,
             emptyNote ? emptyNote.textContent : '案内なし'
         );
         window.closeModal();
@@ -750,6 +853,42 @@ async function testAdminScreen() {
             `${downloaded} / ${unrecordedCsv.lines.length} 行`
         );
 
+        // --- 出す人の名簿（ユーザー・拠点管理で、店を選ぶと出る） ---
+        doc.querySelector('.admin-tab[data-tab="management"]').click();
+        await waitFor(() => doc.querySelector('.location-item .location-info'), '拠点の一覧が出る');
+        doc.querySelector('.location-item .location-info').click();
+        const rosterNames = () => [...doc.querySelectorAll('#roster-list .roster-item')].map(item => item.dataset.name);
+        const suggestionNames = () => [...doc.querySelectorAll('#roster-suggestions .roster-suggestion')].map(b => b.dataset.name);
+        await waitFor(() => rosterNames().length === ROSTER.length, '名簿が出る');
+        addResult(
+            '管理画面: 店を選ぶと、出す人の名簿と、足す候補（シフトにいる人）が出る',
+            doc.getElementById('roster-section').style.display === 'block' &&
+                [...rosterNames()].sort().join(',') === [...ROSTER].sort().join(',') &&
+                suggestionNames().includes('中番 三郎'),
+            `名簿 ${rosterNames().join(' , ')} / 候補 ${suggestionNames().join(' , ')}`
+        );
+
+        doc.getElementById('roster-name').value = '新人 太郎';
+        doc.getElementById('add-roster-btn').click();
+        await waitFor(() => rosterNames().includes('新人 太郎'), '打った名前が名簿に入る');
+        [...doc.querySelectorAll('#roster-suggestions .roster-suggestion')]
+            .find(b => b.dataset.name === '中番 三郎').click();
+        await waitFor(() => rosterNames().includes('中番 三郎'), '候補を押すと名簿に入る');
+        addResult(
+            '管理画面: 名前を打って足せる・候補を押して足せる（足した候補は候補から消える）',
+            rosterNames().includes('新人 太郎') && rosterNames().includes('中番 三郎') &&
+                !suggestionNames().includes('中番 三郎') && doc.getElementById('roster-name').value === '',
+            rosterNames().join(' , ')
+        );
+
+        doc.querySelector('#roster-list .roster-item[data-name="新人 太郎"] .roster-remove').click();
+        await waitFor(() => !rosterNames().includes('新人 太郎'), '× で名簿から外れる');
+        addResult(
+            '管理画面: × で名簿から外せる',
+            !rosterNames().includes('新人 太郎'),
+            rosterNames().join(' , ')
+        );
+
         addResult(
             '管理画面: 操作中にエラーが出ていない',
             errors.length === 0,
@@ -780,11 +919,13 @@ async function testAdminScreen() {
         const location = await setupLocationUser(client);
         locationId = location.locationId;
         await loginAdmin();
+        await seedRoster(ROSTER);
 
         await createProduct('paper', 'トイレットペーパー', '衛生用品', 500);
         await createProduct('glove', 'ニトリルグローブ(Ｍサイズ)', '衛生用品', 500);
         await createProduct('joy', 'P&G ジョイ 1/2', '洗剤', 200);
 
+        await testRoster();
         await testRegister();
         await prepareRestocks();
         await testTakeoutsApi();

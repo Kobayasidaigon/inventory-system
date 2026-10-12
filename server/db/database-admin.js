@@ -345,6 +345,17 @@ const locationTablesSql = [
         FOREIGN KEY (shift_id) REFERENCES shifts(id)
     )`,
 
+    // 出す人の名簿テーブル
+    //
+    // 出庫のダイアログでは、この名簿から 1 人を選ぶ（自由に打たせない）。
+    // 「田中・佐藤」のように 2 人をまとめた名前や書き方違いが入ると、人ごとに
+    // 集計できなくなるため。管理画面の拠点管理で、管理者が 1 人ずつ登録する。
+    `CREATE TABLE IF NOT EXISTS taker_roster (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`,
+
     // 棚卸テーブル
     `CREATE TABLE IF NOT EXISTS inventory_counts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -2871,7 +2871,7 @@ async function refreshAfterStockChange() {
 
 // ========== 出庫（誰が何個出したか） ==========
 
-// 出した人の名前の候補。ダイアログを開くたびに読み直す（今日の勤務・最近使った名前は変わるため）
+// 出す人の名簿（選ばれそうな順）。ダイアログを開くたびに読み直す（名簿や今日の勤務は変わるため）
 async function loadTakerCandidates() {
     try {
         const response = await fetch('/api/inventory/takers');
@@ -2880,27 +2880,16 @@ async function loadTakerCandidates() {
         }
         return await response.json();
     } catch (error) {
-        // 候補が取れなくても、名前を打てば出庫はできる
-        console.error('名前の候補の取得エラー:', error);
-        return { scheduledToday: [], recent: [], operators: [], storeStaff: [], operatorName: null };
+        console.error('出す人の名簿の取得エラー:', error);
+        return { names: [], operatorName: null, failed: true };
     }
 }
 
-// 候補のボタンに並べる名前。入場リンクの名前 → 今日の勤務 → 最近出庫で使った名前 →
-// この店で記録を入れた人 → この店の前後 30 日の勤務の順
-function takerChipNames(candidates) {
-    const names = [
-        candidates.operatorName,
-        ...(candidates.scheduledToday || []),
-        ...(candidates.recent || []),
-        ...(candidates.operators || []),
-        ...(candidates.storeStaff || [])
-    ].filter(Boolean);
-    return [...new Set(names)].slice(0, 20);
-}
-
 // 出庫のダイアログ。誰が何個出したかを入れてもらう。
-// 共用のアカウントで入っていると、ログインの名前だけでは誰が出したか分からないため
+// 共用のアカウントで入っていると、ログインの名前だけでは誰が出したか分からないため。
+//
+// 出した人は店の名簿から 1 人を選ぶだけで、自由には打たせない。打てると
+// 「田中・佐藤」のように 2 人をまとめた名前や書き方違いが入り、人ごとに集計できなくなる。
 async function openTakeoutDialog(productId, quantity) {
     const product = products.find(p => p.id === productId);
     if (!product) return;
@@ -2911,8 +2900,13 @@ async function openTakeoutDialog(productId, quantity) {
     }
 
     const candidates = await loadTakerCandidates();
+    const names = candidates.names || [];
     const modal = document.getElementById('modal');
     const modalBody = document.getElementById('modal-body');
+
+    // 入場リンクの名前が名簿にあるときだけ、最初から選んでおく。前の人の名前は残さない
+    // （共用の端末で、次の人がそのまま押してしまうため）
+    let selectedName = names.includes(candidates.operatorName) ? candidates.operatorName : null;
 
     modalBody.innerHTML = `
         <h3>出庫の登録</h3>
@@ -2924,10 +2918,8 @@ async function openTakeoutDialog(productId, quantity) {
                     value="${quantity}" required>
             </div>
             <div class="form-group">
-                <label for="takeout-taker">出した人</label>
-                <input type="text" id="takeout-taker" maxlength="40" autocomplete="off"
-                    placeholder="名前を入れるか、下から選んでください" required>
-                <div id="takeout-taker-chips" class="taker-chips"></div>
+                <label id="takeout-taker-label">出した人（1 人を選んでください）</label>
+                <div id="takeout-taker-chips" class="taker-chips" role="group" aria-labelledby="takeout-taker-label"></div>
             </div>
             <p id="takeout-error" class="takeout-error" style="display: none;"></p>
             <button type="submit" id="takeout-submit" class="btn btn-primary">出庫する</button>
@@ -2936,47 +2928,42 @@ async function openTakeoutDialog(productId, quantity) {
 
     const form = document.getElementById('takeout-form');
     const quantityInput = document.getElementById('takeout-quantity');
-    const takerInput = document.getElementById('takeout-taker');
     const chips = document.getElementById('takeout-taker-chips');
     const errorText = document.getElementById('takeout-error');
     const submitButton = document.getElementById('takeout-submit');
 
-    // 入場リンクで名前が分かっているときだけ最初から入れる。前の人の名前を残すと、
-    // 共用の端末で別の人がそのまま押してしまう
-    takerInput.value = candidates.operatorName || '';
-
-    // 名前は利用者の入力なので、innerHTML ではなく textContent で入れる
     const markSelected = () => {
         chips.querySelectorAll('.taker-chip').forEach(chip => {
-            chip.classList.toggle('selected', chip.dataset.name === takerInput.value.trim());
+            const selected = chip.dataset.name === selectedName;
+            chip.classList.toggle('selected', selected);
+            chip.setAttribute('aria-pressed', selected ? 'true' : 'false');
         });
     };
 
-    const chipNames = takerChipNames(candidates);
-
-    // 候補が 1 つも無いとき（始めたばかりの店など）は、そう伝える。
-    // 「下から選んで」と出したまま空だと、壊れているように見える
-    if (chipNames.length === 0) {
-        takerInput.placeholder = '名前を入れてください';
+    // 名簿が空なら、選べる人がいないので出庫できない。理由と、どうすればよいかを出す
+    if (names.length === 0) {
         const note = document.createElement('p');
         note.className = 'taker-empty-note';
-        note.textContent = '名前の候補はまだありません。名前を入れてください（一度入れた名前は、次から下に並びます）';
+        note.textContent = candidates.failed
+            ? '出す人の名簿を読み込めませんでした。画面を読み込み直してください'
+            : '出す人の名簿がまだありません。管理者に、管理画面の「ユーザー・拠点管理」で名簿に名前を登録してもらってください';
         chips.appendChild(note);
+        submitButton.disabled = true;
     }
 
-    chipNames.forEach(name => {
+    // 名前は名簿から来るが、念のため innerHTML ではなく textContent で入れる
+    names.forEach(name => {
         const chip = document.createElement('button');
         chip.type = 'button';
         chip.className = 'taker-chip';
         chip.dataset.name = name;
         chip.textContent = name;
         chip.addEventListener('click', () => {
-            takerInput.value = name;
+            selectedName = name;
             markSelected();
         });
         chips.appendChild(chip);
     });
-    takerInput.addEventListener('input', markSelected);
     markSelected();
 
     const showError = (message) => {
@@ -2989,7 +2976,6 @@ async function openTakeoutDialog(productId, quantity) {
         errorText.style.display = 'none';
 
         const count = Number(quantityInput.value);
-        const takenBy = takerInput.value.replace(/\s+/g, ' ').trim();
 
         if (!Number.isInteger(count) || count < 1) {
             showError('個数は 1 以上の整数で入れてください');
@@ -2999,8 +2985,8 @@ async function openTakeoutDialog(productId, quantity) {
             showError(`在庫が足りません（現在庫 ${product.current_stock}）`);
             return;
         }
-        if (!takenBy) {
-            showError('出した人の名前を入れてください');
+        if (!selectedName) {
+            showError('出した人を選んでください');
             return;
         }
 
@@ -3014,7 +3000,7 @@ async function openTakeoutDialog(productId, quantity) {
                     productId: productId,
                     quantity: count,
                     date: formatDate(new Date()),
-                    takenBy
+                    takenBy: selectedName
                 })
             });
 
@@ -3025,14 +3011,14 @@ async function openTakeoutDialog(productId, quantity) {
             }
 
             if (!response.ok) {
-                // 名前に使えない文字・在庫不足など、理由をそのまま見せる
+                // 名簿から外された人・在庫不足など、理由をそのまま見せる
                 const result = await response.json().catch(() => ({}));
                 showError(result.error || '登録に失敗しました');
                 return;
             }
 
             closeModal();
-            showQuickFeedback(`${product.name}（${takenBy}）`, -count);
+            showQuickFeedback(`${product.name}（${selectedName}）`, -count);
             await refreshAfterStockChange();
         } catch (error) {
             console.error('出庫エラー:', error);

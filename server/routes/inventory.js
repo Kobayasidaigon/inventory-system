@@ -24,7 +24,7 @@ const {
     formatHistoryDateTime,
     exportFileName
 } = require('../utils/history-query');
-const { parseTakerName, listTakerCandidates } = require('../services/takeouts');
+const { requireRosterName, rosterNameOrNull, listTakerCandidates } = require('../services/takeouts');
 const router = express.Router();
 
 /**
@@ -72,11 +72,13 @@ async function handleStockChange(req, res, type) {
         const quantity = parseQuantity(req.body.quantity);
         const date = parseTransactionDate(req.body.date);
         const note = sanitizeHtml(req.body.note || '');
-        // 出庫では「出した人」を残す。画面では必ず入れてもらうが、API では省略を許す。
+        // 出庫では「出した人」を残す。名前は店の名簿にある人だけ（2 人をまとめた名前や
+        // 書き方違いを入れさせない）。画面では必ず選んでもらうが、API では省略を許す。
         // 開きっぱなしの古い画面（名前を送らない）から出庫できなくなるのを避けるため。
-        // 省略されたら入場リンクの操作者名を使い、それも無ければ空（出庫記録で「未記入」）。
+        // 省略されたら入場リンクの操作者名を（名簿にあれば）使い、無ければ空（「未記入」）。
         const takenBy = type === 'out'
-            ? parseTakerName(req.body.takenBy) || req.session.operatorName || null
+            ? await requireRosterName(db, req.body.takenBy) ||
+              await rosterNameOrNull(db, req.session.operatorName)
             : null;
 
         const { product, autoOrder } = await withTransaction(db, async () => {
@@ -254,17 +256,18 @@ router.get('/history', requireAuth, async (req, res) => {
     }
 });
 
-// 出庫のダイアログで選べる名前の候補（今日の勤務予定・最近使われた名前）。
+// 出庫のダイアログで選べる名前（店の名簿の全員を、選ばれそうな順に）。
 // 誰が何個出したかの集計は、ここ（利用者画面）には出さない。管理画面だけで見る
 // （server/routes/auth-admin.js の /admin/locations/:locationId/takeouts）
 router.get('/takers', requireAuth, async (req, res) => {
     const db = getLocationDatabase(req.session.locationCode);
 
     try {
-        const candidates = await listTakerCandidates(db, mainDb, req.session.locationId);
+        const names = await listTakerCandidates(db, mainDb, req.session.locationId);
 
-        // 入場リンクで名前が分かっているときは、ダイアログに最初から入れておく
-        res.json({ ...candidates, operatorName: req.session.operatorName || null });
+        // 入場リンクで名前が分かっていて名簿にもあるときは、ダイアログで最初から選んでおく。
+        // 「田中・佐藤」のような名簿にない名前は選ばない
+        res.json({ names, operatorName: await rosterNameOrNull(db, req.session.operatorName) });
     } catch (err) {
         respondWithStockError(res, err, '名前の候補の取得に失敗しました');
     }

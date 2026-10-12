@@ -140,18 +140,29 @@ async function seed() {
         [location.lastID, STORE.userId, STORE.userName, bcrypt.hashSync(STORE.password, 10)]
     );
 
-    // 今日の勤務予定（出庫のダイアログで、名前のボタンの先頭に並ぶ）
-    for (const [name, start, end] of [['早番 一郎', '09:00', '14:00'], ['遅番 二郎', '17:00', '22:00']]) {
+    // 勤務予定。今日の 2 人は出庫のダイアログで名前のボタンの先頭に並ぶ。
+    // 中番さんは 3 日前の勤務で名簿にはいない（管理画面の名簿に「足す候補」として出る）
+    for (const [name, ago, start, end] of [
+        ['早番 一郎', 0, '09:00', '14:00'],
+        ['遅番 二郎', 0, '17:00', '22:00'],
+        ['中番 三郎', 3, '12:00', '18:00']
+    ]) {
         const staff = await mainDb.run('INSERT INTO staff (name) VALUES (?)', [name]);
         await mainDb.run(
             `INSERT INTO staff_schedules (staff_id, location_id, date, start_time, end_time, source)
              VALUES (?, ?, ?, ?, ?, 'demo')`,
-            [staff.lastID, location.lastID, daysAgo(0), start, end]
+            [staff.lastID, location.lastID, daysAgo(ago), start, end]
         );
     }
 
     const db = getLocationDatabase(STORE.locationCode);
     const productIds = {};
+
+    // 出す人の名簿（出庫のダイアログでは、この人たちから選ぶ）。
+    // 「中番 三郎」はわざと入れていない。管理画面の名簿に「足す候補」として出る
+    for (const name of ['田中 花子', '佐藤 健', '鈴木 一郎', '早番 一郎', '遅番 二郎']) {
+        await db.run('INSERT INTO taker_roster (name) VALUES (?)', [name]);
+    }
 
     for (const product of PRODUCTS) {
         const result = await db.run(
@@ -202,9 +213,9 @@ async function seed() {
   拠点「${STORE.locationName}」/ ユーザーID ${STORE.userId} / パスワード ${STORE.password}
   在庫カードの「-1」「-5」で、誰が何個出したかを登録
 
-管理画面（出庫記録・人ごとの集計・補充が早すぎる商品）
+管理画面（出庫記録・人ごとの集計・補充が早すぎる商品・出す人の名簿）
   「管理者ログイン」のタブで 管理者ID ${ADMIN.username} / パスワード ${ADMIN.password}
-  「出庫記録」タブ
+  「出庫記録」タブ。名簿は「ユーザー・拠点管理」で店を選ぶと出ます
 
 同じブラウザだとログインが入れ替わるので、片方はシークレットウィンドウで開くと楽です。
 止めるときは Ctrl+C。データは demo-db/ に残ります。

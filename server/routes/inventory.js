@@ -77,8 +77,8 @@ async function handleStockChange(req, res, type) {
         // 開きっぱなしの古い画面（名前を送らない）から出庫できなくなるのを避けるため。
         // 省略されたら入場リンクの操作者名を（名簿にあれば）使い、無ければ空（「未記入」）。
         const takenBy = type === 'out'
-            ? await requireRosterName(db, req.body.takenBy) ||
-              await rosterNameOrNull(db, req.session.operatorName)
+            ? await requireRosterName(db, mainDb, req.session.locationId, req.body.takenBy) ||
+              await rosterNameOrNull(db, mainDb, req.session.locationId, req.session.operatorName)
             : null;
 
         const { product, autoOrder } = await withTransaction(db, async () => {
@@ -267,7 +267,10 @@ router.get('/takers', requireAuth, async (req, res) => {
 
         // 入場リンクで名前が分かっていて名簿にもあるときは、ダイアログで最初から選んでおく。
         // 「田中・佐藤」のような名簿にない名前は選ばない
-        res.json({ names, operatorName: await rosterNameOrNull(db, req.session.operatorName) });
+        res.json({
+            names,
+            operatorName: await rosterNameOrNull(db, mainDb, req.session.locationId, req.session.operatorName)
+        });
     } catch (err) {
         respondWithStockError(res, err, '名前の候補の取得に失敗しました');
     }

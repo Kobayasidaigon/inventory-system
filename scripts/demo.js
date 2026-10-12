@@ -140,8 +140,8 @@ async function seed() {
         [location.lastID, STORE.userId, STORE.userName, bcrypt.hashSync(STORE.password, 10)]
     );
 
-    // 勤務予定。今日の 2 人は出庫のダイアログで名前のボタンの先頭に並ぶ。
-    // 中番さんは 3 日前の勤務で名簿にはいない（管理画面の名簿に「足す候補」として出る）
+    // 勤務予定。この 3 人は「シフト」として自動で名簿に載る。
+    // 今日の 2 人は、出庫のダイアログで名前のボタンの先頭に並ぶ
     for (const [name, ago, start, end] of [
         ['早番 一郎', 0, '09:00', '14:00'],
         ['遅番 二郎', 0, '17:00', '22:00'],
@@ -158,9 +158,9 @@ async function seed() {
     const db = getLocationDatabase(STORE.locationCode);
     const productIds = {};
 
-    // 出す人の名簿（出庫のダイアログでは、この人たちから選ぶ）。
-    // 「中番 三郎」はわざと入れていない。管理画面の名簿に「足す候補」として出る
-    for (const name of ['田中 花子', '佐藤 健', '鈴木 一郎', '早番 一郎', '遅番 二郎']) {
+    // 出す人の名簿のうち、手で足す人（出庫のダイアログでは、この人たちとシフトの人から選ぶ）。
+    // 早番・遅番・中番はシフトから自動で名簿に載るので、ここでは足さない
+    for (const name of ['田中 花子', '佐藤 健', '鈴木 一郎']) {
         await db.run('INSERT INTO taker_roster (name) VALUES (?)', [name]);
     }
 

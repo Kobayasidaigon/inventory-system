@@ -2045,6 +2045,21 @@ table tbody tr:hover {
     font-size: 14px;
 }
 
+.roster-item-shift {
+    padding-right: 10px;
+    border-color: #b7e4c7;
+    background: #f0fff4;
+    color: #276749;
+}
+
+.roster-source {
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: #c6f6d5;
+    color: #276749;
+    font-size: 11px;
+}
+
 .roster-item .roster-remove {
     border: none;
     border-radius: 50%;

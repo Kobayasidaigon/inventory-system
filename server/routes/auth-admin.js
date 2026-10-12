@@ -690,7 +690,8 @@ router.get('/admin/locations/:locationId/takeouts/export', async (req, res) => {
 // 出す人の名簿（管理者のみ）
 //
 // 店の出庫のダイアログでは、この名簿から 1 人を選ぶ。名簿にない名前では出庫できない。
-// 候補（suggestions）は、記録やジョブカンの勤務予定にある名前のうち名簿にないもの。
+// 名簿はジョブカンのシフトの人（自動）と、手で足した人を合わせたもの。
+// 候補（suggestions）は、記録にある名前のうち名簿にないもの。
 router.get('/admin/locations/:locationId/roster', async (req, res) => {
     try {
         const location = await findLocationForAdmin(req, res);
@@ -700,7 +701,7 @@ router.get('/admin/locations/:locationId/roster', async (req, res) => {
 
         res.json({
             locationName: location.location_name,
-            names: await listRoster(db),
+            names: await listRoster(db, mainDb, location.id),
             suggestions: await listRosterSuggestions(db, mainDb, location.id)
         });
     } catch (err) {
@@ -713,7 +714,7 @@ router.post('/admin/locations/:locationId/roster', async (req, res) => {
         const location = await findLocationForAdmin(req, res);
         if (!location) return;
 
-        const added = await addToRoster(getLocationDatabase(location.location_code), req.body.name);
+        const added = await addToRoster(getLocationDatabase(location.location_code), mainDb, location.id, req.body.name);
         res.json({ success: true, ...added });
     } catch (err) {
         respondWithStockError(res, err, '名簿への追加に失敗しました');

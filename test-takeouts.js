@@ -48,8 +48,11 @@ let locationId = null;
 // 取引日は 2025 年にそろえる。商品登録の初期在庫は「今日」の調整履歴で入るので、
 // 2025 年で絞ればテストを流す日に左右されない
 const YEAR_2025 = { startDate: '2025-01-01', endDate: '2025-12-31' };
-// 出す人の名簿。出庫はこの人たちしかできない
-const ROSTER = ['田中 花子', '佐藤', '鈴木', '早番 一郎', '遅番 二郎', '山田'];
+// 出す人の名簿。出庫はこの人たちしかできない。
+// 手で足す人（MANUAL）と、ジョブカンのシフトから自動で載る人（SHIFT）を合わせたもの
+const MANUAL = ['田中 花子', '佐藤', '鈴木', '山田'];
+const SHIFT = ['早番 一郎', '遅番 二郎', '中番 三郎'];
+const ROSTER = [...MANUAL, ...SHIFT];
 const products = {};
 
 /** 日本時間の今日（YYYY-MM-DD） */
@@ -121,6 +124,28 @@ async function seedRoster(names) {
         if (res.status !== 200) {
             throw new Error(`名簿に入れられませんでした: ${name} / ${JSON.stringify(res.body)}`);
         }
+    }
+}
+
+/**
+ * ジョブカンから勤務予定を取り込む（拠点名「テスト店」で結びつく）。早番・遅番は今日、
+ * 中番は同じ月の 3 日ずれた日。遅番の名前は全角の空白にしておく（名簿では半角にそろう）
+ */
+async function importShifts() {
+    const [year, month, day] = tokyoToday().split('-');
+    const otherDay = Number(day) >= 4 ? Number(day) - 3 : Number(day) + 3;
+    const res = await request('POST', '/api/staff/import-schedules', {
+        secret: IMPORT_SECRET,
+        targetMonth: `${year}-${month}`,
+        schedules: [
+            { staffName: '早番 一郎', day: Number(day), startTime: '09:00', endTime: '14:00', groupId: '3', groupName: 'テスト店' },
+            { staffName: '遅番　二郎', day: Number(day), startTime: '17:00', endTime: '22:00', groupId: '3', groupName: 'テスト店' },
+            { staffName: '中番 三郎', day: otherDay, startTime: '12:00', endTime: '18:00', groupId: '3', groupName: 'テスト店' }
+        ]
+    });
+
+    if (res.status !== 200) {
+        throw new Error(`勤務予定を取り込めませんでした: ${JSON.stringify(res.body)}`);
     }
 }
 
@@ -223,11 +248,25 @@ function testDetect() {
 
 async function testRoster() {
     const list = await admin.request('GET', rosterUrl());
+    const sourceOf = name => (list.body.names.find(n => n.name === name) || {}).source;
     addResult(
-        '名簿: 管理者は店の名簿を見られる（名前順）',
+        '名簿: 手で足した人と、ジョブカンのシフトの人が名前順に並ぶ',
         list.status === 200 && list.body.locationName === 'テスト店' &&
-            JSON.stringify(list.body.names.map(n => n.name)) === JSON.stringify([...ROSTER].sort()),
-        JSON.stringify(list.body.names.map(n => n.name))
+            JSON.stringify(list.body.names.map(n => n.name)) === JSON.stringify([...ROSTER].sort()) &&
+            MANUAL.every(name => sourceOf(name) === 'manual') && SHIFT.every(name => sourceOf(name) === 'shift'),
+        JSON.stringify(list.body.names.map(n => `${n.name}(${n.source})`))
+    );
+    addResult(
+        '名簿: ジョブカンの全角の空白の名前は、半角にそろえて載る（落とさない）',
+        sourceOf('遅番 二郎') === 'shift',
+        `遅番 二郎: ${sourceOf('遅番 二郎')}`
+    );
+
+    const fromShift = await admin.request('POST', rosterUrl(), { name: '早番 一郎' });
+    addResult(
+        '名簿: シフトから載っている人を、手で重ねて足すことはできない',
+        fromShift.status === 409,
+        `status ${fromShift.status} / ${fromShift.body.error || ''}`
     );
 
     const duplicate = await admin.request('POST', rosterUrl(), { name: ' 佐藤 ' });
@@ -531,29 +570,12 @@ async function testCsv() {
 // 5. 名前の候補
 // ---------------------------------------------------------------------------
 
-async function testCandidates() {
-    const today = tokyoToday();
-    const [year, month, day] = today.split('-');
-
-    // ジョブカンから勤務予定を取り込む（拠点名「テスト店」で結びつく）。
-    // 中番さんは今日ではなく、同じ月の 3 日ずれた日に入っている
-    const otherDay = Number(day) >= 4 ? Number(day) - 3 : Number(day) + 3;
-    const imported = await request('POST', '/api/staff/import-schedules', {
-        secret: IMPORT_SECRET,
-        targetMonth: `${year}-${month}`,
-        schedules: [
-            { staffName: '早番 一郎', day: Number(day), startTime: '09:00', endTime: '14:00', groupId: '3', groupName: 'テスト店' },
-            { staffName: '遅番 二郎', day: Number(day), startTime: '17:00', endTime: '22:00', groupId: '3', groupName: 'テスト店' },
-            { staffName: '中番 三郎', day: otherDay, startTime: '12:00', endTime: '18:00', groupId: '3', groupName: 'テスト店' }
-        ]
-    });
-
+async function testCandidates(locationCode) {
     const res = await request('GET', '/api/inventory/takers');
     const names = res.body.names;
     addResult(
-        '候補: ダイアログには名簿の全員が並ぶ（名簿にない人は出ない）',
-        imported.status === 200 && [...names].sort().join(',') === [...ROSTER].sort().join(',') &&
-            !names.includes('中番 三郎'),
+        '候補: ダイアログには名簿の全員が並ぶ（シフトの人も、手で足した人も）',
+        [...names].sort().join(',') === [...ROSTER].sort().join(','),
         JSON.stringify(names)
     );
     addResult(
@@ -568,12 +590,25 @@ async function testCandidates() {
         `operatorName: ${res.body.operatorName}`
     );
 
-    // 名簿に足す候補（管理画面）: シフトにいて名簿にない人
+    // 名簿に足す候補（管理画面）: 記録にあって名簿にない人。清掃管理表から入って
+    // 補充（入庫）だけした人を作る（出庫の件数を数えるテストに混ざらないよう、入庫にする）
+    const visitor = createClient(BASE_URL);
+    const params = {
+        loc: locationCode,
+        user: 'tester',
+        exp: Math.floor(Date.now() / 1000) + 300,
+        nonce: `nonce-takeouts-temp-${Date.now()}`,
+        by: '臨時 花子'
+    };
+    await visitor.request('GET', `/enter?${canonicalString(params)}&sig=${sign(params, LINK_SECRET)}`, undefined, { redirect: 'manual' });
+    await visitor.refreshCsrfToken();
+    await visitor.request('POST', '/api/inventory/in', { productId: products.joy, quantity: 1, note: 'テスト補充' });
+
     const roster = await admin.request('GET', rosterUrl());
     const suggested = roster.body.suggestions.map(s => s.name);
     addResult(
-        '名簿の候補: シフトや記録にあって、まだ名簿にない人が出る（名簿の人は出ない）',
-        suggested.includes('中番 三郎') && !suggested.some(name => ROSTER.includes(name)),
+        '名簿の候補: 記録にあって名簿にない人が出る（名簿の人・シフトの人は出ない）',
+        suggested.includes('臨時 花子') && !suggested.some(name => ROSTER.includes(name)),
         JSON.stringify(roster.body.suggestions)
     );
 }
@@ -629,7 +664,7 @@ async function testEntryLinkName(locationCode) {
 
     // 比べるために、1 人の名前（名簿にはまだいない）でも入っておく
     const single = createClient(BASE_URL);
-    const singleParams = { ...pairParams, nonce: `nonce-takeouts-single-${Date.now()}`, by: '臨時 花子' };
+    const singleParams = { ...pairParams, nonce: `nonce-takeouts-single-${Date.now()}`, by: '臨時 次郎' };
     await single.request('GET', `/enter?${canonicalString(singleParams)}&sig=${sign(singleParams, LINK_SECRET)}`, undefined, { redirect: 'manual' });
     await single.refreshCsrfToken();
     await single.request('POST', '/api/inventory/out', { productId: products.joy, quantity: 1, date: '2025-07-04' });
@@ -637,7 +672,7 @@ async function testEntryLinkName(locationCode) {
     const suggestions = (await admin.request('GET', rosterUrl())).body.suggestions.map(s => s.name);
     addResult(
         '2 人組: 2 人をまとめた名前は名簿の候補に出ない（1 人の名前なら出る）',
-        suggestions.includes('臨時 花子') && !suggestions.includes('田中・佐藤'),
+        suggestions.includes('臨時 次郎') && !suggestions.includes('田中・佐藤'),
         JSON.stringify(suggestions)
     );
 
@@ -860,24 +895,31 @@ async function testAdminScreen() {
         const rosterNames = () => [...doc.querySelectorAll('#roster-list .roster-item')].map(item => item.dataset.name);
         const suggestionNames = () => [...doc.querySelectorAll('#roster-suggestions .roster-suggestion')].map(b => b.dataset.name);
         await waitFor(() => rosterNames().length === ROSTER.length, '名簿が出る');
+        const shiftItems = [...doc.querySelectorAll('#roster-list .roster-item[data-source="shift"]')];
         addResult(
-            '管理画面: 店を選ぶと、出す人の名簿と、足す候補（シフトにいる人）が出る',
+            '管理画面: 店を選ぶと、出す人の名簿と、足す候補（記録にある人）が出る',
             doc.getElementById('roster-section').style.display === 'block' &&
                 [...rosterNames()].sort().join(',') === [...ROSTER].sort().join(',') &&
-                suggestionNames().includes('中番 三郎'),
+                suggestionNames().includes('臨時 花子'),
             `名簿 ${rosterNames().join(' , ')} / 候補 ${suggestionNames().join(' , ')}`
+        );
+        addResult(
+            '管理画面: シフトから載っている人は「シフト」と出て、× で外せない',
+            shiftItems.map(item => item.dataset.name).sort().join(',') === [...SHIFT].sort().join(',') &&
+                shiftItems.every(item => item.textContent.includes('シフト') && !item.querySelector('.roster-remove')),
+            shiftItems.map(item => item.textContent).join(' , ')
         );
 
         doc.getElementById('roster-name').value = '新人 太郎';
         doc.getElementById('add-roster-btn').click();
         await waitFor(() => rosterNames().includes('新人 太郎'), '打った名前が名簿に入る');
         [...doc.querySelectorAll('#roster-suggestions .roster-suggestion')]
-            .find(b => b.dataset.name === '中番 三郎').click();
-        await waitFor(() => rosterNames().includes('中番 三郎'), '候補を押すと名簿に入る');
+            .find(b => b.dataset.name === '臨時 花子').click();
+        await waitFor(() => rosterNames().includes('臨時 花子'), '候補を押すと名簿に入る');
         addResult(
             '管理画面: 名前を打って足せる・候補を押して足せる（足した候補は候補から消える）',
-            rosterNames().includes('新人 太郎') && rosterNames().includes('中番 三郎') &&
-                !suggestionNames().includes('中番 三郎') && doc.getElementById('roster-name').value === '',
+            rosterNames().includes('新人 太郎') && rosterNames().includes('臨時 花子') &&
+                !suggestionNames().includes('臨時 花子') && doc.getElementById('roster-name').value === '',
             rosterNames().join(' , ')
         );
 
@@ -919,7 +961,8 @@ async function testAdminScreen() {
         const location = await setupLocationUser(client);
         locationId = location.locationId;
         await loginAdmin();
-        await seedRoster(ROSTER);
+        await seedRoster(MANUAL);
+        await importShifts();
 
         await createProduct('paper', 'トイレットペーパー', '衛生用品', 500);
         await createProduct('glove', 'ニトリルグローブ(Ｍサイズ)', '衛生用品', 500);
@@ -931,7 +974,7 @@ async function testAdminScreen() {
         await testTakeoutsApi();
         await testAccess();
         await testCsv();
-        await testCandidates();
+        await testCandidates(location.locationCode);
         await testScreen();
         await testAdminScreen();
         // 入場リンクの出庫は最後に入れる（件数を数えるテストに混ざらないように）

@@ -1426,7 +1426,8 @@ async function loadRoster(locationId = selectedLocationId) {
     }
 }
 
-// 名簿の名前。× で名簿から外す。名前は利用者の入力なので textContent で入れる
+// 名簿の名前。手で足した人は × で外せる。シフトから載っている人は「シフト」と出し、
+// 外せない（シフトが無くなれば自然に外れる）。名前は textContent で入れる
 function renderRoster(names) {
     const list = document.getElementById('roster-list');
     list.innerHTML = '';
@@ -1440,22 +1441,32 @@ function renderRoster(names) {
         return;
     }
 
-    names.forEach(({ id, name }) => {
+    names.forEach(({ id, name, source }) => {
         const item = document.createElement('span');
-        item.className = 'roster-item';
+        item.className = `roster-item roster-item-${source}`;
         item.dataset.name = name;
+        item.dataset.source = source;
 
         const label = document.createElement('span');
         label.textContent = name;
+        item.appendChild(label);
 
-        const remove = document.createElement('button');
-        remove.type = 'button';
-        remove.className = 'roster-remove';
-        remove.title = `${name} を名簿から外す`;
-        remove.textContent = '×';
-        remove.addEventListener('click', () => removeRosterName(id, name));
+        if (source === 'shift') {
+            const tag = document.createElement('small');
+            tag.className = 'roster-source';
+            tag.textContent = 'シフト';
+            item.title = 'ジョブカンのシフトから自動で載っています';
+            item.appendChild(tag);
+        } else {
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'roster-remove';
+            remove.title = `${name} を名簿から外す`;
+            remove.textContent = '×';
+            remove.addEventListener('click', () => removeRosterName(id, name));
+            item.appendChild(remove);
+        }
 
-        item.append(label, remove);
         list.appendChild(item);
     });
 }

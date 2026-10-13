@@ -778,11 +778,6 @@ function updateDashboardDisplay() {
             <div class="stock-card-status ${statusClass}">
                 ${statusText}
             </div>
-
-            <div class="stock-card-actions">
-                <button class="btn-quick btn-quick-out" onclick="openTakeoutDialog(${product.id}, 5)" title="5個出庫">-5</button>
-                <button class="btn-quick btn-quick-out" onclick="openTakeoutDialog(${product.id}, 1)" title="1個出庫">-1</button>
-            </div>
         `;
 
         // 発注依頼済みで絞り込んでいるときは、依頼の状況と「入荷完了」を出す
@@ -2902,22 +2897,13 @@ async function loadTakerCandidates() {
 // 出す人は店の名簿から 1 人を選ぶだけで、自由には打たせない。打てると
 // 「田中・佐藤」のように 2 人をまとめた名前や書き方違いが入り、人ごとに集計できなくなる。
 // 開くたびに選び直してもらう（前の人の名前は残さない。次の人がそのまま押してしまうため）。
-//
-// productId を付けて開くと（在庫カードの -1 / -5）、その商品に quantity 個を入れた状態で開く。
+// 開くのはダッシュボードの「在庫を出す」から（在庫カードに出庫のボタンは置かない）。
 //
 // 2 人でシフトに入っていると、入場リンクの名前が「田中・佐藤」のように 2 人分で来る。
 // その 2 人（shiftNames）を先頭に出し、それぞれが自分の名前を選んで 1 人ずつ登録する。
 // 1 人が登録したら「続けて 佐藤 さんの分を出す」で、もう 1 人の分をすぐ入れられる
 // （options.presetName にその人、options.doneNames に登録が済んだ人を入れて開き直す）。
-async function openTakeoutDialog(productId = null, quantity = 0, options = {}) {
-    const presetProduct = productId ? products.find(p => p.id === productId) : null;
-    if (productId && !presetProduct) return;
-
-    if (presetProduct && presetProduct.current_stock <= 0) {
-        alert('在庫がありません');
-        return;
-    }
-
+async function openTakeoutDialog(options = {}) {
     const candidates = await loadTakerCandidates();
     const names = candidates.names || [];
     const modal = document.getElementById('modal');
@@ -2932,16 +2918,10 @@ async function openTakeoutDialog(productId = null, quantity = 0, options = {}) {
         : names.includes(candidates.operatorName) ? candidates.operatorName
         : null;
 
-    // 商品ごとの出す個数。カードから開いたときは、その商品を先頭に出す
+    // 商品ごとの出す個数
     const counts = new Map();
-    if (presetProduct) {
-        counts.set(presetProduct.id, Math.min(quantity, presetProduct.current_stock));
-    }
     // 在庫の無い商品は出せないので並べない（押せない行が並ぶと、出す物を探しにくい）
-    const inStock = products.filter(p => (Number(p.current_stock) || 0) > 0);
-    const listed = presetProduct
-        ? [presetProduct, ...inStock.filter(p => p.id !== presetProduct.id)]
-        : inStock;
+    const listed = products.filter(p => (Number(p.current_stock) || 0) > 0);
     const categories = [...new Set(listed.map(p => p.category).filter(c => c))];
 
     modalBody.innerHTML = `
@@ -3220,7 +3200,7 @@ function showTakeoutDone(name, items, remaining, registered) {
         button.className = 'btn btn-primary takeout-next';
         button.dataset.name = next;
         button.textContent = `続けて ${next} さんの分を出す`;
-        button.addEventListener('click', () => openTakeoutDialog(null, 0, { presetName: next, doneNames: registered }));
+        button.addEventListener('click', () => openTakeoutDialog({ presetName: next, doneNames: registered }));
         actions.appendChild(button);
     });
 

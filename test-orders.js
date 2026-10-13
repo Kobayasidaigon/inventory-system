@@ -442,12 +442,12 @@ async function testScreen(location) {
             cardOf('画面: 発注済').querySelector('.stock-card-order').textContent.replace(/\s+/g, ' ').trim()
         );
 
-        // 在庫を増やすボタン（+1 / +5）は無い。届いた商品は「入荷完了」で入れる
-        const cardButtons = [...doc.querySelectorAll('.stock-card .stock-card-actions button')].map(b => b.textContent.trim());
+        // 在庫カードに在庫を動かすボタン（+1 / +5 / -1 / -5）は無い。
+        // 届いた商品は「入荷完了」、出すときは「在庫を出す」から
+        const cardButtons = [...doc.querySelectorAll('.stock-card button')].map(b => b.textContent.trim());
         addResult(
-            'カード: 在庫を増やすボタン（+1 / +5）は無く、-5 / -1 だけ',
-            cardButtons.length > 0 && cardButtons.every(text => text === '-5' || text === '-1') &&
-                !doc.querySelector('.btn-quick-in'),
+            'カード: 在庫を動かすボタン（+1 / +5 / -1 / -5）は無く、絞り込んだカードには「入荷完了」だけ',
+            cardButtons.length > 0 && cardButtons.every(text => text === '入荷完了'),
             [...new Set(cardButtons)].join(' , ')
         );
 

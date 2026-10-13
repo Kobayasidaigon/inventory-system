@@ -220,7 +220,7 @@ async function seed() {
 
 店の画面（出庫の登録）
   拠点「${STORE.locationName}」/ ユーザーID ${STORE.userId} / パスワード ${STORE.password}
-  「📦 在庫を出す」（または在庫カードの「-1」「-5」）で、先に出す人を選んで何品でもまとめて出庫
+  「📦 在庫を出す」で、先に出す人を選んで何品でもまとめて出庫
 
 管理画面（出庫記録・人ごとの集計・補充が早すぎる商品・出す人の名簿）
   「管理者ログイン」のタブで 管理者ID ${ADMIN.username} / パスワード ${ADMIN.password}

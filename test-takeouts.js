@@ -899,19 +899,19 @@ async function testScreen() {
     try {
         await waitFor(() => paperCard(), 'ダッシュボードが開く');
 
-        // -1 を押すと、すぐには出庫せずに出庫の画面が開く（トイレットペーパーが 1 個入っている）
+        // 在庫カードに出庫・入庫のボタンは無い。出庫は「在庫を出す」から
         const before = await stockOf('paper');
-        await openFrom(() => paperCard().querySelector('button[title="1個出庫"]').click(), '出庫の画面が開く');
+        const cardButtons = paperCard().querySelectorAll('button').length;
+        await openFrom(() => doc.getElementById('open-takeout').click(), '出庫の画面が開く');
 
         const chips = [...doc.querySelectorAll('#takeout-taker-chips .taker-chip')].map(c => c.textContent);
-        const firstRow = doc.querySelector('#takeout-items .takeout-item .takeout-item-name').firstChild.textContent;
         addResult(
-            '画面: -1 を押すと出庫の画面が開き、押した商品が先頭に 1 個入っている（まだ誰も選ばれていない）',
-            doc.getElementById('modal').classList.contains('show') &&
-                firstRow === 'トイレットペーパー' && qtyOf('トイレットペーパー') === '1' &&
+            '画面: 在庫カードにボタンは無く、「在庫を出す」で出庫の画面が開く（どの商品も 0、まだ誰も選ばれていない）',
+            cardButtons === 0 && doc.getElementById('modal').classList.contains('show') &&
+                [...doc.querySelectorAll('.takeout-qty')].every(input => input.value === '0') &&
                 doc.querySelectorAll('.taker-chip.selected').length === 0 &&
                 (await stockOf('paper')) === before,
-            `先頭 ${firstRow} / 個数 ${qtyOf('トイレットペーパー')} / 在庫 ${before}`
+            `カードのボタン ${cardButtons} 個 / トイレットペーパー ${qtyOf('トイレットペーパー')} / 在庫 ${before}`
         );
         const rows = [...doc.querySelectorAll('#takeout-items .takeout-item')];
         const inStockCount = (await request('GET', '/api/products')).body.filter(p => p.current_stock > 0).length;
@@ -1014,15 +1014,6 @@ async function testScreen() {
         );
         window.closeModal();
 
-        // -5 なら 5 が入っている
-        await openFrom(() => paperCard().querySelector('button[title="5個出庫"]').click(), '出庫の画面が開く（-5）');
-        addResult(
-            '画面: -5 を押すと、その商品に 5 が入っている',
-            qtyOf('トイレットペーパー') === '5',
-            qtyOf('トイレットペーパー')
-        );
-        window.closeModal();
-
         // --- 2 人でシフトに入っている（入場リンクの名前が「田中・佐藤」） ---
         const realCandidates = window.loadTakerCandidates;
         window.loadTakerCandidates = async () => {
@@ -1080,7 +1071,7 @@ async function testScreen() {
 
         // 名簿が空の店では、選べる人がいないので出庫できない。理由とどうすればよいかを出す
         window.loadTakerCandidates = async () => ({ names: [], operatorName: null });
-        await openFrom(() => paperCard().querySelector('button[title="1個出庫"]').click(), '出庫の画面が開く（名簿なし）');
+        await openFrom(() => doc.getElementById('open-takeout').click(), '出庫の画面が開く（名簿なし）');
         const emptyNote = doc.querySelector('#takeout-taker-chips .taker-empty-note');
         addResult(
             '画面: 名簿が空なら、管理者に登録を頼むよう案内し、出庫ボタンを押せない',

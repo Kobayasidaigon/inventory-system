@@ -100,7 +100,7 @@ function setupEventListeners() {
     document.getElementById('group-history-toggle').addEventListener('change', loadHistory);
 
     // 追加のイベントリスナー
-    setupShowMoreOrdersLink();
+    setupStockViewTabs();
     setupImagePopup();
     setupTableColumnResize();
     setupUsageGuideToggle();
@@ -594,6 +594,24 @@ function loadDashboardCategoryFilter() {
     categoryFilter.value = currentValue;
 }
 
+// 現在庫一覧に出す商品。'all' はすべて、'ordered' は発注依頼済み（未入荷の依頼がある）だけ
+let dashboardView = 'all';
+
+// 現在庫一覧の「すべて」「発注依頼済み」ボタン
+function setupStockViewTabs() {
+    document.querySelectorAll('.stock-view-tab').forEach(button => {
+        button.addEventListener('click', () => {
+            dashboardView = button.dataset.view;
+            document.querySelectorAll('.stock-view-tab').forEach(tab => {
+                const active = tab === button;
+                tab.classList.toggle('active', active);
+                tab.setAttribute('aria-pressed', String(active));
+            });
+            updateDashboardDisplay();
+        });
+    });
+}
+
 // ダッシュボード表示更新（カード型）
 function updateDashboardDisplay() {
     const selectedCategory = document.getElementById('dashboard-category-filter').value;
@@ -605,15 +623,26 @@ function updateDashboardDisplay() {
         filteredProducts = filteredProducts.filter(p => p.category === selectedCategory);
     }
 
+    // 「発注依頼済み」は、実際に未入荷の依頼があるときだけ。在庫の数だけで
+    // 決めると、依頼をキャンセルした商品や棚卸で減った商品まで依頼済みに見える。
+    const activeOrderOf = productId => allActiveOrders.find(order => order.product_id === productId);
+    const orderedProducts = filteredProducts.filter(p => activeOrderOf(p.id));
+    document.getElementById('ordered-count').textContent = orderedProducts.length > 0 ? orderedProducts.length : '';
+
+    if (dashboardView === 'ordered') {
+        filteredProducts = orderedProducts;
+    }
+
     const container = document.getElementById('stock-cards-container');
     const stockCount = document.getElementById('stock-count');
     container.innerHTML = '';
+    document.getElementById('stock-cards-empty').style.display =
+        dashboardView === 'ordered' && filteredProducts.length === 0 ? 'block' : 'none';
 
     filteredProducts.forEach(product => {
         const isLow = product.current_stock <= product.reorder_point;
-        // 「発注依頼済み」は、実際に未入荷の依頼があるときだけ出す。在庫の数だけで
-        // 決めると、依頼をキャンセルした商品や棚卸で減った商品まで依頼済みに見える。
-        const hasActiveOrder = allActiveOrders.some(order => order.product_id === product.id);
+        const activeOrder = activeOrderOf(product.id);
+        const hasActiveOrder = Boolean(activeOrder);
 
         // 画像HTML
         const imageHtml = product.image_url
@@ -659,6 +688,12 @@ function updateDashboardDisplay() {
             </div>
         `;
 
+        // 発注依頼済みで絞り込んでいるときは、依頼の状況と「入荷完了」を出す
+        // （ダッシュボードの発注依頼済み商品の一覧の代わり）
+        if (dashboardView === 'ordered' && activeOrder) {
+            card.appendChild(buildCardOrderRow(activeOrder));
+        }
+
         container.appendChild(card);
     });
 
@@ -666,104 +701,40 @@ function updateDashboardDisplay() {
     stockCount.textContent = `${filteredProducts.length}件`;
 }
 
-// 発注依頼済み商品一覧表示
+// 未入荷の発注依頼（依頼中・発注済）。現在庫一覧の「発注依頼済み」と、発注依頼タブで使う
 let allActiveOrders = [];
-let showingAllOrders = false;
 
 async function loadPendingOrders() {
     try {
         const response = await fetch('/api/orders');
         const orders = await response.json();
 
-        // pending、orderedのステータスのみ表示（received、cancelledは除外）
+        // pending、orderedのステータスのみ（received、cancelledは除外）
         allActiveOrders = orders.filter(o => o.status === 'pending' || o.status === 'ordered');
-        const pendingSection = document.getElementById('pending-orders-section');
-        const pendingCount = document.getElementById('pending-count');
-
-        if (allActiveOrders.length > 0) {
-            pendingSection.style.display = 'block';
-            renderPendingOrders(false);
-
-            // 件数バッジを更新
-            pendingCount.textContent = `${allActiveOrders.length}件`;
-        } else {
-            pendingSection.style.display = 'none';
-        }
     } catch (error) {
         console.error('発注依頼取得エラー:', error);
     }
 }
 
-function renderPendingOrders(showAll) {
-    const tbody = document.querySelector('#pending-orders-table tbody');
-    const showMoreDiv = document.getElementById('show-more-orders');
-    tbody.innerHTML = '';
+// 発注依頼済みで絞り込んだカードの下の行（依頼日・状況と「入荷完了」）
+function buildCardOrderRow(order) {
+    const row = document.createElement('div');
+    row.className = 'stock-card-order';
 
-    const DISPLAY_LIMIT = 8;
-    const ordersToShow = showAll ? allActiveOrders : allActiveOrders.slice(0, DISPLAY_LIMIT);
+    const info = document.createElement('span');
+    info.className = 'stock-card-order-info';
+    info.textContent = `${formatOrderDate(order.requested_at)} ${ORDER_STATUS_LABELS[order.status] || order.status}`;
+    row.appendChild(info);
 
-    ordersToShow.forEach(order => {
-        const row = tbody.insertRow();
-        const requestedDateTime = parseUtcTimestamp(order.requested_at);
-        const formattedDate = requestedDateTime.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo' });
+    // 商品名は onclick の文字列に入れない（' などで壊れるため）
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-secondary btn-complete-order';
+    button.textContent = '入荷完了';
+    button.addEventListener('click', () => completeOrder(order.id, order.product_id, order.product_name));
+    row.appendChild(button);
 
-        // ステータスの表示
-        const statusMap = {
-            'pending': '発注依頼中',
-            'ordered': '発注済',
-            'received': '受領済',
-            'cancelled': 'キャンセル'
-        };
-        const statusColorMap = {
-            'pending': '#f57c00',
-            'ordered': '#1976d2',
-            'received': '#388e3c',
-            'cancelled': '#757575'
-        };
-
-        const statusText = statusMap[order.status] || order.status;
-        const statusColor = statusColorMap[order.status] || '#000';
-
-        // ステータスに応じたボタン表示
-        let actionButtons = '';
-        if (order.status === 'pending') {
-            actionButtons = `
-                <button class="btn btn-secondary" onclick="completeOrder(${order.id}, ${order.product_id}, '${order.product_name.replace(/'/g, "\\'")}')">入荷完了</button>
-                <button class="btn btn-secondary" onclick="updateOrderStatus(${order.id}, 'cancelled')">キャンセル</button>
-            `;
-        } else if (order.status === 'ordered') {
-            actionButtons = `
-                <button class="btn btn-secondary" onclick="completeOrder(${order.id}, ${order.product_id}, '${order.product_name.replace(/'/g, "\\'")}')">入荷完了</button>
-            `;
-        } else {
-            actionButtons = '-';
-        }
-
-        row.innerHTML = `
-            <td>${order.product_name}</td>
-            <td>${formattedDate}</td>
-            <td style="white-space: nowrap;">${actionButtons}</td>
-        `;
-    });
-
-    // 「もっと確認」リンクの表示制御
-    if (allActiveOrders.length > DISPLAY_LIMIT && !showAll) {
-        showMoreDiv.style.display = 'block';
-    } else {
-        showMoreDiv.style.display = 'none';
-    }
-}
-
-// 「もっと確認」リンクのイベントリスナー（setupEventListeners内で設定）
-function setupShowMoreOrdersLink() {
-    const showMoreLink = document.getElementById('show-more-orders-link');
-    if (showMoreLink) {
-        showMoreLink.addEventListener('click', (e) => {
-            e.preventDefault();
-            showingAllOrders = true;
-            renderPendingOrders(true);
-        });
-    }
+    return row;
 }
 
 // 発注依頼ダイアログ表示
@@ -2810,19 +2781,6 @@ async function quickStockChange(productId, change) {
 
     const product = products.find(p => p.id === productId);
     if (!product) return;
-
-    // 入庫操作(+1, +5)の場合、該当商品の発注依頼済みがあるかチェック
-    const hasPendingOrder = allActiveOrders.some(order => order.product_id === productId);
-    if (hasPendingOrder) {
-        const shouldProceed = confirm(
-            `${product.name}は発注依頼済みです。\n\n` +
-            `商品が届いた場合は「入庫完了」ボタンを押してください。\n\n` +
-            `このまま在庫を増やしますか？`
-        );
-        if (!shouldProceed) {
-            return;
-        }
-    }
 
     try {
         const response = await fetchWithCsrf('/api/inventory/in', {

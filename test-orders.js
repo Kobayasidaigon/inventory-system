@@ -273,6 +273,10 @@ async function testScreen(location) {
     await request('POST', '/api/inventory/out', { productId: received, quantity: 6, note: '発注点割れ' });
     await request('PUT', `/api/orders/${(await activeOrdersOf(received))[0].id}`, { status: 'received' });
 
+    // 現在庫一覧の「発注依頼済み」のカードから入荷完了する商品
+    const fromCard = await createProduct('画面: カードで入荷', 5, 10);
+    await request('POST', '/api/inventory/out', { productId: fromCard, quantity: 6, note: '発注点割れ' });
+
     const productCount = (await request('GET', '/api/products')).body.length;
     const { window, errors, dialogs, state } = openUserScreen(client, BASE_URL);
 
@@ -298,6 +302,78 @@ async function testScreen(location) {
             'カード: 在庫が発注点より多ければ「在庫十分」',
             cards['画面: 在庫十分'] === '✓ 在庫十分',
             `「${cards['画面: 在庫十分']}」`
+        );
+
+        // --- 現在庫一覧の「発注依頼済み」 ---
+        // ダッシュボードには発注依頼済み商品の一覧を出さず、現在庫一覧を絞り込んで見る
+        const doc = window.document;
+        const cardNames = () => [...doc.querySelectorAll('.stock-card .stock-card-name')].map(e => e.textContent.trim());
+        const cardOf = name => [...doc.querySelectorAll('.stock-card')]
+            .find(card => card.querySelector('.stock-card-name').textContent.trim() === name);
+        const stockOf = async productId => (await request('GET', '/api/products')).body
+            .find(p => p.id === productId).current_stock;
+        const activeProductIds = new Set((await allOrders())
+            .filter(o => o.status === 'pending' || o.status === 'ordered').map(o => o.product_id));
+
+        addResult(
+            'ダッシュボード: 発注依頼済み商品の一覧は出さない',
+            !doc.getElementById('pending-orders-section') && !doc.getElementById('pending-orders-table'),
+            '一覧なし'
+        );
+
+        doc.querySelector('.stock-view-tab[data-view="ordered"]').click();
+        await waitFor(() => doc.querySelectorAll('.stock-card').length === activeProductIds.size, '発注依頼済みだけになる');
+        const orderedNames = cardNames();
+        addResult(
+            '発注依頼済み: 押すと未入荷の依頼がある商品だけになり、件数が合う',
+            ['画面: 依頼中', '画面: 発注済', '画面: カードで入荷'].every(name => orderedNames.includes(name)) &&
+                !['画面: 依頼なし', '画面: 在庫十分', '画面: 受領済'].some(name => orderedNames.includes(name)) &&
+                doc.getElementById('ordered-count').textContent === String(activeProductIds.size) &&
+                doc.getElementById('stock-count').textContent === `${activeProductIds.size}件`,
+            `${orderedNames.join(', ')} / ボタンの件数「${doc.getElementById('ordered-count').textContent}」`
+        );
+        addResult(
+            '発注依頼済み: カードに依頼の状況と「入荷完了」が出る',
+            [...doc.querySelectorAll('.stock-card')].every(card => card.querySelector('.btn-complete-order')) &&
+                cardOf('画面: 発注済').querySelector('.stock-card-order-info').textContent.includes('発注済'),
+            cardOf('画面: 発注済').querySelector('.stock-card-order').textContent.replace(/\s+/g, ' ').trim()
+        );
+
+        // +1 は発注依頼済みでも確認を出さずに増やす
+        const confirmsBefore = dialogs.filter(d => d.startsWith('confirm:')).length;
+        const stockBefore = await stockOf(withOrder);
+        cardOf('画面: 依頼中').querySelector('.btn-quick-in[title="1個入庫"]').click();
+        await waitFor(
+            () => cardOf('画面: 依頼中') && cardOf('画面: 依頼中').querySelector('.stock-stat-value').textContent === String(stockBefore + 1),
+            '+1 で在庫が増える'
+        );
+        addResult(
+            '+1: 発注依頼済みの商品でも確認を出さずに在庫が増える（絞り込みはそのまま）',
+            dialogs.filter(d => d.startsWith('confirm:')).length === confirmsBefore &&
+                await stockOf(withOrder) === stockBefore + 1 &&
+                doc.querySelector('.stock-view-tab[data-view="ordered"]').classList.contains('active'),
+            `${stockBefore} → ${await stockOf(withOrder)} / 確認 ${dialogs.filter(d => d.startsWith('confirm:')).length - confirmsBefore} 回`
+        );
+
+        // カードの「入荷完了」: 在庫が増え、依頼が受領済になり、絞り込みから外れる
+        state.promptAnswer = '8';
+        cardOf('画面: カードで入荷').querySelector('.btn-complete-order').click();
+        await waitFor(() => !cardOf('画面: カードで入荷') && doc.querySelectorAll('.stock-card').length > 0, '入荷完了した商品が外れる');
+        const cardReceived = (await allOrders()).find(o => o.product_id === fromCard);
+        addResult(
+            '発注依頼済み: カードの「入荷完了」で在庫が増え、依頼が受領済になって一覧から外れる',
+            await stockOf(fromCard) === 12 && cardReceived.status === 'received' &&
+                doc.querySelector('.stock-view-tab[data-view="ordered"]').classList.contains('active'),
+            `現在庫 ${await stockOf(fromCard)}（期待値 12） / ${cardReceived.status}`
+        );
+
+        doc.querySelector('.stock-view-tab[data-view="all"]').click();
+        await waitFor(() => doc.querySelectorAll('.stock-card').length === productCount, 'すべてに戻る');
+        addResult(
+            '発注依頼済み: 「すべて」で全部の商品に戻る',
+            doc.querySelectorAll('.stock-card').length === productCount &&
+                doc.getElementById('stock-cards-empty').style.display === 'none',
+            `${doc.querySelectorAll('.stock-card').length} 件`
         );
 
         // --- 発注依頼タブ ---

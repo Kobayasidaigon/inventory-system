@@ -1164,11 +1164,6 @@ table tbody tr:hover {
         width: 100%;
         margin-bottom: 5px;
     }
-
-    /* 発注依頼テーブル */
-    #pending-orders-section h3 {
-        font-size: 16px;
-    }
 }
 
 /* 横向きスマートフォン対応 */
@@ -1227,17 +1222,6 @@ table tbody tr:hover {
     .btn-small {
         min-height: 40px;
     }
-}
-
-/* もっと確認リンク */
-#show-more-orders a {
-    transition: all 0.3s;
-    display: inline-block;
-}
-
-#show-more-orders a:hover {
-    color: #5a67d8;
-    transform: translateX(5px);
 }
 
 /* 棚卸関連のスタイル */
@@ -1638,19 +1622,68 @@ table tbody tr:hover {
     }
 }
 
-/* 発注依頼済み商品テーブル */
-#pending-orders-table th:last-child,
-#pending-orders-table td:last-child {
-    width: 1%;
-    white-space: nowrap;
+/* 現在庫一覧の「すべて」「発注依頼済み」 */
+.stock-view-tabs {
+    display: flex;
+    gap: 8px;
+    margin: 12px 12px 0;
 }
 
-@media (max-width: 768px) {
-    #pending-orders-table th:last-child,
-    #pending-orders-table td:last-child {
-        width: auto;
-        min-width: 200px;
-    }
+.stock-view-tab {
+    flex: 1;
+    padding: 10px 12px;
+    border: 2px solid #667eea;
+    border-radius: 8px;
+    background: white;
+    color: #667eea;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.stock-view-tab.active {
+    background: #667eea;
+    color: white;
+}
+
+.stock-view-count:not(:empty) {
+    display: inline-block;
+    min-width: 22px;
+    margin-left: 4px;
+    padding: 0 6px;
+    border-radius: 11px;
+    background: #ed8936;
+    color: white;
+    font-size: 13px;
+    line-height: 22px;
+}
+
+.stock-cards-empty {
+    margin: 16px 12px;
+    color: #718096;
+    text-align: center;
+}
+
+/* 発注依頼済みで絞り込んだカードの、依頼の状況と「入荷完了」 */
+.stock-card-order {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed #e2e8f0;
+}
+
+.stock-card-order-info {
+    color: #4a5568;
+    font-size: 13px;
+}
+
+.stock-card-order .btn-complete-order {
+    padding: 8px 14px;
+    font-size: 14px;
+    white-space: nowrap;
 }
 
 /* 発注依頼ページ */

@@ -63,7 +63,7 @@ const PRODUCTS = [
     { key: 'paper', name: 'トイレットペーパー', category: '衛生用品', reorderPoint: 5 },
     { key: 'glove', name: 'ニトリルグローブ(Ｍサイズ)', category: '衛生用品', reorderPoint: 5 },
     { key: 'tissue', name: 'ティッシュ', category: '衛生用品', reorderPoint: 3 },
-    { key: 'detergent', name: '食器用洗剤', category: '洗剤', reorderPoint: 1 }
+    { key: 'detergent', name: '食器用洗剤', category: '洗剤', reorderPoint: 5 }
 ];
 
 /**
@@ -191,6 +191,14 @@ async function seed() {
     // 登録した時刻をその日の昼（日本時間）にする。全部「今」のままだと、
     // ダッシュボードの区切りの確認に、今日の登録として数えられてしまう
     await db.run(`UPDATE inventory_history SET created_at = date || ' 03:00:00' WHERE date IS NOT NULL`);
+
+    // 食器用洗剤は発注点を下回っていて、発注依頼が出ている（まだ届いていない）。
+    // 現在庫一覧の「発注依頼済み」で絞り込むと、この商品と「入荷完了」が出る
+    await db.run(
+        `INSERT INTO order_requests (product_id, requested_quantity, user_id, note, status, requested_at)
+         VALUES (?, 6, ?, '在庫が発注点を下回ったため自動発注', 'pending', ?)`,
+        [productIds.detergent, user.lastID, `${daysAgo(2)} 03:00:00`]
+    );
 
     const flagged = await findQuickRestocks(db);
     console.log(`  商品 ${PRODUCTS.length} 件・入出庫 ${buildEvents().length} 件・補充が早すぎる商品 ${flagged.length} 件`);

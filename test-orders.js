@@ -225,7 +225,7 @@ async function testApi(location) {
     );
 
     // --- 在庫が発注点を超えたら、未入荷の依頼は届いたとみなす ---
-    // 届いた商品を「入荷完了」ではなく +1 / +5 で入れても、依頼が未入荷のまま残らないように
+    // 届いた商品を「入荷完了」ではなく棚卸などで入れても、依頼が未入荷のまま残らないように
     const productE = await createProduct('API: 在庫が戻ったら受領済', 5, 10);
     await request('POST', '/api/inventory/out', { productId: productE, quantity: 7, note: '発注点割れ' });
     const [orderE] = await activeOrdersOf(productE);
@@ -442,20 +442,13 @@ async function testScreen(location) {
             cardOf('画面: 発注済').querySelector('.stock-card-order').textContent.replace(/\s+/g, ' ').trim()
         );
 
-        // +1 は発注依頼済みでも確認を出さずに増やす
-        const confirmsBefore = dialogs.filter(d => d.startsWith('confirm:')).length;
-        const stockBefore = await stockOf(withOrder);
-        cardOf('画面: 依頼中').querySelector('.btn-quick-in[title="1個入庫"]').click();
-        await waitFor(
-            () => cardOf('画面: 依頼中') && cardOf('画面: 依頼中').querySelector('.stock-stat-value').textContent === String(stockBefore + 1),
-            '+1 で在庫が増える'
-        );
+        // 在庫を増やすボタン（+1 / +5）は無い。届いた商品は「入荷完了」で入れる
+        const cardButtons = [...doc.querySelectorAll('.stock-card .stock-card-actions button')].map(b => b.textContent.trim());
         addResult(
-            '+1: 発注依頼済みの商品でも確認を出さずに在庫が増える（絞り込みはそのまま）',
-            dialogs.filter(d => d.startsWith('confirm:')).length === confirmsBefore &&
-                await stockOf(withOrder) === stockBefore + 1 &&
-                doc.querySelector('.stock-view-tab[data-view="ordered"]').classList.contains('active'),
-            `${stockBefore} → ${await stockOf(withOrder)} / 確認 ${dialogs.filter(d => d.startsWith('confirm:')).length - confirmsBefore} 回`
+            'カード: 在庫を増やすボタン（+1 / +5）は無く、-5 / -1 だけ',
+            cardButtons.length > 0 && cardButtons.every(text => text === '-5' || text === '-1') &&
+                !doc.querySelector('.btn-quick-in'),
+            [...new Set(cardButtons)].join(' , ')
         );
 
         // カードの「入荷完了」: 在庫が増え、依頼が受領済になり、絞り込みから外れる

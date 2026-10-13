@@ -782,8 +782,6 @@ function updateDashboardDisplay() {
             <div class="stock-card-actions">
                 <button class="btn-quick btn-quick-out" onclick="openTakeoutDialog(${product.id}, 5)" title="5個出庫">-5</button>
                 <button class="btn-quick btn-quick-out" onclick="openTakeoutDialog(${product.id}, 1)" title="1個出庫">-1</button>
-                <button class="btn-quick btn-quick-in" onclick="quickStockChange(${product.id}, 1)" title="1個入庫">+1</button>
-                <button class="btn-quick btn-quick-in" onclick="quickStockChange(${product.id}, 5)" title="5個入庫">+5</button>
             </div>
         `;
 
@@ -2866,51 +2864,6 @@ async function exportCountCSV() {
     } catch (error) {
         console.error('CSV出力エラー:', error);
         alert('CSV出力に失敗しました');
-    }
-}
-
-// ========== ワンタップ登録機能 ==========
-
-// ワンタップで在庫を増やす（+1 / +5。誤操作の修正用）。
-// 出庫は「出した人」を入れてもらうので、openTakeoutDialog から登録する
-async function quickStockChange(productId, change) {
-    if (change <= 0) {
-        return openTakeoutDialog(productId, -change);
-    }
-
-    const product = products.find(p => p.id === productId);
-    if (!product) return;
-
-    try {
-        const response = await fetchWithCsrf('/api/inventory/in', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                productId: productId,
-                quantity: change,
-                // 端末の日付（toISOString は UTC なので、朝 9 時前は前の日になる）
-                date: formatDate(new Date()),
-                // この備考の入庫は補充として数えない（サーバーの QUICK_OPERATION_NOTE と同じ文字）
-                note: 'クイック操作'
-            })
-        });
-
-        if (response.status === 401) {
-            alert('セッションが切れました。再度ログインしてください。');
-            window.location.href = '/';
-            return;
-        }
-
-        if (response.ok) {
-            // 成功時のフィードバック（短い通知）
-            showQuickFeedback(product.name, change);
-            await refreshAfterStockChange();
-        } else {
-            alert('登録に失敗しました');
-        }
-    } catch (error) {
-        console.error('クイック操作エラー:', error);
-        alert('登録に失敗しました');
     }
 }
 

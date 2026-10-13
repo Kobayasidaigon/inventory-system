@@ -60,7 +60,8 @@
                     <div class="usage-guide-item">
                         <strong>📦 在庫操作：</strong>
                         <ul>
-                            <li><span style="font-weight: 600;">-5 / -1</span>：在庫を減らす（出庫）。出した人を名簿から選び、個数を入れて登録します</li>
+                            <li><span style="font-weight: 600;">📦 在庫を出す</span>：在庫を減らす（出庫）。先に出す人を名簿から選び、出す商品の個数を入れて登録します（何品でもまとめて登録できます）</li>
+                            <li><span style="font-weight: 600;">-5 / -1</span>：その商品を入れた状態で、同じ出庫の画面を開きます</li>
                             <li><span style="font-weight: 600;">+1 / +5</span>：在庫を増やす（誤操作の修正用）</li>
                         </ul>
                     </div>
@@ -68,8 +69,8 @@
                         <strong>🔔 自動通知：</strong>
                         <ul>
                             <li>在庫が発注点を下回ると自動でLINE通知が届きます</li>
-                            <li>発注依頼済みの商品は「発注依頼済み商品」セクションに表示されます（上の「発注依頼」タブでも一覧で確認できます）</li>
-                            <li>商品が届いたら「発注依頼済み商品」の「入庫完了」ボタンを押してください</li>
+                            <li>発注依頼済みの商品は、「現在庫一覧」の「発注依頼済み」ボタンで絞り込めます（上の「発注依頼」タブでも一覧で確認できます）</li>
+                            <li>商品が届いたら、「発注依頼済み」で絞り込んだカードの「入荷完了」ボタンを押してください</li>
                         </ul>
                     </div>
                 </div>
@@ -84,29 +85,17 @@
                 </div>
             </div>
 
-            <!-- 発注依頼済み商品 -->
-            <div id="pending-orders-section" class="dashboard-section" style="display: none;">
-                <h3>発注依頼済み商品 <span id="pending-count" class="badge"></span></h3>
-                <div class="table-container">
-                    <table id="pending-orders-table">
-                        <thead>
-                            <tr>
-                                <th>商品名</th>
-                                <th>依頼日時</th>
-                                <th>操作</th>
-                            </tr>
-                        </thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
-                <div id="show-more-orders" style="display: none; text-align: right; padding: 10px 15px;">
-                    <a href="#" id="show-more-orders-link" style="color: #667eea; text-decoration: none; font-weight: 600; font-size: 14px;">もっと確認 →</a>
-                </div>
-            </div>
-
             <!-- 現在庫一覧 -->
             <div class="dashboard-section">
                 <h3>現在庫一覧 <span id="stock-count" class="badge"></span></h3>
+                <!-- 出庫は先に出す人を選んでから、出す商品と個数を選ぶ（何品でもまとめて登録） -->
+                <button type="button" id="open-takeout" class="btn-open-takeout">📦 在庫を出す</button>
+                <!-- 発注依頼済みの商品だけに絞る。入荷完了はこの絞り込みのカードから押す -->
+                <div class="stock-view-tabs" role="group" aria-label="表示する商品">
+                    <button type="button" class="stock-view-tab active" data-view="all" aria-pressed="true">すべて</button>
+                    <button type="button" class="stock-view-tab" data-view="ordered" aria-pressed="false">発注依頼済み <span id="ordered-count" class="stock-view-count"></span></button>
+                </div>
+                <p id="stock-cards-empty" class="stock-cards-empty" style="display: none;">発注依頼済みの商品はありません</p>
                 <div id="stock-cards-container" class="stock-cards-container">
                     <!-- カードがJavaScriptで動的に追加されます -->
                 </div>

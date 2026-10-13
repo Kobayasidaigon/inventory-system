@@ -24,7 +24,12 @@ const {
     formatHistoryDateTime,
     exportFileName
 } = require('../utils/history-query');
-const { requireRosterName, rosterNameOrNull, listTakerCandidates } = require('../services/takeouts');
+const {
+    requireRosterName,
+    rosterNameOrNull,
+    listTakerCandidates,
+    shiftMembersFromOperator
+} = require('../services/takeouts');
 const router = express.Router();
 
 /**
@@ -127,6 +132,88 @@ router.post('/in', requireAuth, (req, res) => handleStockChange(req, res, 'in'))
 
 // 在庫出力（出庫）- 日付指定対応
 router.post('/out', requireAuth, (req, res) => handleStockChange(req, res, 'out'));
+
+/** まとめて出庫で、一度に出せる商品の数 */
+const BATCH_TAKEOUT_MAX_ITEMS = 100;
+
+// まとめて出庫。共用の端末で、先に出す人を選び、何品かを一度に出す。
+// 出した人は必須（名簿にある人だけ）。1 品でも不正（在庫不足など）なら 1 品も登録しない。
+// 途中まで登録された状態でエラーを返すと、もう一度押したときに前半が二重に出庫されるため。
+router.post('/out-batch', requireAuth, async (req, res) => {
+    const db = getLocationDatabase(req.session.locationCode);
+
+    try {
+        const takenBy = await requireRosterName(db, mainDb, req.session.locationId, req.body.takenBy);
+        if (!takenBy) {
+            throw new StockError('出す人を選んでください');
+        }
+
+        const date = parseTransactionDate(req.body.date);
+        const items = Array.isArray(req.body.items) ? req.body.items : [];
+        if (items.length > BATCH_TAKEOUT_MAX_ITEMS) {
+            throw new StockError(`一度に出せるのは ${BATCH_TAKEOUT_MAX_ITEMS} 品までです`);
+        }
+
+        // 同じ商品が 2 行あれば個数を足す（在庫が足りるかを 1 回で見るため）
+        const quantities = new Map();
+        for (const item of items) {
+            const productId = parseProductId(item && item.productId);
+            const quantity = parseQuantity(item && item.quantity);
+            quantities.set(productId, (quantities.get(productId) || 0) + quantity);
+        }
+        if (quantities.size === 0) {
+            throw new StockError('出す商品を選んでください');
+        }
+
+        const { updated, autoOrders } = await withTransaction(db, async () => {
+            const updated = [];
+            const autoOrders = [];
+
+            for (const [productId, quantity] of quantities) {
+                const product = await applyStockChange(db, {
+                    productId,
+                    type: 'out',
+                    quantity,
+                    date,
+                    userId: req.session.userId,
+                    operatorName: req.session.operatorName,
+                    takenBy
+                });
+                updated.push(product);
+
+                const order = await createAutoOrderIfNeeded(db, {
+                    product,
+                    userId: req.session.userId,
+                    operatorName: req.session.operatorName
+                });
+                if (order) {
+                    autoOrders.push({ product, orderQuantity: order.orderQuantity });
+                }
+            }
+
+            return { updated, autoOrders };
+        });
+
+        for (const { product, orderQuantity } of autoOrders) {
+            console.log(
+                `商品ID ${product.id} (${product.name}) の在庫が発注点を下回りました。自動発注依頼を作成しました。`
+            );
+            await notifyAutoOrder({
+                locationCode: req.session.locationCode,
+                product,
+                orderQuantity
+            });
+        }
+
+        res.json({
+            success: true,
+            takenBy,
+            products: updated.map(product => ({ id: product.id, currentStock: product.current_stock }))
+        });
+    } catch (err) {
+        respondWithStockError(res, err, '出庫処理に失敗しました');
+    }
+});
 
 // 週次在庫入力（出庫）- 日付別対応
 router.post('/weekly', requireAuth, async (req, res) => {
@@ -265,11 +352,17 @@ router.get('/takers', requireAuth, async (req, res) => {
     try {
         const names = await listTakerCandidates(db, mainDb, req.session.locationId);
 
-        // 入場リンクで名前が分かっていて名簿にもあるときは、ダイアログで最初から選んでおく。
-        // 「田中・佐藤」のような名簿にない名前は選ばない
+        // 入場リンクの名前（清掃管理表の担当者）を名簿の人に合わせる。2 人でシフトに入っていると
+        // 「田中・佐藤」で来るので、1 人ずつに分けて先頭に並べる（shiftNames）。
+        // 1 人のときだけ最初から選んでおく。2 人以上なら、それぞれが自分の名前を選ぶ
+        const shiftNames = await shiftMembersFromOperator(
+            db, mainDb, req.session.locationId, req.session.operatorName
+        );
+
         res.json({
-            names,
-            operatorName: await rosterNameOrNull(db, mainDb, req.session.locationId, req.session.operatorName)
+            names: [...shiftNames, ...names.filter(name => !shiftNames.includes(name))],
+            shiftNames,
+            operatorName: shiftNames.length === 1 ? shiftNames[0] : null
         });
     } catch (err) {
         respondWithStockError(res, err, '名前の候補の取得に失敗しました');

@@ -100,7 +100,8 @@ function setupEventListeners() {
     document.getElementById('group-history-toggle').addEventListener('change', loadHistory);
 
     // 追加のイベントリスナー
-    setupShowMoreOrdersLink();
+    setupStockViewTabs();
+    document.getElementById('open-takeout').addEventListener('click', () => openTakeoutDialog());
     setupImagePopup();
     setupTableColumnResize();
     setupUsageGuideToggle();
@@ -238,8 +239,97 @@ function renderShiftStatus(shifts) {
             <div>${shiftActionHtml(shift)}</div>
         `;
 
+        // 2 人以上で入っている区切りは、人ごとの確認を並べる
+        if (shift.perMember) {
+            card.appendChild(buildShiftMembers(shift));
+        }
+
         container.appendChild(card);
     });
+}
+
+// 2 人以上で入っている区切りの、人ごとの確認。
+// 自分の名前で出庫を登録した人は済み、何も出していない人は自分の「出していない」を押す。
+// 名前は名簿から来るが、念のため textContent で入れる
+function buildShiftMembers(shift) {
+    const list = document.createElement('div');
+    list.className = 'shift-members';
+    const canPress = !shift.isClosed && (shift.isCurrent || shift.isPast);
+
+    shift.members.forEach(member => {
+        const row = document.createElement('div');
+        row.className = 'shift-member';
+        row.dataset.name = member.name;
+
+        const name = document.createElement('span');
+        name.className = 'shift-member-name';
+        name.textContent = member.name;
+
+        const state = document.createElement('span');
+        state.className = 'shift-member-state';
+        if (member.status === 'registered') {
+            state.textContent = `✓ 出庫 ${member.takeoutCount}件`;
+            row.classList.add('done');
+        } else if (member.status === 'no_change') {
+            state.textContent = '✓ 出していない';
+            row.classList.add('done');
+        } else if (shift.isClosed) {
+            state.textContent = '未登録のまま締め切り';
+            row.classList.add('missing');
+        } else {
+            state.textContent = '未登録';
+        }
+        row.append(name, state);
+
+        if (!member.status && canPress) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'btn btn-secondary shift-member-no-change';
+            button.textContent = '出していない';
+            button.addEventListener('click', () => markMemberNoChange(shift.id, member.name));
+            row.appendChild(button);
+        }
+
+        list.appendChild(row);
+    });
+
+    return list;
+}
+
+// 2 人以上の区切りで、ある人が「出していない」を押す。本人に押してもらう
+async function markMemberNoChange(shiftId, name) {
+    const ok = confirm(
+        `${name} さんは、この区切りで何も出していないものとして記録します。\n` +
+        `${name} さん本人が押してください。\n\n` +
+        `出した物があれば「キャンセル」を押して、先に ${name} さんの名前で出庫を登録してください。`
+    );
+    if (!ok) return;
+
+    try {
+        const response = await fetchWithCsrf('/api/shifts/members/no-change', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ shiftId, name })
+        });
+
+        if (response.status === 401) {
+            alert('セッションが切れました。再度ログインしてください。');
+            window.location.href = '/';
+            return;
+        }
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            alert(data.error || '「出していない」の登録に失敗しました');
+            return;
+        }
+
+        renderShiftStatus(data.shifts || []);
+    } catch (error) {
+        console.error('「出していない」の登録エラー:', error);
+        alert('「出していない」の登録に失敗しました');
+    }
 }
 
 // 区切りの時刻は過ぎたが、まだ締め切っていない状態。ここで押せば間に合う。
@@ -288,6 +378,12 @@ function shiftStateText(shift) {
 function shiftActionHtml(shift) {
     if (shift.confirmed) {
         return '<span style="color: #2f855a; font-size: 20px;">✅</span>';
+    }
+
+    // 2 人以上の区切りは、まとめての確定は無い（下に並ぶ 1 人ずつの確認で済ませる）
+    if (shift.perMember) {
+        const left = shift.members.filter(m => !m.status).length;
+        return `<span style="color: #b7791f; font-size: 13px; font-weight: bold;">1 人ずつ確認（あと ${left} 人）</span>`;
     }
 
     // 締め切った区切りは押せない。押せるように見せると、後から取り繕えると
@@ -594,6 +690,24 @@ function loadDashboardCategoryFilter() {
     categoryFilter.value = currentValue;
 }
 
+// 現在庫一覧に出す商品。'all' はすべて、'ordered' は発注依頼済み（未入荷の依頼がある）だけ
+let dashboardView = 'all';
+
+// 現在庫一覧の「すべて」「発注依頼済み」ボタン
+function setupStockViewTabs() {
+    document.querySelectorAll('.stock-view-tab').forEach(button => {
+        button.addEventListener('click', () => {
+            dashboardView = button.dataset.view;
+            document.querySelectorAll('.stock-view-tab').forEach(tab => {
+                const active = tab === button;
+                tab.classList.toggle('active', active);
+                tab.setAttribute('aria-pressed', String(active));
+            });
+            updateDashboardDisplay();
+        });
+    });
+}
+
 // ダッシュボード表示更新（カード型）
 function updateDashboardDisplay() {
     const selectedCategory = document.getElementById('dashboard-category-filter').value;
@@ -605,19 +719,30 @@ function updateDashboardDisplay() {
         filteredProducts = filteredProducts.filter(p => p.category === selectedCategory);
     }
 
+    // 「発注依頼済み」は、実際に未入荷の依頼があるときだけ。在庫の数だけで
+    // 決めると、依頼をキャンセルした商品や棚卸で減った商品まで依頼済みに見える。
+    const activeOrderOf = productId => allActiveOrders.find(order => order.product_id === productId);
+    const orderedProducts = filteredProducts.filter(p => activeOrderOf(p.id));
+    document.getElementById('ordered-count').textContent = orderedProducts.length > 0 ? orderedProducts.length : '';
+
+    if (dashboardView === 'ordered') {
+        filteredProducts = orderedProducts;
+    }
+
     const container = document.getElementById('stock-cards-container');
     const stockCount = document.getElementById('stock-count');
     container.innerHTML = '';
+    document.getElementById('stock-cards-empty').style.display =
+        dashboardView === 'ordered' && filteredProducts.length === 0 ? 'block' : 'none';
 
     filteredProducts.forEach(product => {
         const isLow = product.current_stock <= product.reorder_point;
-        // 「発注依頼済み」は、実際に未入荷の依頼があるときだけ出す。在庫の数だけで
-        // 決めると、依頼をキャンセルした商品や棚卸で減った商品まで依頼済みに見える。
-        const hasActiveOrder = allActiveOrders.some(order => order.product_id === product.id);
+        const activeOrder = activeOrderOf(product.id);
+        const hasActiveOrder = Boolean(activeOrder);
 
         // 画像HTML
         const imageHtml = product.image_url
-            ? `<img src="${product.image_url}" class="stock-card-image" onclick="openImagePopup('${product.image_url}')" alt="${product.name}">`
+            ? `<img src="${product.image_url}" class="stock-card-image" onclick="showImagePopup('${product.image_url}')" alt="${product.name}">`
             : `<div class="stock-card-image-placeholder">画像なし</div>`;
 
         // ステータス
@@ -659,6 +784,12 @@ function updateDashboardDisplay() {
             </div>
         `;
 
+        // 発注依頼済みで絞り込んでいるときは、依頼の状況と「入荷完了」を出す
+        // （ダッシュボードの発注依頼済み商品の一覧の代わり）
+        if (dashboardView === 'ordered' && activeOrder) {
+            card.appendChild(buildCardOrderRow(activeOrder));
+        }
+
         container.appendChild(card);
     });
 
@@ -666,104 +797,40 @@ function updateDashboardDisplay() {
     stockCount.textContent = `${filteredProducts.length}件`;
 }
 
-// 発注依頼済み商品一覧表示
+// 未入荷の発注依頼（依頼中・発注済）。現在庫一覧の「発注依頼済み」と、発注依頼タブで使う
 let allActiveOrders = [];
-let showingAllOrders = false;
 
 async function loadPendingOrders() {
     try {
         const response = await fetch('/api/orders');
         const orders = await response.json();
 
-        // pending、orderedのステータスのみ表示（received、cancelledは除外）
+        // pending、orderedのステータスのみ（received、cancelledは除外）
         allActiveOrders = orders.filter(o => o.status === 'pending' || o.status === 'ordered');
-        const pendingSection = document.getElementById('pending-orders-section');
-        const pendingCount = document.getElementById('pending-count');
-
-        if (allActiveOrders.length > 0) {
-            pendingSection.style.display = 'block';
-            renderPendingOrders(false);
-
-            // 件数バッジを更新
-            pendingCount.textContent = `${allActiveOrders.length}件`;
-        } else {
-            pendingSection.style.display = 'none';
-        }
     } catch (error) {
         console.error('発注依頼取得エラー:', error);
     }
 }
 
-function renderPendingOrders(showAll) {
-    const tbody = document.querySelector('#pending-orders-table tbody');
-    const showMoreDiv = document.getElementById('show-more-orders');
-    tbody.innerHTML = '';
+// 発注依頼済みで絞り込んだカードの下の行（依頼日・状況と「入荷完了」）
+function buildCardOrderRow(order) {
+    const row = document.createElement('div');
+    row.className = 'stock-card-order';
 
-    const DISPLAY_LIMIT = 8;
-    const ordersToShow = showAll ? allActiveOrders : allActiveOrders.slice(0, DISPLAY_LIMIT);
+    const info = document.createElement('span');
+    info.className = 'stock-card-order-info';
+    info.textContent = `${formatOrderDate(order.requested_at)} ${ORDER_STATUS_LABELS[order.status] || order.status}`;
+    row.appendChild(info);
 
-    ordersToShow.forEach(order => {
-        const row = tbody.insertRow();
-        const requestedDateTime = parseUtcTimestamp(order.requested_at);
-        const formattedDate = requestedDateTime.toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo' });
+    // 商品名は onclick の文字列に入れない（' などで壊れるため）
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-secondary btn-complete-order';
+    button.textContent = '入荷完了';
+    button.addEventListener('click', () => completeOrder(order.id, order.product_id, order.product_name));
+    row.appendChild(button);
 
-        // ステータスの表示
-        const statusMap = {
-            'pending': '発注依頼中',
-            'ordered': '発注済',
-            'received': '受領済',
-            'cancelled': 'キャンセル'
-        };
-        const statusColorMap = {
-            'pending': '#f57c00',
-            'ordered': '#1976d2',
-            'received': '#388e3c',
-            'cancelled': '#757575'
-        };
-
-        const statusText = statusMap[order.status] || order.status;
-        const statusColor = statusColorMap[order.status] || '#000';
-
-        // ステータスに応じたボタン表示
-        let actionButtons = '';
-        if (order.status === 'pending') {
-            actionButtons = `
-                <button class="btn btn-secondary" onclick="completeOrder(${order.id}, ${order.product_id}, '${order.product_name.replace(/'/g, "\\'")}')">入荷完了</button>
-                <button class="btn btn-secondary" onclick="updateOrderStatus(${order.id}, 'cancelled')">キャンセル</button>
-            `;
-        } else if (order.status === 'ordered') {
-            actionButtons = `
-                <button class="btn btn-secondary" onclick="completeOrder(${order.id}, ${order.product_id}, '${order.product_name.replace(/'/g, "\\'")}')">入荷完了</button>
-            `;
-        } else {
-            actionButtons = '-';
-        }
-
-        row.innerHTML = `
-            <td>${order.product_name}</td>
-            <td>${formattedDate}</td>
-            <td style="white-space: nowrap;">${actionButtons}</td>
-        `;
-    });
-
-    // 「もっと確認」リンクの表示制御
-    if (allActiveOrders.length > DISPLAY_LIMIT && !showAll) {
-        showMoreDiv.style.display = 'block';
-    } else {
-        showMoreDiv.style.display = 'none';
-    }
-}
-
-// 「もっと確認」リンクのイベントリスナー（setupEventListeners内で設定）
-function setupShowMoreOrdersLink() {
-    const showMoreLink = document.getElementById('show-more-orders-link');
-    if (showMoreLink) {
-        showMoreLink.addEventListener('click', (e) => {
-            e.preventDefault();
-            showingAllOrders = true;
-            renderPendingOrders(true);
-        });
-    }
+    return row;
 }
 
 // 発注依頼ダイアログ表示
@@ -2811,19 +2878,6 @@ async function quickStockChange(productId, change) {
     const product = products.find(p => p.id === productId);
     if (!product) return;
 
-    // 入庫操作(+1, +5)の場合、該当商品の発注依頼済みがあるかチェック
-    const hasPendingOrder = allActiveOrders.some(order => order.product_id === productId);
-    if (hasPendingOrder) {
-        const shouldProceed = confirm(
-            `${product.name}は発注依頼済みです。\n\n` +
-            `商品が届いた場合は「入庫完了」ボタンを押してください。\n\n` +
-            `このまま在庫を増やしますか？`
-        );
-        if (!shouldProceed) {
-            return;
-        }
-    }
-
     try {
         const response = await fetchWithCsrf('/api/inventory/in', {
             method: 'POST',
@@ -2885,16 +2939,25 @@ async function loadTakerCandidates() {
     }
 }
 
-// 出庫のダイアログ。誰が何個出したかを入れてもらう。
+// 出庫の画面。共用の端末なので、先に出す人を選び、それから出す商品と個数を選ぶ。
+// 何品でも 1 回で登録する（1 品ずつ名前を選び直さなくてよい）。
 // 共用のアカウントで入っていると、ログインの名前だけでは誰が出したか分からないため。
 //
-// 出した人は店の名簿から 1 人を選ぶだけで、自由には打たせない。打てると
+// 出す人は店の名簿から 1 人を選ぶだけで、自由には打たせない。打てると
 // 「田中・佐藤」のように 2 人をまとめた名前や書き方違いが入り、人ごとに集計できなくなる。
-async function openTakeoutDialog(productId, quantity) {
-    const product = products.find(p => p.id === productId);
-    if (!product) return;
+// 開くたびに選び直してもらう（前の人の名前は残さない。次の人がそのまま押してしまうため）。
+//
+// productId を付けて開くと（在庫カードの -1 / -5）、その商品に quantity 個を入れた状態で開く。
+//
+// 2 人でシフトに入っていると、入場リンクの名前が「田中・佐藤」のように 2 人分で来る。
+// その 2 人（shiftNames）を先頭に出し、それぞれが自分の名前を選んで 1 人ずつ登録する。
+// 1 人が登録したら「続けて 佐藤 さんの分を出す」で、もう 1 人の分をすぐ入れられる
+// （options.presetName にその人、options.doneNames に登録が済んだ人を入れて開き直す）。
+async function openTakeoutDialog(productId = null, quantity = 0, options = {}) {
+    const presetProduct = productId ? products.find(p => p.id === productId) : null;
+    if (productId && !presetProduct) return;
 
-    if (product.current_stock <= 0) {
+    if (presetProduct && presetProduct.current_stock <= 0) {
         alert('在庫がありません');
         return;
     }
@@ -2904,33 +2967,75 @@ async function openTakeoutDialog(productId, quantity) {
     const modal = document.getElementById('modal');
     const modalBody = document.getElementById('modal-body');
 
-    // 入場リンクの名前が名簿にあるときだけ、最初から選んでおく。前の人の名前は残さない
-    // （共用の端末で、次の人がそのまま押してしまうため）
-    let selectedName = names.includes(candidates.operatorName) ? candidates.operatorName : null;
+    const shiftNames = (candidates.shiftNames || []).filter(name => names.includes(name));
+    const doneNames = options.doneNames || [];
+
+    // 「続けて ○○ さんの分」から開いたときはその人、入場リンクの名前が 1 人で名簿にあればその人を、
+    // 最初から選んでおく。2 人のシフトでは、どちらかに決めずに選んでもらう
+    let selectedName = names.includes(options.presetName) ? options.presetName
+        : names.includes(candidates.operatorName) ? candidates.operatorName
+        : null;
+
+    // 商品ごとの出す個数。カードから開いたときは、その商品を先頭に出す
+    const counts = new Map();
+    if (presetProduct) {
+        counts.set(presetProduct.id, Math.min(quantity, presetProduct.current_stock));
+    }
+    const listed = presetProduct
+        ? [presetProduct, ...products.filter(p => p.id !== presetProduct.id)]
+        : [...products];
+    const categories = [...new Set(products.map(p => p.category).filter(c => c))];
 
     modalBody.innerHTML = `
-        <h3>出庫の登録</h3>
-        <p class="takeout-dialog-product">${product.name}（現在庫 ${product.current_stock}）</p>
+        <h3>在庫を出す</h3>
         <form id="takeout-form" novalidate>
-            <div class="form-group">
-                <label for="takeout-quantity">何個出しますか</label>
-                <input type="number" id="takeout-quantity" min="1" step="1" inputmode="numeric"
-                    value="${quantity}" required>
-            </div>
-            <div class="form-group">
-                <label id="takeout-taker-label">出した人（1 人を選んでください）</label>
+            <div class="takeout-step">
+                <div id="takeout-taker-label" class="takeout-step-title">① 出す人を選んでください</div>
+                <p id="takeout-shift-note" class="takeout-shift-note" style="display: none;"></p>
                 <div id="takeout-taker-chips" class="taker-chips" role="group" aria-labelledby="takeout-taker-label"></div>
             </div>
-            <p id="takeout-error" class="takeout-error" style="display: none;"></p>
-            <button type="submit" id="takeout-submit" class="btn btn-primary">出庫する</button>
+            <div class="takeout-step">
+                <div class="takeout-step-title">② 出す商品と個数</div>
+                <select id="takeout-category" aria-label="カテゴリ">
+                    <option value="">すべてのカテゴリ</option>
+                    ${categories.map(category => `<option value="${category}">${category}</option>`).join('')}
+                </select>
+                <div id="takeout-items" class="takeout-items"></div>
+            </div>
+            <div class="takeout-footer">
+                <p id="takeout-error" class="takeout-error" style="display: none;"></p>
+                <p id="takeout-summary" class="takeout-summary"></p>
+                <button type="submit" id="takeout-submit" class="btn btn-primary">出庫する</button>
+            </div>
         </form>
     `;
 
     const form = document.getElementById('takeout-form');
-    const quantityInput = document.getElementById('takeout-quantity');
     const chips = document.getElementById('takeout-taker-chips');
+    const itemList = document.getElementById('takeout-items');
+    const categorySelect = document.getElementById('takeout-category');
     const errorText = document.getElementById('takeout-error');
+    const summary = document.getElementById('takeout-summary');
     const submitButton = document.getElementById('takeout-submit');
+
+    const chosenItems = () => listed
+        .filter(p => (counts.get(p.id) || 0) > 0)
+        .map(p => ({ product: p, quantity: counts.get(p.id) }));
+
+    // 下の欄に、誰が何を何個出すかをまとめて出す
+    const updateSummary = () => {
+        const items = chosenItems();
+        const total = items.reduce((sum, item) => sum + item.quantity, 0);
+
+        if (!selectedName) {
+            summary.textContent = '① で出す人を選んでください';
+        } else if (items.length === 0) {
+            summary.textContent = `${selectedName} さん：② で出す商品の個数を入れてください`;
+        } else {
+            summary.textContent = `${selectedName} さん：${items.map(item => `${unescapeHtmlText(item.product.name)} ${item.quantity}`).join('、')}`;
+        }
+        submitButton.textContent = items.length > 0 ? `出庫する（${items.length}品・${total}個）` : '出庫する';
+    };
 
     const markSelected = () => {
         chips.querySelectorAll('.taker-chip').forEach(chip => {
@@ -2938,6 +3043,7 @@ async function openTakeoutDialog(productId, quantity) {
             chip.classList.toggle('selected', selected);
             chip.setAttribute('aria-pressed', selected ? 'true' : 'false');
         });
+        updateSummary();
     };
 
     // 名簿が空なら、選べる人がいないので出庫できない。理由と、どうすればよいかを出す
@@ -2951,11 +3057,21 @@ async function openTakeoutDialog(productId, quantity) {
         submitButton.disabled = true;
     }
 
+    // 2 人でシフトに入っているときは、その 2 人を先頭に印を付けて出し、1 人ずつ登録することを伝える
+    if (shiftNames.length >= 2) {
+        const shiftNote = document.getElementById('takeout-shift-note');
+        const done = shiftNames.filter(name => doneNames.includes(name));
+        shiftNote.textContent = `このシフトは ${shiftNames.join('・')} の ${shiftNames.length} 人です。` +
+            '自分の名前を選んで、1 人ずつ登録してください' +
+            (done.length > 0 ? `（${done.join('・')} さんは登録済み）` : '');
+        shiftNote.style.display = 'block';
+    }
+
     // 名前は名簿から来るが、念のため innerHTML ではなく textContent で入れる
     names.forEach(name => {
         const chip = document.createElement('button');
         chip.type = 'button';
-        chip.className = 'taker-chip';
+        chip.className = shiftNames.length >= 2 && shiftNames.includes(name) ? 'taker-chip taker-chip-shift' : 'taker-chip';
         chip.dataset.name = name;
         chip.textContent = name;
         chip.addEventListener('click', () => {
@@ -2964,10 +3080,100 @@ async function openTakeoutDialog(productId, quantity) {
         });
         chips.appendChild(chip);
     });
+
+    // 商品の行。−／＋ で 1 個ずつ、数字を打っても入れられる。在庫より多くは出せない
+    listed.forEach(product => {
+        const stock = Number(product.current_stock) || 0;
+        const row = document.createElement('div');
+        row.className = 'takeout-item';
+        row.dataset.productId = product.id;
+        // カテゴリも保存のときにエスケープしてある。選択肢の値（元の文字）とそろえる
+        row.dataset.category = unescapeHtmlText(product.category || '');
+
+        // 画像があれば出す（名前だけより、どの商品か見分けやすい）。押すと大きく出す
+        if (product.image_url) {
+            const image = document.createElement('img');
+            image.className = 'takeout-item-image';
+            image.src = product.image_url;
+            image.alt = '';
+            image.loading = 'lazy';
+            image.addEventListener('click', () => showImagePopup(product.image_url));
+            row.appendChild(image);
+        } else {
+            const placeholder = document.createElement('div');
+            placeholder.className = 'takeout-item-image takeout-item-image-none';
+            placeholder.textContent = '画像なし';
+            row.appendChild(placeholder);
+        }
+
+        const label = document.createElement('div');
+        label.className = 'takeout-item-name';
+        // 商品名は保存のときにエスケープしてあるので、innerHTML ではなく元の文字に戻して入れる
+        label.textContent = unescapeHtmlText(product.name);
+        const stockText = document.createElement('small');
+        stockText.textContent = stock > 0 ? `現在庫 ${stock}` : '在庫なし';
+        label.appendChild(stockText);
+        row.appendChild(label);
+
+        const stepper = document.createElement('div');
+        stepper.className = 'takeout-stepper';
+        const minus = document.createElement('button');
+        minus.type = 'button';
+        minus.className = 'takeout-minus';
+        minus.textContent = '−';
+        minus.setAttribute('aria-label', `${label.firstChild.textContent} を 1 個減らす`);
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.className = 'takeout-qty';
+        input.min = '0';
+        input.max = String(stock);
+        input.step = '1';
+        input.inputMode = 'numeric';
+        input.setAttribute('aria-label', `${label.firstChild.textContent} の個数`);
+        const plus = document.createElement('button');
+        plus.type = 'button';
+        plus.className = 'takeout-plus';
+        plus.textContent = '＋';
+        plus.setAttribute('aria-label', `${label.firstChild.textContent} を 1 個増やす`);
+        stepper.append(minus, input, plus);
+        row.appendChild(stepper);
+
+        const setCount = value => {
+            const count = Math.max(0, Math.min(stock, Math.floor(Number(value) || 0)));
+            counts.set(product.id, count);
+            input.value = String(count);
+            row.classList.toggle('chosen', count > 0);
+            minus.disabled = count <= 0;
+            plus.disabled = count >= stock;
+            updateSummary();
+        };
+
+        minus.addEventListener('click', () => setCount((counts.get(product.id) || 0) - 1));
+        plus.addEventListener('click', () => setCount((counts.get(product.id) || 0) + 1));
+        input.addEventListener('change', () => setCount(input.value));
+        if (stock <= 0) {
+            input.disabled = true;
+        }
+        setCount(counts.get(product.id) || 0);
+
+        itemList.appendChild(row);
+    });
+
+    // カテゴリで絞っても、個数を入れた商品は隠さない（入れたのに見えなくなるのを防ぐ）
+    categorySelect.addEventListener('change', () => {
+        itemList.querySelectorAll('.takeout-item').forEach(row => {
+            const chosen = (counts.get(Number(row.dataset.productId)) || 0) > 0;
+            row.style.display = !categorySelect.value || row.dataset.category === categorySelect.value || chosen
+                ? ''
+                : 'none';
+        });
+    });
+
     markSelected();
 
     const showError = (message) => {
-        errorText.textContent = message;
+        // サーバーの文には、保存のときにエスケープした商品名（P&amp;G など）が入ることがある
+        errorText.textContent = unescapeHtmlText(message);
         errorText.style.display = 'block';
     };
 
@@ -2975,32 +3181,29 @@ async function openTakeoutDialog(productId, quantity) {
         e.preventDefault();
         errorText.style.display = 'none';
 
-        const count = Number(quantityInput.value);
+        const items = chosenItems();
 
-        if (!Number.isInteger(count) || count < 1) {
-            showError('個数は 1 以上の整数で入れてください');
-            return;
-        }
-        if (count > product.current_stock) {
-            showError(`在庫が足りません（現在庫 ${product.current_stock}）`);
-            return;
-        }
         if (!selectedName) {
-            showError('出した人を選んでください');
+            showError('出す人を選んでください');
+            // 商品の一覧を下まで見ていても、① が見えるところまで戻す
+            chips.scrollIntoView?.({ block: 'center' });
+            return;
+        }
+        if (items.length === 0) {
+            showError('出す商品の個数を入れてください');
             return;
         }
 
         submitButton.disabled = true;
 
         try {
-            const response = await fetchWithCsrf('/api/inventory/out', {
+            const response = await fetchWithCsrf('/api/inventory/out-batch', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    productId: productId,
-                    quantity: count,
+                    takenBy: selectedName,
                     date: formatDate(new Date()),
-                    takenBy: selectedName
+                    items: items.map(item => ({ productId: item.product.id, quantity: item.quantity }))
                 })
             });
 
@@ -3011,14 +3214,23 @@ async function openTakeoutDialog(productId, quantity) {
             }
 
             if (!response.ok) {
-                // 名簿から外された人・在庫不足など、理由をそのまま見せる
+                // 名簿から外された人・在庫不足など、理由をそのまま見せる（1 品も登録されていない）
                 const result = await response.json().catch(() => ({}));
                 showError(result.error || '登録に失敗しました');
                 return;
             }
 
-            closeModal();
-            showQuickFeedback(`${product.name}（${selectedName}）`, -count);
+            const total = items.reduce((sum, item) => sum + item.quantity, 0);
+            const registered = [...doneNames, selectedName];
+            const remaining = shiftNames.filter(name => !registered.includes(name));
+
+            if (shiftNames.length >= 2 && remaining.length > 0) {
+                // 2 人のシフトで、まだ登録していない人がいる。続けてその人の分を入れられるようにする
+                showTakeoutDone(selectedName, items, remaining, registered);
+            } else {
+                closeModal();
+                showQuickFeedback(`${selectedName} さん ${items.length}品`, -total);
+            }
             await refreshAfterStockChange();
         } catch (error) {
             console.error('出庫エラー:', error);
@@ -3029,6 +3241,54 @@ async function openTakeoutDialog(productId, quantity) {
     });
 
     modal.classList.add('show');
+}
+
+// 2 人のシフトで 1 人が登録したあとの画面。「続けて ○○ さんの分を出す」と「閉じる」
+function showTakeoutDone(name, items, remaining, registered) {
+    const modalBody = document.getElementById('modal-body');
+    modalBody.innerHTML = `
+        <h3>在庫を出す</h3>
+        <div class="takeout-done">
+            <p class="takeout-done-title"></p>
+            <p class="takeout-done-items"></p>
+            <div class="takeout-done-actions"></div>
+        </div>
+    `;
+    modalBody.querySelector('.takeout-done-title').textContent = `✓ ${name} さんの出庫を登録しました`;
+    modalBody.querySelector('.takeout-done-items').textContent =
+        items.map(item => `${unescapeHtmlText(item.product.name)} ${item.quantity}`).join('、');
+
+    const actions = modalBody.querySelector('.takeout-done-actions');
+    remaining.forEach(next => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-primary takeout-next';
+        button.dataset.name = next;
+        button.textContent = `続けて ${next} さんの分を出す`;
+        button.addEventListener('click', () => openTakeoutDialog(null, 0, { presetName: next, doneNames: registered }));
+        actions.appendChild(button);
+    });
+
+    // 何も出していない人は、本人が区切りのカードの「出していない」を押す（ここでは代わりに押せない）
+    const note = document.createElement('p');
+    note.className = 'takeout-done-note';
+    note.textContent = `${remaining.join('・')} さんが何も出していないときは、本人が「区切りごとの在庫確認」の` +
+        '「出していない」を押してください。押さないまま締め切ると、グループに通知が行きます';
+    actions.appendChild(note);
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'btn btn-secondary takeout-close';
+    close.textContent = '閉じる';
+    close.addEventListener('click', closeModal);
+    actions.appendChild(close);
+}
+
+// 保存のときにエスケープしてある文字（&amp; など）を元に戻す。textContent に入れる文字用
+function unescapeHtmlText(text) {
+    const area = document.createElement('textarea');
+    area.innerHTML = String(text);
+    return area.value;
 }
 
 // クイック操作のフィードバック表示

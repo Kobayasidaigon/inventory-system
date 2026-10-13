@@ -345,6 +345,26 @@ const locationTablesSql = [
         FOREIGN KEY (shift_id) REFERENCES shifts(id)
     )`,
 
+    // 区切りに入っている人のテーブル
+    //
+    // 2 人でシフトに入るときは、区切りの確認を 1 人ずつしてもらう（1 人がまとめて
+    // 押すと、もう 1 人が出した物を登録し忘れても分からない）。清掃管理表の入場リンク
+    // （「田中・佐藤」）で入ったときに、その時の区切りに 1 人ずつ記録する。
+    // 確認は、その区切りに自分の名前で出庫を登録するか、「出していない」を押すこと。
+    //   no_change_at = 「出していない」を押した時刻
+    //   alerted_at   = 締め切りまでに確認が無く、LINE に知らせた時刻（二度鳴らさないため）
+    `CREATE TABLE IF NOT EXISTS shift_members (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        shift_id INTEGER NOT NULL,
+        report_date DATE NOT NULL,
+        name TEXT NOT NULL,
+        no_change_at DATETIME,
+        alerted_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(shift_id, report_date, name),
+        FOREIGN KEY (shift_id) REFERENCES shifts(id)
+    )`,
+
     // 出す人の名簿テーブル
     //
     // 出庫のダイアログでは、この名簿から 1 人を選ぶ（自由に打たせない）。

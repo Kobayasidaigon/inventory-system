@@ -63,7 +63,7 @@ const PRODUCTS = [
     { key: 'paper', name: 'トイレットペーパー', category: '衛生用品', reorderPoint: 5 },
     { key: 'glove', name: 'ニトリルグローブ(Ｍサイズ)', category: '衛生用品', reorderPoint: 5 },
     { key: 'tissue', name: 'ティッシュ', category: '衛生用品', reorderPoint: 3 },
-    { key: 'detergent', name: '食器用洗剤', category: '洗剤', reorderPoint: 1 }
+    { key: 'detergent', name: '食器用洗剤', category: '洗剤', reorderPoint: 5 }
 ];
 
 /**
@@ -142,7 +142,7 @@ async function seed() {
     );
 
     // 勤務予定。この 3 人は「シフト」として自動で名簿に載る。
-    // 今日の 2 人は、出庫のダイアログで名前のボタンの先頭に並ぶ
+    // 今日の 2 人は、出庫の画面で名前のボタンの先頭に並ぶ
     for (const [name, ago, start, end] of [
         ['早番 一郎', 0, '09:00', '14:00'],
         ['遅番 二郎', 0, '17:00', '22:00'],
@@ -159,7 +159,7 @@ async function seed() {
     const db = getLocationDatabase(STORE.locationCode);
     const productIds = {};
 
-    // 出す人の名簿のうち、手で足す人（出庫のダイアログでは、この人たちとシフト・ユーザーの人から選ぶ）。
+    // 出す人の名簿のうち、手で足す人（出庫の画面では、この人たちとシフト・ユーザーの人から選ぶ）。
     // 早番・遅番・中番はシフトから、店長 太郎は店のユーザーから自動で載るので、ここでは足さない
     for (const name of ['田中 花子', '佐藤 健', '鈴木 一郎']) {
         await db.run('INSERT INTO taker_roster (name) VALUES (?)', [name]);
@@ -192,6 +192,14 @@ async function seed() {
     // ダッシュボードの区切りの確認に、今日の登録として数えられてしまう
     await db.run(`UPDATE inventory_history SET created_at = date || ' 03:00:00' WHERE date IS NOT NULL`);
 
+    // 食器用洗剤は発注点を下回っていて、発注依頼が出ている（まだ届いていない）。
+    // 現在庫一覧の「発注依頼済み」で絞り込むと、この商品と「入荷完了」が出る
+    await db.run(
+        `INSERT INTO order_requests (product_id, requested_quantity, user_id, note, status, requested_at)
+         VALUES (?, 6, ?, '在庫が発注点を下回ったため自動発注', 'pending', ?)`,
+        [productIds.detergent, user.lastID, `${daysAgo(2)} 03:00:00`]
+    );
+
     const flagged = await findQuickRestocks(db);
     console.log(`  商品 ${PRODUCTS.length} 件・入出庫 ${buildEvents().length} 件・補充が早すぎる商品 ${flagged.length} 件`);
 }
@@ -212,7 +220,7 @@ async function seed() {
 
 店の画面（出庫の登録）
   拠点「${STORE.locationName}」/ ユーザーID ${STORE.userId} / パスワード ${STORE.password}
-  在庫カードの「-1」「-5」で、誰が何個出したかを登録
+  「📦 在庫を出す」（または在庫カードの「-1」「-5」）で、先に出す人を選んで何品でもまとめて出庫
 
 管理画面（出庫記録・人ごとの集計・補充が早すぎる商品・出す人の名簿）
   「管理者ログイン」のタブで 管理者ID ${ADMIN.username} / パスワード ${ADMIN.password}

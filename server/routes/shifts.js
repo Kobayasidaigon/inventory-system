@@ -106,6 +106,15 @@ router.post('/:id/confirm', requireAuth, async (req, res) => {
                 throw new StockError('この区切りはまだ始まっていません');
             }
 
+            // 2 人以上で入っている区切りは、1 人ずつ確認する。1 人がまとめて押すと、
+            // もう 1 人が出した物の登録忘れが分からなくなるため
+            if (target.perMember) {
+                throw new StockError(
+                    `${target.name}は ${target.members.map(m => m.name).join('・')} の ${target.members.length} 人で入っています。` +
+                    '1 人ずつ、自分の名前で出庫を登録するか「出していない」を押してください'
+                );
+            }
+
             // 「変化なし」か「登録あり」かは、その区切りに実際に登録された
             // 件数で決める。利用者に選ばせると、押しやすい方に流れる。
             const status = target.movementCount > 0 ? 'registered' : 'no_change';
@@ -141,6 +150,63 @@ router.post('/:id/confirm', requireAuth, async (req, res) => {
         });
     } catch (err) {
         respondWithStockError(res, err, 'シフトの確認登録に失敗しました');
+    }
+});
+
+// 2 人以上で入っている区切りで、ある人が「出していない」を押す。
+//
+// shiftId を省くと、その人が入っている区切りのうち、いま確認できるもの（締め切っていない）の
+// 一番新しいものにする（出庫の画面から押すときは、どの区切りかを持っていないため）。
+router.post('/members/no-change', requireAuth, async (req, res) => {
+    const db = getLocationDatabase(req.session.locationCode);
+
+    try {
+        const name = String(req.body.name ?? '').trim();
+        if (!name) {
+            throw new StockError('名前を指定してください');
+        }
+
+        const now = new Date();
+        const dateText = toDateString(now);
+        const shiftId = req.body.shiftId === undefined || req.body.shiftId === null || req.body.shiftId === ''
+            ? null
+            : parsePositiveInt(req.body.shiftId, 'シフトID');
+
+        await withTransaction(db, async () => {
+            const shifts = await buildShiftStatus(db, now);
+            const open = shift => !shift.isClosed && (shift.isCurrent || shift.isPast);
+            const hasMember = shift => shift.members.some(m => m.name === name);
+
+            const target = shiftId
+                ? shifts.find(shift => shift.id === shiftId)
+                : shifts.filter(shift => open(shift) && hasMember(shift)).pop();
+
+            if (!target || !hasMember(target)) {
+                throw new StockError(`${name} さんは、いまの区切りに入っていません`, 404);
+            }
+            // 締め切った区切り・まだ始まっていない区切りは、まとめての確定と同じく受け付けない
+            if (target.isClosed) {
+                throw new StockError(`${target.name}は ${target.closeTime} で締め切りました`);
+            }
+            if (!open(target)) {
+                throw new StockError('この区切りはまだ始まっていません');
+            }
+
+            const member = target.members.find(m => m.name === name);
+            if (member.status === 'registered') {
+                throw new StockError(`${name} さんは、この区切りで出庫を登録しています`);
+            }
+
+            await db.run(
+                `UPDATE shift_members SET no_change_at = COALESCE(no_change_at, CURRENT_TIMESTAMP)
+                 WHERE shift_id = ? AND report_date = ? AND name = ?`,
+                [target.id, dateText, name]
+            );
+        });
+
+        res.json({ success: true, shifts: await buildShiftStatus(db, now) });
+    } catch (err) {
+        respondWithStockError(res, err, '「出していない」の登録に失敗しました');
     }
 });
 

@@ -143,9 +143,56 @@ async function sendShiftReminder(groupId, shiftInfo) {
     }
 }
 
+/**
+ * 2 人以上で入っている区切りで、締め切りまでに確認していない人を知らせる。
+ *
+ * 区切り全体の「確認がまだです」ではなく、誰がまだかを名前で出す。
+ * 確認は、自分の名前で出庫を登録するか、「出していない」を押すこと。
+ */
+async function sendShiftMemberReminder(groupId, shiftInfo) {
+    // 送信の出口。ここで止めれば通知は一切出ない
+    if (!notificationsEnabled()) {
+        return false;
+    }
+
+    if (!client) {
+        console.log('LINE クライアントが初期化されていません');
+        return false;
+    }
+
+    if (!groupId) {
+        console.log('グループIDが設定されていません');
+        return false;
+    }
+
+    try {
+        const message = {
+            type: 'text',
+            text: `⏰ 在庫の登録がまだの人がいます\n\n` +
+                  `店舗: ${shiftInfo.locationName}\n` +
+                  `区切り: ${shiftInfo.shiftName}（${shiftInfo.endTime}）\n` +
+                  `未登録: ${shiftInfo.names.join('・')}\n\n` +
+                  `出した物があれば自分の名前で登録を、\n` +
+                  `出していなければ自分の「出していない」を押してください。`
+        };
+
+        await client.pushMessage({
+            to: groupId,
+            messages: [message]
+        });
+
+        console.log(`区切りの未登録の通知を送信しました: ${shiftInfo.locationName} - ${shiftInfo.shiftName}`);
+        return true;
+    } catch (error) {
+        console.error('区切りの未登録の通知の送信エラー:', error);
+        return false;
+    }
+}
+
 module.exports = {
     sendOrderNotification,
     sendShiftReminder,
+    sendShiftMemberReminder,
     notificationsEnabled,
     isEnabled: () => !!client && notificationsEnabled()
 };

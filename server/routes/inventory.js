@@ -24,7 +24,12 @@ const {
     formatHistoryDateTime,
     exportFileName
 } = require('../utils/history-query');
-const { requireRosterName, rosterNameOrNull, listTakerCandidates } = require('../services/takeouts');
+const {
+    requireRosterName,
+    rosterNameOrNull,
+    listTakerCandidates,
+    shiftMembersFromOperator
+} = require('../services/takeouts');
 const router = express.Router();
 
 /**
@@ -347,11 +352,17 @@ router.get('/takers', requireAuth, async (req, res) => {
     try {
         const names = await listTakerCandidates(db, mainDb, req.session.locationId);
 
-        // 入場リンクで名前が分かっていて名簿にもあるときは、ダイアログで最初から選んでおく。
-        // 「田中・佐藤」のような名簿にない名前は選ばない
+        // 入場リンクの名前（清掃管理表の担当者）を名簿の人に合わせる。2 人でシフトに入っていると
+        // 「田中・佐藤」で来るので、1 人ずつに分けて先頭に並べる（shiftNames）。
+        // 1 人のときだけ最初から選んでおく。2 人以上なら、それぞれが自分の名前を選ぶ
+        const shiftNames = await shiftMembersFromOperator(
+            db, mainDb, req.session.locationId, req.session.operatorName
+        );
+
         res.json({
-            names,
-            operatorName: await rosterNameOrNull(db, mainDb, req.session.locationId, req.session.operatorName)
+            names: [...shiftNames, ...names.filter(name => !shiftNames.includes(name))],
+            shiftNames,
+            operatorName: shiftNames.length === 1 ? shiftNames[0] : null
         });
     } catch (err) {
         respondWithStockError(res, err, '名前の候補の取得に失敗しました');

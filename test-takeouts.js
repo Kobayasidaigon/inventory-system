@@ -30,7 +30,7 @@ const {
     openAdminScreen,
     waitFor
 } = require('./test-helpers');
-const { detectQuickRestocks, parseTakerName } = require('./server/services/takeouts');
+const { detectQuickRestocks, parseTakerName, shiftMembersFromOperator } = require('./server/services/takeouts');
 const { sign, canonicalString } = require('./server/services/entry-link');
 
 const PORT = 3986;
@@ -184,6 +184,34 @@ async function fetchCsv(pathAndQuery, cookie = client.state.cookie) {
 // ---------------------------------------------------------------------------
 // 1. 計算（データベースに触らない）
 // ---------------------------------------------------------------------------
+
+/**
+ * 入場リンクの名前（2 人のシフトは「田中・佐藤」）を、名簿の人 1 人ずつに分ける。
+ * 名簿はこの店の手で足した人だけにする（シフト・ユーザーは無し）
+ */
+async function testShiftMemberSplit() {
+    const roster = ['田中 花子', '田中 一郎', '佐藤', 'マイケル・ジョーダン', '鈴木 次郎'];
+    const db = { all: async () => roster.map((name, i) => ({ id: i + 1, name, source: 'manual' })) };
+    const mainDb = { all: async () => [] };
+    const split = value => shiftMembersFromOperator(db, mainDb, 1, value);
+
+    const cases = [
+        ['田中・佐藤', ['佐藤'], '名字だけの「田中」は名簿に 2 人いるので決めない'],
+        ['鈴木、佐藤', ['鈴木 次郎', '佐藤'], '名字だけでも名簿に 1 人ならその人'],
+        ['マイケル・ジョーダン', ['マイケル・ジョーダン'], '区切りの入った 1 人の名前が名簿にあればそのまま'],
+        ['佐藤／佐藤', ['佐藤'], '同じ人は 1 回'],
+        ['高橋・山本', [], '名簿にいない人は出さない'],
+        [null, [], '名前が無い']
+    ];
+    for (const [value, expected, label] of cases) {
+        const actual = await split(value);
+        addResult(
+            `2 人のシフトの名前: ${label}`,
+            JSON.stringify(actual) === JSON.stringify(expected),
+            `${value} → ${JSON.stringify(actual)}`
+        );
+    }
+}
 
 function testDetect() {
     // 2 週間おきに 20 個ずつ補充していた商品
@@ -707,7 +735,7 @@ async function testEntryLinkName(locationCode) {
     const candidates = await visitor.request('GET', '/api/inventory/takers');
     addResult(
         '入場リンク: 名前が分かっていればダイアログに最初から入れる',
-        candidates.body.operatorName === '山田',
+        candidates.body.operatorName === '山田' && JSON.stringify(candidates.body.shiftNames) === '["山田"]',
         `operatorName: ${candidates.body.operatorName}`
     );
 
@@ -728,6 +756,13 @@ async function testEntryLinkName(locationCode) {
     await pair.refreshCsrfToken();
 
     const pairCandidates = await pair.request('GET', '/api/inventory/takers');
+    // 「田中」は名簿に名字が同じ人が 1 人（田中 花子）だけなのでその人、「佐藤」は名簿にそのままいる
+    addResult(
+        '2 人組: 「田中・佐藤」で入ると 1 人ずつに分けて名簿の人に合わせ、先頭に並べる',
+        JSON.stringify(pairCandidates.body.shiftNames) === JSON.stringify(['田中 花子', '佐藤']) &&
+            pairCandidates.body.names[0] === '田中 花子' && pairCandidates.body.names[1] === '佐藤',
+        `shiftNames ${JSON.stringify(pairCandidates.body.shiftNames)} / 先頭 ${pairCandidates.body.names.slice(0, 2).join(' , ')}`
+    );
     const pairTyped = await pair.request('POST', '/api/inventory/out', {
         productId: products.joy, quantity: 1, date: '2025-07-03', takenBy: '田中・佐藤'
     });
@@ -921,8 +956,62 @@ async function testScreen() {
         );
         window.closeModal();
 
-        // 名簿が空の店では、選べる人がいないので出庫できない。理由とどうすればよいかを出す
+        // --- 2 人でシフトに入っている（入場リンクの名前が「田中・佐藤」） ---
         const realCandidates = window.loadTakerCandidates;
+        window.loadTakerCandidates = async () => {
+            const real = await realCandidates();
+            const shiftNames = ['田中 花子', '佐藤'];
+            return { names: [...shiftNames, ...real.names.filter(n => !shiftNames.includes(n))], shiftNames, operatorName: null };
+        };
+        const pairPaperBefore = (await outsToday('paper', '田中 花子')).length;
+        const pairGloveBefore = (await outsToday('glove', '佐藤')).length;
+        await openFrom(() => doc.getElementById('open-takeout').click(), '出庫の画面が開く（2 人のシフト）');
+        const shiftChips = [...doc.querySelectorAll('.taker-chip.taker-chip-shift')].map(c => c.textContent);
+        const allChips = [...doc.querySelectorAll('.taker-chip')].map(c => c.textContent);
+        addResult(
+            '2 人のシフト: 2 人が先頭に印付きで並び、どちらも選ばれておらず、1 人ずつ登録するよう出る',
+            JSON.stringify(shiftChips) === JSON.stringify(['田中 花子', '佐藤']) &&
+                allChips[0] === '田中 花子' && allChips[1] === '佐藤' &&
+                doc.querySelectorAll('.taker-chip.selected').length === 0 &&
+                doc.getElementById('takeout-shift-note').textContent.includes('1 人ずつ'),
+            `${shiftChips.join(' , ')} / ${doc.getElementById('takeout-shift-note').textContent}`
+        );
+
+        [...doc.querySelectorAll('.taker-chip')].find(c => c.textContent === '田中 花子').click();
+        rowOf('トイレットペーパー').querySelector('.takeout-plus').click();
+        doc.getElementById('takeout-submit').click();
+        await waitFor(() => doc.querySelector('.takeout-done'), '1 人目の登録が済む');
+        const nextButtons = [...doc.querySelectorAll('.takeout-done .takeout-next')].map(b => b.textContent);
+        addResult(
+            '2 人のシフト: 1 人目を登録すると、「続けて 佐藤 さんの分を出す」が出る',
+            doc.getElementById('modal').classList.contains('show') &&
+                doc.querySelector('.takeout-done-title').textContent.includes('田中 花子 さんの出庫を登録しました') &&
+                JSON.stringify(nextButtons) === JSON.stringify(['続けて 佐藤 さんの分を出す']) &&
+                (await outsToday('paper', '田中 花子')).length === pairPaperBefore + 1,
+            `${doc.querySelector('.takeout-done-title').textContent} / ${nextButtons.join(' , ')}`
+        );
+
+        doc.querySelector('.takeout-done .takeout-next').click();
+        await waitFor(() => doc.getElementById('takeout-form'), '2 人目の画面が開く');
+        addResult(
+            '2 人のシフト: 続けると 2 人目が選ばれた状態で開き、1 人目は登録済みと出る',
+            doc.querySelector('.taker-chip.selected') && doc.querySelector('.taker-chip.selected').textContent === '佐藤' &&
+                doc.getElementById('takeout-shift-note').textContent.includes('田中 花子 さんは登録済み') &&
+                [...doc.querySelectorAll('.takeout-qty')].every(input => input.value === '0'),
+            doc.getElementById('takeout-shift-note').textContent
+        );
+
+        rowOf('ニトリルグローブ(Ｍサイズ)').querySelector('.takeout-plus').click();
+        doc.getElementById('takeout-submit').click();
+        await waitFor(() => !doc.getElementById('modal').classList.contains('show'), '2 人とも済んだら閉じる');
+        addResult(
+            '2 人のシフト: 2 人目を登録すると閉じ、それぞれの名前で記録される',
+            (await outsToday('paper', '田中 花子')).length === pairPaperBefore + 1 &&
+                (await outsToday('glove', '佐藤')).length === pairGloveBefore + 1,
+            `田中 花子 ${(await outsToday('paper', '田中 花子')).join(',')} / 佐藤 ${(await outsToday('glove', '佐藤')).join(',')}`
+        );
+
+        // 名簿が空の店では、選べる人がいないので出庫できない。理由とどうすればよいかを出す
         window.loadTakerCandidates = async () => ({ names: [], operatorName: null });
         await openFrom(() => paperCard().querySelector('button[title="1個出庫"]').click(), '出庫の画面が開く（名簿なし）');
         const emptyNote = doc.querySelector('#takeout-taker-chips .taker-empty-note');
@@ -1264,6 +1353,7 @@ async function testStoreUsersOnRoster() {
     console.log('========================================\n');
 
     testDetect();
+    await testShiftMemberSplit();
     await testRosterSeed();
 
     const { server, waitUntilReady } = startServer({

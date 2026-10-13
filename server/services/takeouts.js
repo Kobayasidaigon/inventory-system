@@ -519,6 +519,46 @@ async function rosterNameOrNull(db, mainDb, locationId, value) {
 }
 
 /**
+ * 入場リンクの名前（清掃管理表の担当者）から、名簿にいる人を 1 人ずつ取り出す。
+ *
+ * 2 人でシフトに入ると「田中・佐藤」のように 2 人分が 1 つの名前で来る。区切って名簿と
+ * 合わせ、出庫の画面ではそれぞれが自分の名前を選べるようにする（2 人まとめては記録しない）。
+ * 名簿に同じ名前が無いときは、名字（空白の前）が同じ人が名簿に 1 人だけいれば、その人とみなす
+ * （清掃管理表は名字だけのことがあるため）。
+ *
+ * @returns {Promise<string[]>} 名簿にある名前（入場リンクの順。見つからない人は入れない）
+ */
+async function shiftMembersFromOperator(db, mainDb, locationId, operatorName) {
+    if (!operatorName) {
+        return [];
+    }
+
+    const roster = (await listRoster(db, mainDb, locationId)).map(row => row.name);
+    const whole = normalizeName(operatorName);
+
+    // 「マイケル・ジョーダン」のように、区切りの入った 1 人の名前が名簿にあればそのまま
+    if (whole && roster.includes(whole)) {
+        return [whole];
+    }
+
+    const members = [];
+    for (const part of String(operatorName).split(MULTI_PERSON_NAME)) {
+        const name = normalizeName(part);
+        if (!name) {
+            continue;
+        }
+
+        const sameSurname = roster.filter(rosterName => rosterName.split(' ')[0] === name);
+        const match = roster.includes(name) ? name : sameSurname.length === 1 ? sameSurname[0] : null;
+        if (match && !members.includes(match)) {
+            members.push(match);
+        }
+    }
+
+    return members;
+}
+
+/**
  * 出庫のダイアログに並べる名前。名簿の全員を、選ばれそうな順に並べる。
  *
  * 今日の勤務 → 最近出庫で使った人 → この店で記録を入れた人 → 前後 30 日の勤務 → 残り（名前順）。
@@ -711,6 +751,7 @@ module.exports = {
     findQuickRestocks,
     summarizeByTaker,
     listTakerCandidates,
+    shiftMembersFromOperator,
     listRoster,
     addToRoster,
     removeFromRoster,

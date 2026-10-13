@@ -2853,7 +2853,12 @@ async function loadTakerCandidates() {
 // 開くたびに選び直してもらう（前の人の名前は残さない。次の人がそのまま押してしまうため）。
 //
 // productId を付けて開くと（在庫カードの -1 / -5）、その商品に quantity 個を入れた状態で開く。
-async function openTakeoutDialog(productId = null, quantity = 0) {
+//
+// 2 人でシフトに入っていると、入場リンクの名前が「田中・佐藤」のように 2 人分で来る。
+// その 2 人（shiftNames）を先頭に出し、それぞれが自分の名前を選んで 1 人ずつ登録する。
+// 1 人が登録したら「続けて 佐藤 さんの分を出す」で、もう 1 人の分をすぐ入れられる
+// （options.presetName にその人、options.doneNames に登録が済んだ人を入れて開き直す）。
+async function openTakeoutDialog(productId = null, quantity = 0, options = {}) {
     const presetProduct = productId ? products.find(p => p.id === productId) : null;
     if (productId && !presetProduct) return;
 
@@ -2867,8 +2872,14 @@ async function openTakeoutDialog(productId = null, quantity = 0) {
     const modal = document.getElementById('modal');
     const modalBody = document.getElementById('modal-body');
 
-    // 入場リンクの名前が名簿にあるときだけ、最初から選んでおく
-    let selectedName = names.includes(candidates.operatorName) ? candidates.operatorName : null;
+    const shiftNames = (candidates.shiftNames || []).filter(name => names.includes(name));
+    const doneNames = options.doneNames || [];
+
+    // 「続けて ○○ さんの分」から開いたときはその人、入場リンクの名前が 1 人で名簿にあればその人を、
+    // 最初から選んでおく。2 人のシフトでは、どちらかに決めずに選んでもらう
+    let selectedName = names.includes(options.presetName) ? options.presetName
+        : names.includes(candidates.operatorName) ? candidates.operatorName
+        : null;
 
     // 商品ごとの出す個数。カードから開いたときは、その商品を先頭に出す
     const counts = new Map();
@@ -2885,6 +2896,7 @@ async function openTakeoutDialog(productId = null, quantity = 0) {
         <form id="takeout-form" novalidate>
             <div class="takeout-step">
                 <div id="takeout-taker-label" class="takeout-step-title">① 出す人を選んでください</div>
+                <p id="takeout-shift-note" class="takeout-shift-note" style="display: none;"></p>
                 <div id="takeout-taker-chips" class="taker-chips" role="group" aria-labelledby="takeout-taker-label"></div>
             </div>
             <div class="takeout-step">
@@ -2950,11 +2962,21 @@ async function openTakeoutDialog(productId = null, quantity = 0) {
         submitButton.disabled = true;
     }
 
+    // 2 人でシフトに入っているときは、その 2 人を先頭に印を付けて出し、1 人ずつ登録することを伝える
+    if (shiftNames.length >= 2) {
+        const shiftNote = document.getElementById('takeout-shift-note');
+        const done = shiftNames.filter(name => doneNames.includes(name));
+        shiftNote.textContent = `このシフトは ${shiftNames.join('・')} の ${shiftNames.length} 人です。` +
+            '自分の名前を選んで、1 人ずつ登録してください' +
+            (done.length > 0 ? `（${done.join('・')} さんは登録済み）` : '');
+        shiftNote.style.display = 'block';
+    }
+
     // 名前は名簿から来るが、念のため innerHTML ではなく textContent で入れる
     names.forEach(name => {
         const chip = document.createElement('button');
         chip.type = 'button';
-        chip.className = 'taker-chip';
+        chip.className = shiftNames.length >= 2 && shiftNames.includes(name) ? 'taker-chip taker-chip-shift' : 'taker-chip';
         chip.dataset.name = name;
         chip.textContent = name;
         chip.addEventListener('click', () => {
@@ -3104,8 +3126,16 @@ async function openTakeoutDialog(productId = null, quantity = 0) {
             }
 
             const total = items.reduce((sum, item) => sum + item.quantity, 0);
-            closeModal();
-            showQuickFeedback(`${selectedName} さん ${items.length}品`, -total);
+            const registered = [...doneNames, selectedName];
+            const remaining = shiftNames.filter(name => !registered.includes(name));
+
+            if (shiftNames.length >= 2 && remaining.length > 0) {
+                // 2 人のシフトで、まだ登録していない人がいる。続けてその人の分を入れられるようにする
+                showTakeoutDone(selectedName, items, remaining, registered);
+            } else {
+                closeModal();
+                showQuickFeedback(`${selectedName} さん ${items.length}品`, -total);
+            }
             await refreshAfterStockChange();
         } catch (error) {
             console.error('出庫エラー:', error);
@@ -3116,6 +3146,40 @@ async function openTakeoutDialog(productId = null, quantity = 0) {
     });
 
     modal.classList.add('show');
+}
+
+// 2 人のシフトで 1 人が登録したあとの画面。「続けて ○○ さんの分を出す」と「閉じる」
+function showTakeoutDone(name, items, remaining, registered) {
+    const modalBody = document.getElementById('modal-body');
+    modalBody.innerHTML = `
+        <h3>在庫を出す</h3>
+        <div class="takeout-done">
+            <p class="takeout-done-title"></p>
+            <p class="takeout-done-items"></p>
+            <div class="takeout-done-actions"></div>
+        </div>
+    `;
+    modalBody.querySelector('.takeout-done-title').textContent = `✓ ${name} さんの出庫を登録しました`;
+    modalBody.querySelector('.takeout-done-items').textContent =
+        items.map(item => `${unescapeHtmlText(item.product.name)} ${item.quantity}`).join('、');
+
+    const actions = modalBody.querySelector('.takeout-done-actions');
+    remaining.forEach(next => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-primary takeout-next';
+        button.dataset.name = next;
+        button.textContent = `続けて ${next} さんの分を出す`;
+        button.addEventListener('click', () => openTakeoutDialog(null, 0, { presetName: next, doneNames: registered }));
+        actions.appendChild(button);
+    });
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'btn btn-secondary takeout-close';
+    close.textContent = '閉じる';
+    close.addEventListener('click', closeModal);
+    actions.appendChild(close);
 }
 
 // 保存のときにエスケープしてある文字（&amp; など）を元に戻す。textContent に入れる文字用

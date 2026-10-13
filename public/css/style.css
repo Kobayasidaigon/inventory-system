@@ -1278,42 +1278,6 @@ table tbody tr:hover {
     margin: 0;
 }
 
-/* ワンタップ登録ボタン */
-.btn-quick {
-    padding: 8px 12px;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 600;
-    transition: all 0.2s;
-    min-width: 50px;
-}
-
-.btn-quick-out {
-    background: #ff6b6b;
-    color: white;
-}
-
-.btn-quick-out:hover {
-    background: #ff5252;
-    transform: scale(1.05);
-}
-
-.btn-quick-in {
-    background: #51cf66;
-    color: white;
-}
-
-.btn-quick-in:hover {
-    background: #40c057;
-    transform: scale(1.05);
-}
-
-.btn-quick:active {
-    transform: scale(0.95);
-}
-
 /* フィードバック通知のアニメーション */
 @keyframes slideIn {
     from {
@@ -1334,15 +1298,6 @@ table tbody tr:hover {
     to {
         transform: translateX(100%);
         opacity: 0;
-    }
-}
-
-/* モバイル対応 */
-@media (max-width: 768px) {
-    .btn-quick {
-        padding: 6px 10px;
-        font-size: 12px;
-        min-width: 40px;
     }
 }
 
@@ -1514,43 +1469,6 @@ table tbody tr:hover {
     }
 }
 
-.stock-card-actions {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr 1fr;
-    gap: 4px;
-}
-
-.stock-card .btn-quick {
-    padding: 7px 4px;
-    font-size: 12px;
-    font-weight: 600;
-    border-radius: 4px;
-    border: none;
-    transition: all 0.15s ease;
-}
-
-.stock-card .btn-quick:active {
-    transform: scale(0.95);
-}
-
-.stock-card .btn-quick-out {
-    background: #ff6b6b;
-    color: white;
-}
-
-.stock-card .btn-quick-out:hover {
-    background: #ff5252;
-}
-
-.stock-card .btn-quick-in {
-    background: #51cf66;
-    color: white;
-}
-
-.stock-card .btn-quick-in:hover {
-    background: #40c057;
-}
-
 /* レスポンシブ対応 */
 @media (max-width: 768px) {
     .stock-cards-container {
@@ -1608,11 +1526,6 @@ table tbody tr:hover {
 
     .stock-stat-value {
         font-size: 16px;
-    }
-
-    .stock-card .btn-quick {
-        padding: 8px 6px;
-        font-size: 13px;
     }
 }
 

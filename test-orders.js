@@ -223,6 +223,95 @@ async function testApi(location) {
         rowOf(productB).has_pending_order === true && rowOf(productB).pending_order_status === 'pending',
         `has_pending_order=${rowOf(productB).has_pending_order} / status=${rowOf(productB).pending_order_status}`
     );
+
+    // --- 在庫が発注点を超えたら、未入荷の依頼は届いたとみなす ---
+    // 届いた商品を「入荷完了」ではなく +1 / +5 で入れても、依頼が未入荷のまま残らないように
+    const productE = await createProduct('API: 在庫が戻ったら受領済', 5, 10);
+    await request('POST', '/api/inventory/out', { productId: productE, quantity: 7, note: '発注点割れ' });
+    const [orderE] = await activeOrdersOf(productE);
+    await markOrdered(location.locationId, orderE.id);
+    await request('POST', '/api/inventory/in', { productId: productE, quantity: 2, note: 'クイック操作' });
+    const atReorderPoint = (await activeOrdersOf(productE)).length;
+    await request('POST', '/api/inventory/in', { productId: productE, quantity: 1, note: 'クイック操作' });
+    const receivedE = (await allOrders()).find(o => o.id === orderE.id);
+    addResult(
+        '届いたとみなす: 在庫が発注点を超えたら、未入荷の依頼（発注済も）が受領済になる。発注点ちょうどまではそのまま',
+        atReorderPoint === 1 && receivedE.status === 'received' && (await activeOrdersOf(productE)).length === 0,
+        `発注点ちょうど: 未入荷 ${atReorderPoint} 件 / 超えたあと: ${receivedE.status}`
+    );
+
+    // 在庫が十分なうちに手で出した依頼は、在庫が動いても閉じない（届いた印にならない）
+    const productF = await createProduct('API: 在庫十分で手の依頼', 5, 20);
+    await request('POST', '/api/orders', { productId: productF, quantity: 0 });
+    await request('POST', '/api/inventory/in', { productId: productF, quantity: 1, note: 'クイック操作' });
+    await request('POST', '/api/inventory/out', { productId: productF, quantity: 1 });
+    addResult(
+        '届いたとみなす: 在庫が十分なうちに手で出した依頼は、在庫が動いても閉じない',
+        (await activeOrdersOf(productF)).length === 1,
+        `未入荷の依頼 ${(await activeOrdersOf(productF)).length} 件（期待値 1）`
+    );
+}
+
+/**
+ * 1 回だけの手直し: 在庫が発注点より多いのに未入荷のまま残っている依頼を、受領済にする。
+ * サーバーを起動せず、拠点データベースの準備（prepareLocationDatabase）を直接呼ぶ
+ */
+async function testStockedOrdersFix() {
+    // database-admin は読み込むと DB_DIR に main.db を開くので、使い捨ての場所にする
+    const fixDir = createTempDbDir('inventory-orders-fix');
+    process.env.DB_DIR = fixDir;
+    const { prepareLocationDatabase } = require('./server/db/database-admin');
+    const sqlite3 = require('sqlite3');
+    const raw = new sqlite3.Database(path.join(fixDir, 'location_fix.db'));
+    const call = method => (sql, params = []) => new Promise((resolve, reject) => {
+        raw[method](sql, params, function (err, result) {
+            if (err) reject(err);
+            else resolve(method === 'run' ? { lastID: this.lastID, changes: this.changes } : result);
+        });
+    });
+    const db = { get: call('get'), all: call('all'), run: call('run') };
+
+    try {
+        // この版より前のデータベース（手直しをまだ流していない）
+        await prepareLocationDatabase(db);
+        await db.run('DELETE FROM applied_fixes');
+
+        const product = async (name, stock, reorderPoint) => (await db.run(
+            'INSERT INTO products (name, reorder_point, current_stock) VALUES (?, ?, ?)',
+            [name, reorderPoint, stock]
+        )).lastID;
+        const order = async (productId, status) => (await db.run(
+            'INSERT INTO order_requests (product_id, requested_quantity, user_id, status) VALUES (?, 1, 1, ?)',
+            [productId, status]
+        )).lastID;
+        const statusOf = async id => (await db.get('SELECT status FROM order_requests WHERE id = ?', [id])).status;
+
+        const stocked = await product('在庫が戻った商品', 75, 40);
+        const low = await product('まだ少ない商品', 35, 100);
+        const stockedPending = await order(stocked, 'pending');
+        const stockedOrdered = await order(stocked, 'ordered');
+        const lowPending = await order(low, 'pending');
+
+        await prepareLocationDatabase(db);
+        addResult(
+            '手直し: 在庫が発注点より多い商品の未入荷の依頼は受領済になり、少ない商品の依頼はそのまま',
+            (await statusOf(stockedPending)) === 'received' && (await statusOf(stockedOrdered)) === 'received' &&
+                (await statusOf(lowPending)) === 'pending',
+            `在庫あり ${await statusOf(stockedPending)} / ${await statusOf(stockedOrdered)} / 在庫少 ${await statusOf(lowPending)}`
+        );
+
+        // 2 回目の起動では流さない（そのあと手で出した依頼を閉じない）
+        const later = await order(stocked, 'pending');
+        await prepareLocationDatabase(db);
+        addResult(
+            '手直し: 1 回だけ。次に起動したときは、そのあと出した依頼を閉じない',
+            (await statusOf(later)) === 'pending',
+            `あとから出した依頼 ${await statusOf(later)}`
+        );
+    } finally {
+        raw.close();
+        fs.rmSync(fixDir, { recursive: true, force: true });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +366,7 @@ async function testScreen(location) {
     const fromCard = await createProduct('画面: カードで入荷', 5, 10);
     await request('POST', '/api/inventory/out', { productId: fromCard, quantity: 6, note: '発注点割れ' });
 
-    // 依頼は残っているが、在庫が発注点より多い商品（届いたのに入荷完了が押されていない）
+    // 在庫が発注点を超えた商品（+5 で入れた。依頼は届いたとみなされて受領済になる）
     const restored = await createProduct('画面: 在庫が戻った', 5, 10);
     await request('POST', '/api/inventory/out', { productId: restored, quantity: 6, note: '発注点割れ' });
     await request('POST', '/api/inventory/in', { productId: restored, quantity: 5, note: 'クイック操作' });
@@ -342,8 +431,8 @@ async function testScreen(location) {
             `${orderedNames.join(', ')} / ボタンの件数「${doc.getElementById('ordered-count').textContent}」`
         );
         addResult(
-            '発注依頼済み: 依頼が残っていても、在庫が発注点より多い商品は出さない',
-            !orderedNames.includes('画面: 在庫が戻った') && (await activeOrdersOf(restored)).length === 1,
+            '発注依頼済み: 在庫が発注点を超えた商品は出さない（依頼は受領済になっている）',
+            !orderedNames.includes('画面: 在庫が戻った') && (await activeOrdersOf(restored)).length === 0,
             `在庫が戻った商品の未入荷の依頼 ${(await activeOrdersOf(restored)).length} 件 / 並び ${orderedNames.join(', ')}`
         );
         addResult(
@@ -634,6 +723,7 @@ async function testCsv(location) {
         await testApi(location);
         await testScreen(location);
         await testCsv(location);
+        await testStockedOrdersFix();
     } catch (err) {
         results.failed++;
         console.error('\n❌ テストの実行中にエラーが発生しました:', err.message);

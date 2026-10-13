@@ -365,6 +365,12 @@ const locationTablesSql = [
         FOREIGN KEY (shift_id) REFERENCES shifts(id)
     )`,
 
+    // 1 回だけ流すデータの手直しの記録（同じ手直しを起動のたびに繰り返さないため）
+    `CREATE TABLE IF NOT EXISTS applied_fixes (
+        name TEXT PRIMARY KEY,
+        applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`,
+
     // 出す人の名簿テーブル
     //
     // 出庫のダイアログでは、この名簿から 1 人を選ぶ（自由に打たせない）。
@@ -534,6 +540,41 @@ async function seedTakerRosterFromHistory(db) {
 }
 
 /**
+ * データの手直しを 1 回だけ流す。流したら applied_fixes に残し、次からは飛ばす。
+ * 失敗しても起動は止めない（次の起動でもう一度試す）。
+ */
+async function applyFixOnce(db, name, fix) {
+    try {
+        if (await db.get('SELECT name FROM applied_fixes WHERE name = ?', [name])) {
+            return;
+        }
+        await fix(db);
+        await db.run('INSERT INTO applied_fixes (name) VALUES (?)', [name]);
+    } catch (err) {
+        console.error(`データの手直し（${name}）に失敗しました:`, err);
+    }
+}
+
+/**
+ * 在庫が発注点より多いのに、未入荷のまま残っている依頼を受領済にする（1 回だけ）。
+ *
+ * 届いた商品を「入荷完了」ではなく +1 / +5 などで入れると、依頼が未入荷のまま残り、
+ * その商品の自動発注が止まっていた。在庫が発注点より多いなら届いたとみなす。
+ * これから先は、在庫が発注点を超えたときに applyStockChange が受領済にする。
+ */
+async function receiveStockedOrders(db) {
+    const result = await db.run(`
+        UPDATE order_requests SET status = 'received'
+        WHERE status IN ('pending', 'ordered')
+          AND product_id IN (SELECT id FROM products WHERE current_stock > reorder_point)
+    `);
+
+    if (result && result.changes > 0) {
+        console.log(`在庫が発注点より多い商品の、未入荷の依頼 ${result.changes} 件を受領済にしました`);
+    }
+}
+
+/**
  * 拠点データベースの準備（テーブル作成・列の追加・初期データ）。
  *
  * @param {object} db - 素のメソッド（get/all/run）を持つデータベース
@@ -547,6 +588,7 @@ async function prepareLocationDatabase(db) {
 
     await createLocationTables(db);
     await migrateLocationTables(db);
+    await applyFixOnce(db, 'receive_stocked_orders', receiveStockedOrders);
 
     if (rosterIsNew) {
         try {

@@ -243,7 +243,32 @@ async function applyStockChange(db, params) {
 
     await db.run('UPDATE products SET current_stock = ? WHERE id = ?', [nextStock, productId]);
 
+    // 在庫が発注点以下から発注点を超えたら、未入荷の依頼は届いたとみなして受領済にする。
+    // 届いた商品を「入荷完了」ではなく +1 / +5 や棚卸で入れると、依頼が未入荷のまま残り、
+    // 次に在庫が減っても自動発注が作られない（findActiveOrder が残った依頼を見るため）。
+    // 「超えたとき」だけにするのは、在庫が十分なうちに手で出した依頼まで閉じないため
+    const reorderPoint = Number(product.reorder_point) || 0;
+    if (delta > 0 && currentStock <= reorderPoint && nextStock > reorderPoint) {
+        await receiveActiveOrders(db, productId);
+    }
+
     return { ...product, current_stock: nextStock };
+}
+
+/**
+ * 商品の未入荷の依頼（依頼中・発注済）を、届いたものとして受領済にする。
+ *
+ * @returns {Promise<number>} 受領済にした依頼の数
+ */
+async function receiveActiveOrders(db, productId) {
+    const placeholders = ACTIVE_ORDER_STATUSES.map(() => '?').join(', ');
+    const result = await db.run(
+        `UPDATE order_requests SET status = 'received'
+         WHERE product_id = ? AND status IN (${placeholders})`,
+        [productId, ...ACTIVE_ORDER_STATUSES]
+    );
+
+    return result && result.changes ? result.changes : 0;
 }
 
 /**
@@ -451,6 +476,7 @@ module.exports = {
     applyStockChange,
     calcOrderQuantity,
     findActiveOrder,
+    receiveActiveOrders,
     createAutoOrderIfNeeded,
     buildStockChartData,
     parseChartDays,

@@ -215,6 +215,98 @@ async function testMonitor() {
     );
 
     await testGrace(db, monitor);
+    await testPerMember(db, monitor);
+}
+
+// ---------------------------------------------------------------------------
+// 1c. 2 人で入っている区切り（1 人ずつ確認し、まだの人を名前付きで知らせる）
+// ---------------------------------------------------------------------------
+
+async function testPerMember(db, monitor) {
+    await db.run('DELETE FROM shifts');
+    await db.run('DELETE FROM inventory_history');
+    await db.run('DELETE FROM shift_members');
+    await db.run('DELETE FROM shift_alerts');
+    const morning = await db.run("INSERT INTO shifts (name, end_time, sort_order) VALUES ('ペア朝', '10:00', 1)");
+    const noon = await db.run("INSERT INTO shifts (name, end_time, sort_order) VALUES ('ペア昼', '12:00', 2)");
+    await db.run("INSERT INTO shifts (name, end_time, sort_order) VALUES ('ペア晩', '20:00', 3)");
+
+    const statusAt = async (hour, minute, name) =>
+        (await monitor.buildShiftStatus(db, todayAt(hour, minute))).find(s => s.name === name);
+    const takeout = (hour, minute, takenBy) => db.run(
+        `INSERT INTO inventory_history (product_id, type, quantity, note, user_id, taken_by, created_at)
+         VALUES (1, 'out', 1, '', 1, ?, ?)`,
+        [takenBy, toUtcStamp(todayAt(hour, minute))]
+    );
+    const members = async shiftId => db.all(
+        'SELECT name, no_change_at, alerted_at FROM shift_members WHERE shift_id = ? ORDER BY id',
+        [shiftId]
+    );
+
+    // 入場リンク「田中・佐藤」で 9:00 に入った。同じ人がもう一度入っても重ならない
+    const recorded = await monitor.recordShiftMembers(db, todayAt(9, 0), ['田中 花子', '佐藤 健']);
+    await monitor.recordShiftMembers(db, todayAt(9, 5), ['田中 花子']);
+    const start = await statusAt(9, 30, 'ペア朝');
+    addResult(
+        '2 人の区切り: 入場リンクの 2 人が、今の区切りに 1 人ずつ記録される',
+        recorded && recorded.name === 'ペア朝' && start.perMember === true &&
+            JSON.stringify(start.members.map(m => m.name)) === JSON.stringify(['田中 花子', '佐藤 健']) &&
+            start.members.every(m => m.status === null) && start.confirmed === false,
+        `${recorded && recorded.name} / ${start.members.map(m => `${m.name}:${m.status}`).join(' , ')}`
+    );
+
+    // 田中さんは自分の名前で出庫した。佐藤さんはまだ
+    await takeout(9, 40, '田中 花子');
+    const half = await statusAt(9, 45, 'ペア朝');
+    addResult(
+        '2 人の区切り: 自分の名前で出庫した人は済み。もう 1 人がまだなら区切りは未確認',
+        half.members[0].status === 'registered' && half.members[0].takeoutCount === 1 &&
+            half.members[1].status === null && half.confirmed === false,
+        half.members.map(m => `${m.name}:${m.status}`).join(' , ')
+    );
+
+    // 締め切り（10:10）を過ぎたら、まだの人だけを名前付きで知らせる
+    const sent = await monitor.checkUnconfirmedShifts(todayAt(10, 20));
+    const afterAlert = await members(morning.lastID);
+    const generic = await db.get('SELECT COUNT(*) as count FROM shift_alerts WHERE shift_id = ?', [morning.lastID]);
+    addResult(
+        '2 人の区切り: 締め切りまでに確認していない人だけを通知する（区切り全体の通知は出さない）',
+        sent === 1 && afterAlert[1].alerted_at && !afterAlert[0].alerted_at && generic.count === 0,
+        afterAlert.map(m => `${m.name}:${m.alerted_at ? '通知' : '-'}`).join(' , ') + ` / 区切り全体 ${generic.count}`
+    );
+
+    const again = await monitor.checkUnconfirmedShifts(todayAt(10, 40));
+    addResult(
+        '2 人の区切り: 同じ人を二度通知しない',
+        again === 0,
+        `通知 ${again} 件`
+    );
+
+    // 次の区切り: 佐藤さんは出庫、田中さんは「出していない」。2 人とも済めば確認済み
+    await monitor.recordShiftMembers(db, todayAt(11, 0), ['田中 花子', '佐藤 健']);
+    await takeout(11, 10, '佐藤 健');
+    await db.run(
+        "UPDATE shift_members SET no_change_at = CURRENT_TIMESTAMP WHERE shift_id = ? AND name = '田中 花子'",
+        [noon.lastID]
+    );
+    const done = await statusAt(11, 30, 'ペア昼');
+    const sentNoon = await monitor.checkUnconfirmedShifts(todayAt(12, 20));
+    addResult(
+        '2 人の区切り: 2 人とも済めば区切りも確認済みになり、通知しない',
+        done.confirmed === true && done.confirmedStatus === 'registered' &&
+            done.members[0].status === 'no_change' && done.members[1].status === 'registered' &&
+            sentNoon === 0 && (await members(noon.lastID)).every(m => !m.alerted_at),
+        `${done.members.map(m => `${m.name}:${m.status}`).join(' , ')} / 通知 ${sentNoon} 件`
+    );
+
+    // 1 人で入った区切りは、今まで通り区切り全体で確認する
+    await monitor.recordShiftMembers(db, todayAt(13, 0), ['田中 花子']);
+    const single = await statusAt(13, 0, 'ペア晩');
+    addResult(
+        '1 人の区切り: 1 人ずつの確認にはしない（今まで通り）',
+        single.perMember === false && single.members.length === 1,
+        `perMember=${single.perMember}`
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -362,10 +454,24 @@ async function testGrace(db, monitor) {
 // 2. 画面から使う API（サーバーを起動して叩く）
 // ---------------------------------------------------------------------------
 
+/** 拠点のデータベースに直接書く（区切りに入っている人は入場リンクからしか入らないため） */
+function runOnLocationDb(locationCode, sql, params) {
+    const sqlite3 = require('sqlite3');
+    const db = new sqlite3.Database(path.join(DB_DIR, `location_${locationCode}.db`));
+
+    return new Promise((resolve, reject) => {
+        db.run(sql, params, err => {
+            db.close();
+            if (err) reject(err);
+            else resolve();
+        });
+    });
+}
+
 async function testApi(client) {
     const { request } = client;
 
-    await setupLocationUser(client);
+    const location = await setupLocationUser(client);
 
     // --- 初期値の確認 ---
     const defaults = await request('GET', '/api/shifts/settings');
@@ -468,6 +574,58 @@ async function testApi(client) {
         '確認: 締め切った区切りはあとから確認できない',
         late.status === 400 && String(late.body.error || '').includes('締め切'),
         `status ${late.status} / ${late.body.error || ''}`
+    );
+
+    // --- 2 人で入っている区切り（入場リンク「テスト担当・佐藤 健」で中番に入った） ---
+    const todayText = today.body.date;
+    for (const name of ['テスト担当', '佐藤 健']) {
+        await runOnLocationDb(location.locationCode,
+            'INSERT INTO shift_members (shift_id, report_date, name) VALUES (?, ?, ?)',
+            [shiftIds['中番'], todayText, name]);
+    }
+    // 早番（締め切り済み）にも 1 人入っていたことにする
+    await runOnLocationDb(location.locationCode,
+        'INSERT INTO shift_members (shift_id, report_date, name) VALUES (?, ?, ?)',
+        [shiftIds['早番'], todayText, '佐藤 健']);
+
+    const pairShift = async () => (await request('GET', '/api/shifts/today')).body.shifts.find(s => s.name === '中番');
+    const pairBefore = await pairShift();
+    addResult(
+        '2 人の区切り: 2 人の名前と確認が出て、まとめての確定があっても未確認になる',
+        pairBefore.perMember === true && pairBefore.confirmed === false &&
+            pairBefore.members.map(m => m.name).join(',') === 'テスト担当,佐藤 健',
+        `${pairBefore.members.map(m => `${m.name}:${m.status}`).join(' , ')} / confirmed=${pairBefore.confirmed}`
+    );
+
+    const pairConfirm = await request('POST', `/api/shifts/${shiftIds['中番']}/confirm`, {});
+    addResult(
+        '2 人の区切り: まとめての確定はできない（1 人ずつ）',
+        pairConfirm.status === 400 && String(pairConfirm.body.error).includes('1 人ずつ'),
+        `status ${pairConfirm.status} / ${pairConfirm.body.error || ''}`
+    );
+
+    // テスト担当（店のユーザーなので名簿にいる）が自分の名前で出庫した
+    await request('POST', '/api/inventory/out', { productId, quantity: 1, takenBy: 'テスト担当' });
+    const afterTakeout = await pairShift();
+    const registeredNoChange = await request('POST', '/api/shifts/members/no-change', { name: 'テスト担当' });
+    const stranger = await request('POST', '/api/shifts/members/no-change', { name: '高橋' });
+    const closedNoChange = await request('POST', '/api/shifts/members/no-change', { shiftId: shiftIds['早番'], name: '佐藤 健' });
+    addResult(
+        '2 人の区切り: 出庫した人は済み。その人の「出していない」・区切りにいない人・締め切った区切りは受け付けない',
+        afterTakeout.members[0].status === 'registered' && afterTakeout.confirmed === false &&
+            registeredNoChange.status === 400 && stranger.status === 404 &&
+            closedNoChange.status === 400 && String(closedNoChange.body.error).includes('締め切'),
+        `出庫した人 ${registeredNoChange.status} / いない人 ${stranger.status} / 締め切り ${closedNoChange.status}`
+    );
+
+    // 佐藤さんは何も出していない。区切りを指定しなくても、今の区切りに付く
+    const pairNoChange = await request('POST', '/api/shifts/members/no-change', { name: '佐藤 健' });
+    const pairAfter = pairNoChange.body.shifts && pairNoChange.body.shifts.find(s => s.name === '中番');
+    addResult(
+        '2 人の区切り: もう 1 人が「出していない」を押すと、2 人とも済んで確認済みになる',
+        pairNoChange.status === 200 && pairAfter.members[1].status === 'no_change' &&
+            pairAfter.confirmed === true && pairAfter.confirmedStatus === 'registered',
+        `status ${pairNoChange.status} / ${pairAfter && pairAfter.members.map(m => `${m.name}:${m.status}`).join(' , ')}`
     );
 
     // --- 入力の検証 ---

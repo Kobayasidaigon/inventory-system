@@ -5,7 +5,7 @@
 // 確認がないまま区切りの時刻を過ぎたら LINE に知らせる。
 
 const { mainDb, getLocationDatabase } = require('../db/database-admin');
-const { sendShiftReminder } = require('./line-notify');
+const { sendShiftReminder, sendShiftMemberReminder } = require('./line-notify');
 
 // 区切りの時刻から締め切りまでの猶予（分）。
 //
@@ -106,6 +106,29 @@ async function countMovements(db, dateText, fromTime, toTime) {
 }
 
 /**
+ * その人が、区切りの担当時間帯に自分の名前（出した人）で出庫を登録した件数。
+ */
+async function countMemberTakeouts(db, dateText, fromTime, toTime, name) {
+    const row = await db.get(
+        `SELECT COUNT(*) as count
+         FROM inventory_history
+         WHERE type = 'out' AND taken_by = ?
+           AND datetime(created_at, 'localtime') >= ?
+           AND datetime(created_at, 'localtime') < ?`,
+        [name, `${dateText} ${fromTime}:00`, `${dateText} ${toTime}:00`]
+    );
+
+    return row ? row.count : 0;
+}
+
+/**
+ * 2 人以上で入っている区切りか。この区切りは 1 人ずつ確認する（まとめての確定はしない）。
+ */
+function isPerMemberShift(shift) {
+    return shift.members.length >= 2;
+}
+
+/**
  * 指定日のシフト一覧に、確認状況と登録件数を付けて返す。
  *
  * 画面のカードと、未確認の見張りの両方から使う。
@@ -120,6 +143,10 @@ async function buildShiftStatus(db, date, options = {}) {
     const shifts = await listShiftsForDate(db, date);
     const reports = await db.all(
         'SELECT * FROM shift_reports WHERE report_date = ?',
+        [dateText]
+    );
+    const memberRows = await db.all(
+        'SELECT * FROM shift_members WHERE report_date = ? ORDER BY id',
         [dateText]
     );
 
@@ -157,6 +184,27 @@ async function buildShiftStatus(db, date, options = {}) {
             currentFound = true;
         }
 
+        // 区切りに入っている人と、それぞれの確認。自分の名前で出庫を登録していれば
+        // registered、「出していない」を押していれば no_change、どちらも無ければ null
+        const members = [];
+        for (const row of memberRows.filter(r => r.shift_id === shift.id)) {
+            const takeoutCount = await countMemberTakeouts(db, dateText, previousClose, closeTime, row.name);
+            members.push({
+                name: row.name,
+                takeoutCount,
+                status: takeoutCount > 0 ? 'registered' : row.no_change_at ? 'no_change' : null,
+                alerted: Boolean(row.alerted_at)
+            });
+        }
+
+        // 2 人以上で入っている区切りは、全員が確認したら確認済み。まとめての確定は見ない
+        // （1 人が押すと、もう 1 人の登録忘れが分からなくなるため）
+        const perMember = members.length >= 2;
+        const confirmed = perMember ? members.every(m => m.status) : report !== null;
+        const confirmedStatus = !confirmed ? null
+            : perMember ? (movements > 0 ? 'registered' : 'no_change')
+            : report.status;
+
         statuses.push({
             id: shift.id,
             name: shift.name,
@@ -168,9 +216,11 @@ async function buildShiftStatus(db, date, options = {}) {
             isPast,
             isClosed,
             movementCount: movements,
-            confirmed: report !== null,
-            confirmedStatus: report ? report.status : null,
-            confirmedAt: report ? report.created_at : null
+            confirmed,
+            confirmedStatus,
+            confirmedAt: !perMember && report ? report.created_at : null,
+            members,
+            perMember
         });
 
         previousClose = closeTime;
@@ -204,14 +254,47 @@ async function checkUnconfirmedShifts(now = new Date(), options = {}) {
                 await db.ready;
             }
 
-            const shifts = await listShiftsForDate(db, now);
+            const statuses = await buildShiftStatus(db, now, { graceMinutes });
 
-            for (const shift of shifts) {
-                const endMinutes = toMinutes(shift.end_time);
+            for (const shift of statuses) {
+                const endMinutes = toMinutes(shift.endTime);
                 const elapsed = nowMinutes - endMinutes;
 
                 // まだ区切り前、猶予の中、または遅すぎるものは対象外
                 if (elapsed < graceMinutes || elapsed > STALE_HOURS * 60) {
+                    continue;
+                }
+
+                // 2 人以上で入っている区切りは、まだ確認していない人を名前付きで知らせる。
+                // 区切り全体の「確認がまだです」は出さない（誰がまだかの方が動きやすい）
+                if (isPerMemberShift(shift)) {
+                    const missing = shift.members.filter(m => !m.status && !m.alerted).map(m => m.name);
+                    if (missing.length === 0) {
+                        continue;
+                    }
+
+                    // 通知済みの記録を先に残す（LINE が失敗しても鳴らし直さない。下と同じ考え）
+                    for (const name of missing) {
+                        await db.run(
+                            `UPDATE shift_members SET alerted_at = CURRENT_TIMESTAMP
+                             WHERE shift_id = ? AND report_date = ? AND name = ?`,
+                            [shift.id, dateText, name]
+                        );
+                    }
+
+                    if (groupId) {
+                        await sendShiftMemberReminder(groupId, {
+                            locationName: location.location_name,
+                            shiftName: shift.name,
+                            endTime: shift.endTime,
+                            names: missing
+                        });
+                    }
+
+                    notified++;
+                    console.log(
+                        `区切りの未登録を通知しました: ${location.location_name} / ${shift.name}（${shift.endTime}）/ ${missing.join('・')}`
+                    );
                     continue;
                 }
 
@@ -242,13 +325,13 @@ async function checkUnconfirmedShifts(now = new Date(), options = {}) {
                     await sendShiftReminder(groupId, {
                         locationName: location.location_name,
                         shiftName: shift.name,
-                        endTime: shift.end_time
+                        endTime: shift.endTime
                     });
                 }
 
                 notified++;
                 console.log(
-                    `シフト未確認を通知しました: ${location.location_name} / ${shift.name}（${shift.end_time}）`
+                    `シフト未確認を通知しました: ${location.location_name} / ${shift.name}（${shift.endTime}）`
                 );
             }
         }
@@ -257,6 +340,36 @@ async function checkUnconfirmedShifts(now = new Date(), options = {}) {
     }
 
     return notified;
+}
+
+/**
+ * 入場リンクで入った人を、今の区切りに入っている人として記録する。
+ *
+ * 2 人のシフトは「田中・佐藤」のように来るので、名簿の人に合わせて 1 人ずつにしたもの
+ * （names）を受け取る。すでに記録してある人はそのまま。
+ *
+ * @returns {Promise<object|null>} 記録した区切り。区切りが無い日は null
+ */
+async function recordShiftMembers(db, now, names) {
+    if (!names || names.length === 0) {
+        return null;
+    }
+
+    const statuses = await buildShiftStatus(db, now);
+    const current = statuses.find(shift => shift.isCurrent);
+    if (!current) {
+        return null;
+    }
+
+    const dateText = toDateString(now);
+    for (const name of names) {
+        await db.run(
+            'INSERT OR IGNORE INTO shift_members (shift_id, report_date, name) VALUES (?, ?, ?)',
+            [current.id, dateText, name]
+        );
+    }
+
+    return current;
 }
 
 let timer = null;
@@ -303,6 +416,8 @@ module.exports = {
     toTimeText,
     listShiftsForDate,
     buildShiftStatus,
+    isPerMemberShift,
+    recordShiftMembers,
     checkUnconfirmedShifts,
     startShiftMonitor,
     stopShiftMonitor

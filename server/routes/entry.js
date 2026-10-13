@@ -4,7 +4,9 @@
 // セッションを作るところだけを持つ。
 
 const express = require('express');
-const { mainDb } = require('../db/database-admin');
+const { mainDb, getLocationDatabase } = require('../db/database-admin');
+const { shiftMembersFromOperator } = require('../services/takeouts');
+const { recordShiftMembers } = require('../services/shift-monitor');
 const {
     isConfigured,
     verifyEntryParams,
@@ -90,6 +92,22 @@ router.get('/', async (req, res) => {
         // ログにはアカウントと操作者の両方を残す。どのアカウントで入ったかも要るため。
         const who = params.by ? `${user.user_name}（${params.by}）` : user.user_name;
         console.log(`[入場リンク] ${location.location_name} / ${who} が入りました`);
+
+        // 担当者（「田中・佐藤」のように 2 人のこともある）を、今の区切りに入っている人として
+        // 1 人ずつ記録する。2 人以上の区切りは、1 人ずつ確認してもらうため。
+        // 記録できなくても入場は止めない（在庫の登録はできるようにしておく）
+        if (params.by) {
+            try {
+                const db = getLocationDatabase(location.location_code);
+                const names = await shiftMembersFromOperator(db, mainDb, location.id, params.by);
+                const shift = await recordShiftMembers(db, new Date(), names);
+                if (shift && names.length > 0) {
+                    console.log(`[入場リンク] ${location.location_name} / ${shift.name} に ${names.join('・')} を記録しました`);
+                }
+            } catch (err) {
+                console.error('[入場リンク] 区切りに入っている人を記録できませんでした:', err);
+            }
+        }
 
         // 署名付きの URL を残さないよう、素の URL へ送り直す。
         // アドレス欄・履歴・次の遷移の Referer から消える。

@@ -239,8 +239,97 @@ function renderShiftStatus(shifts) {
             <div>${shiftActionHtml(shift)}</div>
         `;
 
+        // 2 人以上で入っている区切りは、人ごとの確認を並べる
+        if (shift.perMember) {
+            card.appendChild(buildShiftMembers(shift));
+        }
+
         container.appendChild(card);
     });
+}
+
+// 2 人以上で入っている区切りの、人ごとの確認。
+// 自分の名前で出庫を登録した人は済み、何も出していない人は自分の「出していない」を押す。
+// 名前は名簿から来るが、念のため textContent で入れる
+function buildShiftMembers(shift) {
+    const list = document.createElement('div');
+    list.className = 'shift-members';
+    const canPress = !shift.isClosed && (shift.isCurrent || shift.isPast);
+
+    shift.members.forEach(member => {
+        const row = document.createElement('div');
+        row.className = 'shift-member';
+        row.dataset.name = member.name;
+
+        const name = document.createElement('span');
+        name.className = 'shift-member-name';
+        name.textContent = member.name;
+
+        const state = document.createElement('span');
+        state.className = 'shift-member-state';
+        if (member.status === 'registered') {
+            state.textContent = `✓ 出庫 ${member.takeoutCount}件`;
+            row.classList.add('done');
+        } else if (member.status === 'no_change') {
+            state.textContent = '✓ 出していない';
+            row.classList.add('done');
+        } else if (shift.isClosed) {
+            state.textContent = '未登録のまま締め切り';
+            row.classList.add('missing');
+        } else {
+            state.textContent = '未登録';
+        }
+        row.append(name, state);
+
+        if (!member.status && canPress) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'btn btn-secondary shift-member-no-change';
+            button.textContent = '出していない';
+            button.addEventListener('click', () => markMemberNoChange(shift.id, member.name));
+            row.appendChild(button);
+        }
+
+        list.appendChild(row);
+    });
+
+    return list;
+}
+
+// 2 人以上の区切りで、ある人が「出していない」を押す。本人に押してもらう
+async function markMemberNoChange(shiftId, name) {
+    const ok = confirm(
+        `${name} さんは、この区切りで何も出していないものとして記録します。\n` +
+        `${name} さん本人が押してください。\n\n` +
+        `出した物があれば「キャンセル」を押して、先に ${name} さんの名前で出庫を登録してください。`
+    );
+    if (!ok) return;
+
+    try {
+        const response = await fetchWithCsrf('/api/shifts/members/no-change', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ shiftId, name })
+        });
+
+        if (response.status === 401) {
+            alert('セッションが切れました。再度ログインしてください。');
+            window.location.href = '/';
+            return;
+        }
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            alert(data.error || '「出していない」の登録に失敗しました');
+            return;
+        }
+
+        renderShiftStatus(data.shifts || []);
+    } catch (error) {
+        console.error('「出していない」の登録エラー:', error);
+        alert('「出していない」の登録に失敗しました');
+    }
 }
 
 // 区切りの時刻は過ぎたが、まだ締め切っていない状態。ここで押せば間に合う。
@@ -289,6 +378,12 @@ function shiftStateText(shift) {
 function shiftActionHtml(shift) {
     if (shift.confirmed) {
         return '<span style="color: #2f855a; font-size: 20px;">✅</span>';
+    }
+
+    // 2 人以上の区切りは、まとめての確定は無い（下に並ぶ 1 人ずつの確認で済ませる）
+    if (shift.perMember) {
+        const left = shift.members.filter(m => !m.status).length;
+        return `<span style="color: #b7791f; font-size: 13px; font-weight: bold;">1 人ずつ確認（あと ${left} 人）</span>`;
     }
 
     // 締め切った区切りは押せない。押せるように見せると、後から取り繕えると
@@ -3173,6 +3268,13 @@ function showTakeoutDone(name, items, remaining, registered) {
         button.addEventListener('click', () => openTakeoutDialog(null, 0, { presetName: next, doneNames: registered }));
         actions.appendChild(button);
     });
+
+    // 何も出していない人は、本人が区切りのカードの「出していない」を押す（ここでは代わりに押せない）
+    const note = document.createElement('p');
+    note.className = 'takeout-done-note';
+    note.textContent = `${remaining.join('・')} さんが何も出していないときは、本人が「区切りごとの在庫確認」の` +
+        '「出していない」を押してください。押さないまま締め切ると、グループに通知が行きます';
+    actions.appendChild(note);
 
     const close = document.createElement('button');
     close.type = 'button';

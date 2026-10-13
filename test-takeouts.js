@@ -756,6 +756,14 @@ async function testEntryLinkName(locationCode) {
     await pair.refreshCsrfToken();
 
     const pairCandidates = await pair.request('GET', '/api/inventory/takers');
+    const pairShift = (await pair.request('GET', '/api/shifts/today')).body.shifts.find(s => s.isCurrent);
+    addResult(
+        '2 人組: 入場リンクで入ると、今の区切りに 1 人ずつ記録され、1 人ずつ確認する区切りになる',
+        pairShift && pairShift.perMember === true &&
+            ['田中 花子', '佐藤'].every(name => pairShift.members.some(m => m.name === name)) &&
+            !pairShift.members.some(m => m.name === '田中・佐藤'),
+        pairShift ? `${pairShift.name}: ${pairShift.members.map(m => m.name).join(' , ')}` : '今の区切りなし'
+    );
     // 「田中」は名簿に名字が同じ人が 1 人（田中 花子）だけなのでその人、「佐藤」は名簿にそのままいる
     addResult(
         '2 人組: 「田中・佐藤」で入ると 1 人ずつに分けて名簿の人に合わせ、先頭に並べる',
@@ -814,6 +822,56 @@ async function outsToday(key, takenBy) {
 
 async function stockOf(key) {
     return (await request('GET', '/api/products')).body.find(p => p.id === products[key]).current_stock;
+}
+
+/**
+ * ダッシュボードの区切りのカードに、人ごとの確認と「出していない」が出る。
+ * 今日まだ何も出していない 2 人（早番・中番）で、入場リンクから入ったことにする
+ */
+async function testShiftMembersScreen(locationCode) {
+    const visitor = createClient(BASE_URL);
+    const params = {
+        loc: locationCode,
+        user: 'tester',
+        exp: Math.floor(Date.now() / 1000) + 300,
+        nonce: `nonce-takeouts-shift-${Date.now()}`,
+        by: '早番・中番'
+    };
+    await visitor.request('GET', `/enter?${canonicalString(params)}&sig=${sign(params, LINK_SECRET)}`, undefined, { redirect: 'manual' });
+
+    const { window, errors } = openUserScreen(client, BASE_URL);
+    const doc = window.document;
+    const memberRow = name => doc.querySelector(`.shift-member[data-name="${name}"]`);
+
+    try {
+        await waitFor(() => memberRow('早番 一郎') && memberRow('中番 三郎'), '区切りのカードに人ごとの確認が出る');
+        const shiftButtons = [...doc.querySelectorAll('#shift-cards button')].map(b => b.textContent.trim());
+        addResult(
+            '区切りのカード: 2 人以上の区切りは、人ごとの確認と「出していない」が並び、まとめての確定ボタンが無い',
+            memberRow('早番 一郎').textContent.includes('未登録') &&
+                memberRow('早番 一郎').querySelector('.shift-member-no-change') &&
+                memberRow('中番 三郎').querySelector('.shift-member-no-change') &&
+                !shiftButtons.some(text => /で確定|在庫の変化なし/.test(text)),
+            `${[...doc.querySelectorAll('.shift-member')].map(r => r.textContent.replace(/\s+/g, ' ')).join(' | ')} / ボタン ${shiftButtons.join(' , ')}`
+        );
+
+        memberRow('早番 一郎').querySelector('.shift-member-no-change').click();
+        await waitFor(() => memberRow('早番 一郎') && memberRow('早番 一郎').classList.contains('done'), '「出していない」が記録される');
+        addResult(
+            '区切りのカード: 「出していない」を押すと、その人は済みになる（もう 1 人はまだ）',
+            memberRow('早番 一郎').textContent.includes('✓ 出していない') && !memberRow('早番 一郎').querySelector('button') &&
+                memberRow('中番 三郎').querySelector('.shift-member-no-change'),
+            `${memberRow('早番 一郎').textContent} / ${memberRow('中番 三郎').textContent}`
+        );
+
+        addResult(
+            '区切りのカード: 操作中にエラーが出ていない',
+            errors.length === 0,
+            errors.length === 0 ? 'エラーなし' : errors.join(' / ')
+        );
+    } finally {
+        window.close();
+    }
 }
 
 async function testScreen() {
@@ -1386,6 +1444,7 @@ async function testStoreUsersOnRoster() {
         await testAdminScreen();
         // 入場リンクの出庫は最後に入れる（件数を数えるテストに混ざらないように）
         await testEntryLinkName(location.locationCode);
+        await testShiftMembersScreen(location.locationCode);
         await testStoreUsersOnRoster();
     } catch (err) {
         results.failed++;

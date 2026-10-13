@@ -2130,6 +2130,55 @@ table tbody tr:hover {
     font-size: 14px;
 }
 
+.takeout-done-note {
+    margin: 4px 0;
+    color: #718096;
+    font-size: 13px;
+}
+
+/* 2 人以上で入っている区切りの、人ごとの確認（ダッシュボードの区切りのカード） */
+.shift-members {
+    flex-basis: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 8px;
+    border-top: 1px dashed #cbd5e0;
+}
+
+.shift-member {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 40px;
+}
+
+.shift-member-name {
+    font-weight: bold;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.shift-member-state {
+    flex: 1;
+    color: #b7791f;
+    font-size: 13px;
+}
+
+.shift-member.done .shift-member-state {
+    color: #2f855a;
+}
+
+.shift-member.missing .shift-member-state {
+    color: #c53030;
+    font-weight: bold;
+}
+
+.shift-member-no-change {
+    padding: 8px 12px;
+    white-space: nowrap;
+}
+
 .takeout-done-actions {
     display: flex;
     flex-direction: column;

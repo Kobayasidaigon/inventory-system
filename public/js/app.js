@@ -2981,10 +2981,12 @@ async function openTakeoutDialog(productId = null, quantity = 0, options = {}) {
     if (presetProduct) {
         counts.set(presetProduct.id, Math.min(quantity, presetProduct.current_stock));
     }
+    // 在庫の無い商品は出せないので並べない（押せない行が並ぶと、出す物を探しにくい）
+    const inStock = products.filter(p => (Number(p.current_stock) || 0) > 0);
     const listed = presetProduct
-        ? [presetProduct, ...products.filter(p => p.id !== presetProduct.id)]
-        : [...products];
-    const categories = [...new Set(products.map(p => p.category).filter(c => c))];
+        ? [presetProduct, ...inStock.filter(p => p.id !== presetProduct.id)]
+        : inStock;
+    const categories = [...new Set(listed.map(p => p.category).filter(c => c))];
 
     modalBody.innerHTML = `
         <h3>在庫を出す</h3>
@@ -3111,7 +3113,7 @@ async function openTakeoutDialog(productId = null, quantity = 0, options = {}) {
         // 商品名は保存のときにエスケープしてあるので、innerHTML ではなく元の文字に戻して入れる
         label.textContent = unescapeHtmlText(product.name);
         const stockText = document.createElement('small');
-        stockText.textContent = stock > 0 ? `現在庫 ${stock}` : '在庫なし';
+        stockText.textContent = `現在庫 ${stock}`;
         label.appendChild(stockText);
         row.appendChild(label);
 
@@ -3151,9 +3153,6 @@ async function openTakeoutDialog(productId = null, quantity = 0, options = {}) {
         minus.addEventListener('click', () => setCount((counts.get(product.id) || 0) - 1));
         plus.addEventListener('click', () => setCount((counts.get(product.id) || 0) + 1));
         input.addEventListener('change', () => setCount(input.value));
-        if (stock <= 0) {
-            input.disabled = true;
-        }
         setCount(counts.get(product.id) || 0);
 
         itemList.appendChild(row);

@@ -875,6 +875,9 @@ async function testShiftMembersScreen(locationCode) {
 }
 
 async function testScreen() {
+    // 在庫の無い商品（出庫の画面には並べない）
+    await createProduct('empty', '在庫なしの商品', '衛生用品', 0);
+
     const { window, errors } = openUserScreen(client, BASE_URL);
     const doc = window.document;
 
@@ -911,12 +914,18 @@ async function testScreen() {
             `先頭 ${firstRow} / 個数 ${qtyOf('トイレットペーパー')} / 在庫 ${before}`
         );
         const rows = [...doc.querySelectorAll('#takeout-items .takeout-item')];
+        const inStockCount = (await request('GET', '/api/products')).body.filter(p => p.current_stock > 0).length;
         addResult(
             '画面: 商品の行には画像の欄がある（画像の無い商品は「画像なし」）',
-            rows.length === (await request('GET', '/api/products')).body.length &&
+            rows.length === inStockCount &&
                 rows.every(row => row.querySelector('.takeout-item-image')) &&
                 rows.every(row => row.querySelector('.takeout-item-image-none').textContent === '画像なし'),
             `${rows.length} 行`
+        );
+        addResult(
+            '画面: 在庫の無い商品は並べない',
+            !rowOf('在庫なしの商品') && rows.length > 0,
+            rows.map(row => row.querySelector('.takeout-item-name').firstChild.textContent).join(' , ')
         );
         addResult(
             '画面: 出す人が先（①）で、名前は打てず名簿の人のボタンだけ（今日の勤務の人が先頭）',

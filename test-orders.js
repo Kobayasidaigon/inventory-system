@@ -277,6 +277,11 @@ async function testScreen(location) {
     const fromCard = await createProduct('画面: カードで入荷', 5, 10);
     await request('POST', '/api/inventory/out', { productId: fromCard, quantity: 6, note: '発注点割れ' });
 
+    // 依頼は残っているが、在庫が発注点より多い商品（届いたのに入荷完了が押されていない）
+    const restored = await createProduct('画面: 在庫が戻った', 5, 10);
+    await request('POST', '/api/inventory/out', { productId: restored, quantity: 6, note: '発注点割れ' });
+    await request('POST', '/api/inventory/in', { productId: restored, quantity: 5, note: 'クイック操作' });
+
     const productCount = (await request('GET', '/api/products')).body.length;
     const { window, errors, dialogs, state } = openUserScreen(client, BASE_URL);
 
@@ -312,8 +317,12 @@ async function testScreen(location) {
             .find(card => card.querySelector('.stock-card-name').textContent.trim() === name);
         const stockOf = async productId => (await request('GET', '/api/products')).body
             .find(p => p.id === productId).current_stock;
+        // 未入荷の依頼があり、在庫が発注点以下の商品
+        const lowProductIds = new Set((await request('GET', '/api/products')).body
+            .filter(p => p.current_stock <= p.reorder_point).map(p => p.id));
         const activeProductIds = new Set((await allOrders())
-            .filter(o => o.status === 'pending' || o.status === 'ordered').map(o => o.product_id));
+            .filter(o => (o.status === 'pending' || o.status === 'ordered') && lowProductIds.has(o.product_id))
+            .map(o => o.product_id));
 
         addResult(
             'ダッシュボード: 発注依頼済み商品の一覧は出さない',
@@ -325,12 +334,17 @@ async function testScreen(location) {
         await waitFor(() => doc.querySelectorAll('.stock-card').length === activeProductIds.size, '発注依頼済みだけになる');
         const orderedNames = cardNames();
         addResult(
-            '発注依頼済み: 押すと未入荷の依頼がある商品だけになり、件数が合う',
+            '発注依頼済み: 押すと未入荷の依頼があって在庫が発注点以下の商品だけになり、件数が合う',
             ['画面: 依頼中', '画面: 発注済', '画面: カードで入荷'].every(name => orderedNames.includes(name)) &&
                 !['画面: 依頼なし', '画面: 在庫十分', '画面: 受領済'].some(name => orderedNames.includes(name)) &&
                 doc.getElementById('ordered-count').textContent === String(activeProductIds.size) &&
                 doc.getElementById('stock-count').textContent === `${activeProductIds.size}件`,
             `${orderedNames.join(', ')} / ボタンの件数「${doc.getElementById('ordered-count').textContent}」`
+        );
+        addResult(
+            '発注依頼済み: 依頼が残っていても、在庫が発注点より多い商品は出さない',
+            !orderedNames.includes('画面: 在庫が戻った') && (await activeOrdersOf(restored)).length === 1,
+            `在庫が戻った商品の未入荷の依頼 ${(await activeOrdersOf(restored)).length} 件 / 並び ${orderedNames.join(', ')}`
         );
         addResult(
             '発注依頼済み: カードに依頼の状況と「入荷完了」が出る',

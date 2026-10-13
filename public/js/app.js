@@ -721,8 +721,11 @@ function updateDashboardDisplay() {
 
     // 「発注依頼済み」は、実際に未入荷の依頼があるときだけ。在庫の数だけで
     // 決めると、依頼をキャンセルした商品や棚卸で減った商品まで依頼済みに見える。
+    // 絞り込みには、そのうち在庫が発注点以下のものだけを出す（カードの「⚠️ 発注依頼済み」と同じ）。
+    // 依頼が残っていても在庫が足りている商品は、届いたのに入荷完了が押されていないことが多く、
+    // 並べると本当に待っている商品が埋もれる（そうした依頼は「発注依頼」タブで片付ける）
     const activeOrderOf = productId => allActiveOrders.find(order => order.product_id === productId);
-    const orderedProducts = filteredProducts.filter(p => activeOrderOf(p.id));
+    const orderedProducts = filteredProducts.filter(p => activeOrderOf(p.id) && p.current_stock <= p.reorder_point);
     document.getElementById('ordered-count').textContent = orderedProducts.length > 0 ? orderedProducts.length : '';
 
     if (dashboardView === 'ordered') {

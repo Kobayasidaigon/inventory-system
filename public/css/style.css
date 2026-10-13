@@ -1890,11 +1890,150 @@ table tbody tr:hover {
         max-width: 100%;
     }
 }
-/* 出庫のダイアログ（誰が何個出したか） */
-.takeout-dialog-product {
-    margin: 4px 0 16px;
+/* 出庫の画面（先に出す人を選び、出す商品と個数を選ぶ） */
+.btn-open-takeout {
+    display: block;
+    width: calc(100% - 24px);
+    margin: 12px 12px 0;
+    padding: 14px;
+    border: none;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #f56565 0%, #c53030 100%);
+    color: white;
+    font-size: 18px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(197, 48, 48, 0.3);
+}
+
+.modal-content:has(#takeout-form) {
+    max-height: 90vh;
+}
+
+.takeout-step {
+    margin-bottom: 18px;
+}
+
+.takeout-step-title {
     font-weight: bold;
     color: #333;
+}
+
+#takeout-category {
+    width: 100%;
+    margin: 10px 0 6px;
+    padding: 8px;
+    border: 1px solid #cbd5e0;
+    border-radius: 6px;
+    font-size: 16px;
+}
+
+.takeout-items {
+    border-top: 1px solid #edf2f7;
+}
+
+.takeout-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 4px;
+    border-bottom: 1px solid #edf2f7;
+}
+
+.takeout-item.chosen {
+    background: #fff5f5;
+}
+
+.takeout-item-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 15px;
+    overflow-wrap: anywhere;
+}
+
+.takeout-item-name small {
+    display: block;
+    color: #718096;
+    font-size: 12px;
+}
+
+.takeout-stepper {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+/* 共用のタブレットで押しやすいよう、指で押せる大きさにする */
+.takeout-stepper button {
+    width: 40px;
+    height: 40px;
+    border: 1px solid #cbd5e0;
+    border-radius: 8px;
+    background: white;
+    color: #2d3748;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.takeout-stepper .takeout-plus {
+    border-color: #f56565;
+    background: #f56565;
+    color: white;
+}
+
+.takeout-stepper button:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+.takeout-stepper .takeout-qty {
+    width: 48px;
+    height: 40px;
+    padding: 0;
+    text-align: center;
+    font-size: 16px;
+}
+
+/* 出庫するボタンは、商品の一覧をスクロールしても下に残す */
+.takeout-footer {
+    position: sticky;
+    bottom: -30px;
+    margin: 0 -30px -30px;
+    padding: 12px 30px 30px;
+    background: white;
+    border-top: 1px solid #e2e8f0;
+}
+
+/* スマホではモーダルの余白が小さいので、それに合わせる */
+@media (max-width: 768px) {
+    .takeout-footer {
+        bottom: -20px;
+        margin: 0 -20px -20px;
+        padding: 12px 20px 20px;
+    }
+}
+
+@media (max-width: 480px) {
+    .takeout-footer {
+        bottom: -15px;
+        margin: 0 -15px -15px;
+        padding: 10px 15px 15px;
+    }
+}
+
+.takeout-summary {
+    margin: 0 0 8px;
+    color: #4a5568;
+    font-size: 14px;
+}
+
+.takeout-footer #takeout-submit {
+    width: 100%;
+    padding: 12px;
+    font-size: 16px;
 }
 
 .taker-chips {

@@ -60,7 +60,8 @@
                     <div class="usage-guide-item">
                         <strong>📦 在庫操作：</strong>
                         <ul>
-                            <li><span style="font-weight: 600;">-5 / -1</span>：在庫を減らす（出庫）。出した人を名簿から選び、個数を入れて登録します</li>
+                            <li><span style="font-weight: 600;">📦 在庫を出す</span>：在庫を減らす（出庫）。先に出す人を名簿から選び、出す商品の個数を入れて登録します（何品でもまとめて登録できます）</li>
+                            <li><span style="font-weight: 600;">-5 / -1</span>：その商品を入れた状態で、同じ出庫の画面を開きます</li>
                             <li><span style="font-weight: 600;">+1 / +5</span>：在庫を増やす（誤操作の修正用）</li>
                         </ul>
                     </div>
@@ -87,6 +88,8 @@
             <!-- 現在庫一覧 -->
             <div class="dashboard-section">
                 <h3>現在庫一覧 <span id="stock-count" class="badge"></span></h3>
+                <!-- 出庫は先に出す人を選んでから、出す商品と個数を選ぶ（何品でもまとめて登録） -->
+                <button type="button" id="open-takeout" class="btn-open-takeout">📦 在庫を出す</button>
                 <!-- 発注依頼済みの商品だけに絞る。入荷完了はこの絞り込みのカードから押す -->
                 <div class="stock-view-tabs" role="group" aria-label="表示する商品">
                     <button type="button" class="stock-view-tab active" data-view="all" aria-pressed="true">すべて</button>

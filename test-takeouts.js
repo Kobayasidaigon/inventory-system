@@ -769,35 +769,58 @@ async function testEntryLinkName(locationCode) {
 // 6. 画面（jsdom）
 // ---------------------------------------------------------------------------
 
+/** 今日の出庫のうち、その商品・その人のものの個数（新しい順でなくてよい） */
+async function outsToday(key, takenBy) {
+    const res = await request('GET', `/api/inventory/history?productId=${products[key]}&limit=1000`);
+    return res.body
+        .filter(row => row.type === 'out' && row.transaction_date === tokyoToday() && row.taken_by === takenBy)
+        .map(row => row.quantity);
+}
+
+async function stockOf(key) {
+    return (await request('GET', '/api/products')).body.find(p => p.id === products[key]).current_stock;
+}
+
 async function testScreen() {
     const { window, errors } = openUserScreen(client, BASE_URL);
     const doc = window.document;
 
     const paperCard = () => [...doc.querySelectorAll('.stock-card')]
         .find(card => card.querySelector('.stock-card-name').textContent === 'トイレットペーパー');
-    const paperStock = async () =>
-        (await request('GET', '/api/products')).body.find(p => p.id === products.paper).current_stock;
+    const rowOf = name => [...doc.querySelectorAll('#takeout-items .takeout-item')]
+        .find(row => row.querySelector('.takeout-item-name').firstChild.textContent === name);
+    const qtyOf = name => rowOf(name).querySelector('.takeout-qty').value;
+    const visibleRows = () => [...doc.querySelectorAll('#takeout-items .takeout-item')]
+        .filter(row => row.style.display !== 'none')
+        .map(row => row.querySelector('.takeout-item-name').firstChild.textContent);
+    // 前の画面の中身は閉じても残るので、消してから開く
+    const openFrom = async (open, label) => {
+        doc.getElementById('modal-body').innerHTML = '';
+        open();
+        await waitFor(() => doc.getElementById('takeout-form'), label);
+    };
 
     try {
         await waitFor(() => paperCard(), 'ダッシュボードが開く');
 
-        // -1 を押すと、すぐには出庫せずにダイアログが開く
-        const before = await paperStock();
-        paperCard().querySelector('button[title="1個出庫"]').click();
-        await waitFor(() => doc.getElementById('takeout-form'), '出庫のダイアログが開く');
+        // -1 を押すと、すぐには出庫せずに出庫の画面が開く（トイレットペーパーが 1 個入っている）
+        const before = await stockOf('paper');
+        await openFrom(() => paperCard().querySelector('button[title="1個出庫"]').click(), '出庫の画面が開く');
 
         const chips = [...doc.querySelectorAll('#takeout-taker-chips .taker-chip')].map(c => c.textContent);
+        const firstRow = doc.querySelector('#takeout-items .takeout-item .takeout-item-name').firstChild.textContent;
         addResult(
-            '画面: -1 を押すと、何個・誰が出したかを入れるダイアログが開く（まだ誰も選ばれていない）',
+            '画面: -1 を押すと出庫の画面が開き、押した商品が先頭に 1 個入っている（まだ誰も選ばれていない）',
             doc.getElementById('modal').classList.contains('show') &&
-                doc.getElementById('takeout-quantity').value === '1' &&
+                firstRow === 'トイレットペーパー' && qtyOf('トイレットペーパー') === '1' &&
                 doc.querySelectorAll('.taker-chip.selected').length === 0 &&
-                (await paperStock()) === before,
-            `個数 ${doc.getElementById('takeout-quantity').value} / 在庫 ${before}`
+                (await stockOf('paper')) === before,
+            `先頭 ${firstRow} / 個数 ${qtyOf('トイレットペーパー')} / 在庫 ${before}`
         );
         addResult(
-            '画面: 名前は打てず、名簿の人のボタンだけ（今日の勤務の人が先頭）',
-            !doc.querySelector('#takeout-form input[type="text"]') &&
+            '画面: 出す人が先（①）で、名前は打てず名簿の人のボタンだけ（今日の勤務の人が先頭）',
+            doc.querySelector('#takeout-form .takeout-step-title').textContent.startsWith('① 出す人') &&
+                !doc.querySelector('#takeout-form input[type="text"]') &&
                 chips[0] === '早番 一郎' && chips[1] === '遅番 二郎' &&
                 [...chips].sort().join(',') === [...ROSTER].sort().join(','),
             chips.join(' , ')
@@ -807,43 +830,93 @@ async function testScreen() {
         doc.getElementById('takeout-submit').click();
         await waitFor(() => doc.getElementById('takeout-error').style.display === 'block', 'エラーが出る');
         addResult(
-            '画面: 出した人を選ばなければ登録しない',
-            doc.getElementById('takeout-error').textContent.includes('選んでください') && (await paperStock()) === before,
+            '画面: 出す人を選ばなければ登録しない',
+            doc.getElementById('takeout-error').textContent.includes('出す人を選んでください') &&
+                (await stockOf('paper')) === before,
             doc.getElementById('takeout-error').textContent
         );
 
-        // 候補を押して、個数を 3 にして登録
+        // 人を選び、トイレットペーパーは 3 と打ち、手袋は ＋ を 2 回。まとめて登録する
+        const gloveBefore = await stockOf('glove');
+        const paperOutsBefore = (await outsToday('paper', '遅番 二郎')).length;
         [...doc.querySelectorAll('.taker-chip')].find(c => c.textContent === '遅番 二郎').click();
-        doc.getElementById('takeout-quantity').value = '3';
-        doc.getElementById('takeout-submit').click();
-        await waitFor(() => !doc.getElementById('modal').classList.contains('show'), 'ダイアログが閉じる');
-        await waitFor(() => paperCard().querySelector('.stock-stat-value').textContent === String(before - 3), 'カードの在庫が減る');
-
-        const latest = await findHistory('paper', 'out', tokyoToday());
+        const paperQty = rowOf('トイレットペーパー').querySelector('.takeout-qty');
+        paperQty.value = '3';
+        paperQty.dispatchEvent(new window.Event('change'));
+        rowOf('ニトリルグローブ(Ｍサイズ)').querySelector('.takeout-plus').click();
+        rowOf('ニトリルグローブ(Ｍサイズ)').querySelector('.takeout-plus').click();
+        const summary = doc.getElementById('takeout-summary').textContent;
+        const buttonText = doc.getElementById('takeout-submit').textContent;
         addResult(
-            '画面: 選んだ人と個数で出庫が登録される（取引日は今日）',
-            latest && latest.quantity === 3 && latest.taken_by === '遅番 二郎' &&
-                (await paperStock()) === before - 3,
-            `出庫 ${latest && latest.quantity} 個 / 出した人 ${latest && latest.taken_by}`
+            '画面: 下に誰が何を何個出すかが出て、ボタンに品数と個数が出る',
+            summary.startsWith('遅番 二郎 さん') && summary.includes('トイレットペーパー 3') &&
+                summary.includes('ニトリルグローブ(Ｍサイズ) 2') && buttonText === '出庫する（2品・5個）',
+            `${summary} / ${buttonText}`
         );
 
-        // -5 なら 5 が入っている。前のダイアログの中身は閉じても残るので、消してから開く
-        doc.getElementById('modal-body').innerHTML = '';
-        paperCard().querySelector('button[title="5個出庫"]').click();
-        await waitFor(() => doc.getElementById('takeout-form'), '出庫のダイアログが開く（-5）');
+        doc.getElementById('takeout-submit').click();
+        await waitFor(() => !doc.getElementById('modal').classList.contains('show'), '出庫の画面が閉じる');
+        await waitFor(() => paperCard().querySelector('.stock-stat-value').textContent === String(before - 3), 'カードの在庫が減る');
+
+        const paperOuts = await outsToday('paper', '遅番 二郎');
+        const gloveOuts = await outsToday('glove', '遅番 二郎');
         addResult(
-            '画面: -5 を押すと個数に 5 が入っている',
-            doc.getElementById('takeout-quantity').value === '5',
-            doc.getElementById('takeout-quantity').value
+            '画面: 選んだ人で、何品でも 1 回で出庫が登録される（取引日は今日）',
+            paperOuts.length === paperOutsBefore + 1 && paperOuts.includes(3) && gloveOuts.includes(2) &&
+                (await stockOf('paper')) === before - 3 && (await stockOf('glove')) === gloveBefore - 2,
+            `トイレットペーパー ${paperOuts.join(',')} / 手袋 ${gloveOuts.join(',')}`
+        );
+
+        // 「在庫を出す」から開くと、どの商品も 0。閉じたあと開いても、前の人は選ばれていない
+        await openFrom(() => doc.getElementById('open-takeout').click(), '「在庫を出す」で出庫の画面が開く');
+        addResult(
+            '画面: 「在庫を出す」で開くと、どの商品も 0 で、前の人は選ばれていない',
+            [...doc.querySelectorAll('.takeout-qty')].every(input => input.value === '0') &&
+                doc.querySelectorAll('.taker-chip.selected').length === 0 &&
+                doc.getElementById('takeout-submit').textContent === '出庫する',
+            `選ばれている人 ${doc.querySelectorAll('.taker-chip.selected').length} 人`
+        );
+
+        // 個数を入れずに押すと止める
+        [...doc.querySelectorAll('.taker-chip')].find(c => c.textContent === '田中 花子').click();
+        doc.getElementById('takeout-submit').click();
+        await waitFor(() => doc.getElementById('takeout-error').style.display === 'block', 'エラーが出る（個数なし）');
+        addResult(
+            '画面: 出す商品の個数が無ければ登録しない',
+            doc.getElementById('takeout-error').textContent.includes('個数を入れてください'),
+            doc.getElementById('takeout-error').textContent
+        );
+
+        // 在庫より多くは入らない。カテゴリで絞っても、個数を入れた商品は隠さない
+        const joyQty = rowOf('P&G ジョイ 1/2').querySelector('.takeout-qty');
+        joyQty.value = '99999';
+        joyQty.dispatchEvent(new window.Event('change'));
+        rowOf('トイレットペーパー').querySelector('.takeout-plus').click();
+        const category = doc.getElementById('takeout-category');
+        category.value = '洗剤';
+        category.dispatchEvent(new window.Event('change'));
+        addResult(
+            '画面: 在庫より多い個数は在庫までにする。カテゴリで絞っても、個数を入れた商品は残る',
+            joyQty.value === String(await stockOf('joy')) &&
+                visibleRows().includes('P&G ジョイ 1/2') && visibleRows().includes('トイレットペーパー') &&
+                !visibleRows().includes('ニトリルグローブ(Ｍサイズ)'),
+            `ジョイ ${joyQty.value} / 見えている ${visibleRows().join(' , ')}`
+        );
+        window.closeModal();
+
+        // -5 なら 5 が入っている
+        await openFrom(() => paperCard().querySelector('button[title="5個出庫"]').click(), '出庫の画面が開く（-5）');
+        addResult(
+            '画面: -5 を押すと、その商品に 5 が入っている',
+            qtyOf('トイレットペーパー') === '5',
+            qtyOf('トイレットペーパー')
         );
         window.closeModal();
 
         // 名簿が空の店では、選べる人がいないので出庫できない。理由とどうすればよいかを出す
         const realCandidates = window.loadTakerCandidates;
         window.loadTakerCandidates = async () => ({ names: [], operatorName: null });
-        doc.getElementById('modal-body').innerHTML = '';
-        paperCard().querySelector('button[title="1個出庫"]').click();
-        await waitFor(() => doc.getElementById('takeout-form'), '出庫のダイアログが開く（名簿なし）');
+        await openFrom(() => paperCard().querySelector('button[title="1個出庫"]').click(), '出庫の画面が開く（名簿なし）');
         const emptyNote = doc.querySelector('#takeout-taker-chips .taker-empty-note');
         addResult(
             '画面: 名簿が空なら、管理者に登録を頼むよう案内し、出庫ボタンを押せない',
@@ -880,6 +953,76 @@ async function testScreen() {
     } finally {
         window.close();
     }
+}
+
+/** まとめて出庫の API（先に出す人を選び、何品かを一度に出す） */
+async function testBatchApi() {
+    const batch = body => request('POST', '/api/inventory/out-batch', body);
+    const paperBefore = await stockOf('paper');
+    const gloveBefore = await stockOf('glove');
+    const paperOutsBefore = (await outsToday('paper', '田中 花子')).length;
+
+    // 同じ商品が 2 行あれば足して 1 行にする
+    const ok = await batch({
+        takenBy: ' 田中　花子 ',
+        items: [
+            { productId: products.paper, quantity: 2 },
+            { productId: products.glove, quantity: 1 },
+            { productId: products.paper, quantity: 1 }
+        ]
+    });
+    const paperOuts = await outsToday('paper', '田中 花子');
+    addResult(
+        'まとめて出庫: 出す人 1 人で何品も出庫でき、同じ商品は足して 1 件にする',
+        ok.status === 200 && ok.body.takenBy === '田中 花子' &&
+            (await stockOf('paper')) === paperBefore - 3 && (await stockOf('glove')) === gloveBefore - 1 &&
+            paperOuts.length === paperOutsBefore + 1 && paperOuts.includes(3),
+        `status ${ok.status} / トイレットペーパー ${paperBefore} → ${await stockOf('paper')} / 手袋 ${gloveBefore} → ${await stockOf('glove')}`
+    );
+
+    // 1 品でも在庫が足りなければ、1 品も登録しない
+    const paperMid = await stockOf('paper');
+    const short = await batch({
+        takenBy: '田中 花子',
+        items: [
+            { productId: products.paper, quantity: 1 },
+            { productId: products.joy, quantity: (await stockOf('joy')) + 1 }
+        ]
+    });
+    addResult(
+        'まとめて出庫: 1 品でも在庫が足りなければ全部やめる（前の商品も減らない）',
+        short.status === 400 && String(short.body.error).includes('在庫が不足') && (await stockOf('paper')) === paperMid,
+        `status ${short.status} / ${short.body.error} / トイレットペーパー ${paperMid} → ${await stockOf('paper')}`
+    );
+
+    const cases = [
+        ['出す人なし', { items: [{ productId: products.paper, quantity: 1 }] }, '出す人を選んでください'],
+        ['名簿にない人', { takenBy: '高橋', items: [{ productId: products.paper, quantity: 1 }] }, '名簿にありません'],
+        ['2 人をまとめた名前', { takenBy: '田中・佐藤', items: [{ productId: products.paper, quantity: 1 }] }, '名簿にありません'],
+        ['商品なし', { takenBy: '田中 花子', items: [] }, '出す商品を選んでください'],
+        ['個数 0', { takenBy: '田中 花子', items: [{ productId: products.paper, quantity: 0 }] }, '1 以上'],
+        ['無い商品', { takenBy: '田中 花子', items: [{ productId: products.paper, quantity: 1 }, { productId: 999999, quantity: 1 }] }, '見つかりません']
+    ];
+    for (const [label, body, message] of cases) {
+        const res = await batch(body);
+        addResult(
+            `まとめて出庫: ${label}は拒否し、在庫は動かない`,
+            res.status >= 400 && res.status < 500 && String(res.body.error).includes(message) &&
+                (await stockOf('paper')) === paperMid,
+            `status ${res.status} / ${res.body.error}`
+        );
+    }
+
+    const outsider = createClient(BASE_URL);
+    await outsider.refreshCsrfToken();
+    const anonymous = await outsider.request('POST', '/api/inventory/out-batch', {
+        takenBy: '田中 花子', items: [{ productId: products.paper, quantity: 1 }]
+    });
+    addResult(
+        'まとめて出庫: ログインしていなければ使えない',
+        anonymous.status === 401 && (await stockOf('paper')) === paperMid,
+        `status ${anonymous.status}`
+    );
 }
 
 async function testAdminScreen() {
@@ -1141,6 +1284,7 @@ async function testStoreUsersOnRoster() {
         await testCsv();
         await testCandidates(location.locationCode);
         await testScreen();
+        await testBatchApi();
         await testAdminScreen();
         // 入場リンクの出庫は最後に入れる（件数を数えるテストに混ざらないように）
         await testEntryLinkName(location.locationCode);

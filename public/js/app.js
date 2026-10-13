@@ -101,6 +101,7 @@ function setupEventListeners() {
 
     // 追加のイベントリスナー
     setupStockViewTabs();
+    document.getElementById('open-takeout').addEventListener('click', () => openTakeoutDialog());
     setupImagePopup();
     setupTableColumnResize();
     setupUsageGuideToggle();
@@ -2843,16 +2844,20 @@ async function loadTakerCandidates() {
     }
 }
 
-// 出庫のダイアログ。誰が何個出したかを入れてもらう。
+// 出庫の画面。共用の端末なので、先に出す人を選び、それから出す商品と個数を選ぶ。
+// 何品でも 1 回で登録する（1 品ずつ名前を選び直さなくてよい）。
 // 共用のアカウントで入っていると、ログインの名前だけでは誰が出したか分からないため。
 //
-// 出した人は店の名簿から 1 人を選ぶだけで、自由には打たせない。打てると
+// 出す人は店の名簿から 1 人を選ぶだけで、自由には打たせない。打てると
 // 「田中・佐藤」のように 2 人をまとめた名前や書き方違いが入り、人ごとに集計できなくなる。
-async function openTakeoutDialog(productId, quantity) {
-    const product = products.find(p => p.id === productId);
-    if (!product) return;
+// 開くたびに選び直してもらう（前の人の名前は残さない。次の人がそのまま押してしまうため）。
+//
+// productId を付けて開くと（在庫カードの -1 / -5）、その商品に quantity 個を入れた状態で開く。
+async function openTakeoutDialog(productId = null, quantity = 0) {
+    const presetProduct = productId ? products.find(p => p.id === productId) : null;
+    if (productId && !presetProduct) return;
 
-    if (product.current_stock <= 0) {
+    if (presetProduct && presetProduct.current_stock <= 0) {
         alert('在庫がありません');
         return;
     }
@@ -2862,33 +2867,68 @@ async function openTakeoutDialog(productId, quantity) {
     const modal = document.getElementById('modal');
     const modalBody = document.getElementById('modal-body');
 
-    // 入場リンクの名前が名簿にあるときだけ、最初から選んでおく。前の人の名前は残さない
-    // （共用の端末で、次の人がそのまま押してしまうため）
+    // 入場リンクの名前が名簿にあるときだけ、最初から選んでおく
     let selectedName = names.includes(candidates.operatorName) ? candidates.operatorName : null;
 
+    // 商品ごとの出す個数。カードから開いたときは、その商品を先頭に出す
+    const counts = new Map();
+    if (presetProduct) {
+        counts.set(presetProduct.id, Math.min(quantity, presetProduct.current_stock));
+    }
+    const listed = presetProduct
+        ? [presetProduct, ...products.filter(p => p.id !== presetProduct.id)]
+        : [...products];
+    const categories = [...new Set(products.map(p => p.category).filter(c => c))];
+
     modalBody.innerHTML = `
-        <h3>出庫の登録</h3>
-        <p class="takeout-dialog-product">${product.name}（現在庫 ${product.current_stock}）</p>
+        <h3>在庫を出す</h3>
         <form id="takeout-form" novalidate>
-            <div class="form-group">
-                <label for="takeout-quantity">何個出しますか</label>
-                <input type="number" id="takeout-quantity" min="1" step="1" inputmode="numeric"
-                    value="${quantity}" required>
-            </div>
-            <div class="form-group">
-                <label id="takeout-taker-label">出した人（1 人を選んでください）</label>
+            <div class="takeout-step">
+                <div id="takeout-taker-label" class="takeout-step-title">① 出す人を選んでください</div>
                 <div id="takeout-taker-chips" class="taker-chips" role="group" aria-labelledby="takeout-taker-label"></div>
             </div>
-            <p id="takeout-error" class="takeout-error" style="display: none;"></p>
-            <button type="submit" id="takeout-submit" class="btn btn-primary">出庫する</button>
+            <div class="takeout-step">
+                <div class="takeout-step-title">② 出す商品と個数</div>
+                <select id="takeout-category" aria-label="カテゴリ">
+                    <option value="">すべてのカテゴリ</option>
+                    ${categories.map(category => `<option value="${category}">${category}</option>`).join('')}
+                </select>
+                <div id="takeout-items" class="takeout-items"></div>
+            </div>
+            <div class="takeout-footer">
+                <p id="takeout-error" class="takeout-error" style="display: none;"></p>
+                <p id="takeout-summary" class="takeout-summary"></p>
+                <button type="submit" id="takeout-submit" class="btn btn-primary">出庫する</button>
+            </div>
         </form>
     `;
 
     const form = document.getElementById('takeout-form');
-    const quantityInput = document.getElementById('takeout-quantity');
     const chips = document.getElementById('takeout-taker-chips');
+    const itemList = document.getElementById('takeout-items');
+    const categorySelect = document.getElementById('takeout-category');
     const errorText = document.getElementById('takeout-error');
+    const summary = document.getElementById('takeout-summary');
     const submitButton = document.getElementById('takeout-submit');
+
+    const chosenItems = () => listed
+        .filter(p => (counts.get(p.id) || 0) > 0)
+        .map(p => ({ product: p, quantity: counts.get(p.id) }));
+
+    // 下の欄に、誰が何を何個出すかをまとめて出す
+    const updateSummary = () => {
+        const items = chosenItems();
+        const total = items.reduce((sum, item) => sum + item.quantity, 0);
+
+        if (!selectedName) {
+            summary.textContent = '① で出す人を選んでください';
+        } else if (items.length === 0) {
+            summary.textContent = `${selectedName} さん：② で出す商品の個数を入れてください`;
+        } else {
+            summary.textContent = `${selectedName} さん：${items.map(item => `${unescapeHtmlText(item.product.name)} ${item.quantity}`).join('、')}`;
+        }
+        submitButton.textContent = items.length > 0 ? `出庫する（${items.length}品・${total}個）` : '出庫する';
+    };
 
     const markSelected = () => {
         chips.querySelectorAll('.taker-chip').forEach(chip => {
@@ -2896,6 +2936,7 @@ async function openTakeoutDialog(productId, quantity) {
             chip.classList.toggle('selected', selected);
             chip.setAttribute('aria-pressed', selected ? 'true' : 'false');
         });
+        updateSummary();
     };
 
     // 名簿が空なら、選べる人がいないので出庫できない。理由と、どうすればよいかを出す
@@ -2922,10 +2963,84 @@ async function openTakeoutDialog(productId, quantity) {
         });
         chips.appendChild(chip);
     });
+
+    // 商品の行。−／＋ で 1 個ずつ、数字を打っても入れられる。在庫より多くは出せない
+    listed.forEach(product => {
+        const stock = Number(product.current_stock) || 0;
+        const row = document.createElement('div');
+        row.className = 'takeout-item';
+        row.dataset.productId = product.id;
+        // カテゴリも保存のときにエスケープしてある。選択肢の値（元の文字）とそろえる
+        row.dataset.category = unescapeHtmlText(product.category || '');
+
+        const label = document.createElement('div');
+        label.className = 'takeout-item-name';
+        // 商品名は保存のときにエスケープしてあるので、innerHTML ではなく元の文字に戻して入れる
+        label.textContent = unescapeHtmlText(product.name);
+        const stockText = document.createElement('small');
+        stockText.textContent = stock > 0 ? `現在庫 ${stock}` : '在庫なし';
+        label.appendChild(stockText);
+        row.appendChild(label);
+
+        const stepper = document.createElement('div');
+        stepper.className = 'takeout-stepper';
+        const minus = document.createElement('button');
+        minus.type = 'button';
+        minus.className = 'takeout-minus';
+        minus.textContent = '−';
+        minus.setAttribute('aria-label', `${label.firstChild.textContent} を 1 個減らす`);
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.className = 'takeout-qty';
+        input.min = '0';
+        input.max = String(stock);
+        input.step = '1';
+        input.inputMode = 'numeric';
+        input.setAttribute('aria-label', `${label.firstChild.textContent} の個数`);
+        const plus = document.createElement('button');
+        plus.type = 'button';
+        plus.className = 'takeout-plus';
+        plus.textContent = '＋';
+        plus.setAttribute('aria-label', `${label.firstChild.textContent} を 1 個増やす`);
+        stepper.append(minus, input, plus);
+        row.appendChild(stepper);
+
+        const setCount = value => {
+            const count = Math.max(0, Math.min(stock, Math.floor(Number(value) || 0)));
+            counts.set(product.id, count);
+            input.value = String(count);
+            row.classList.toggle('chosen', count > 0);
+            minus.disabled = count <= 0;
+            plus.disabled = count >= stock;
+            updateSummary();
+        };
+
+        minus.addEventListener('click', () => setCount((counts.get(product.id) || 0) - 1));
+        plus.addEventListener('click', () => setCount((counts.get(product.id) || 0) + 1));
+        input.addEventListener('change', () => setCount(input.value));
+        if (stock <= 0) {
+            input.disabled = true;
+        }
+        setCount(counts.get(product.id) || 0);
+
+        itemList.appendChild(row);
+    });
+
+    // カテゴリで絞っても、個数を入れた商品は隠さない（入れたのに見えなくなるのを防ぐ）
+    categorySelect.addEventListener('change', () => {
+        itemList.querySelectorAll('.takeout-item').forEach(row => {
+            const chosen = (counts.get(Number(row.dataset.productId)) || 0) > 0;
+            row.style.display = !categorySelect.value || row.dataset.category === categorySelect.value || chosen
+                ? ''
+                : 'none';
+        });
+    });
+
     markSelected();
 
     const showError = (message) => {
-        errorText.textContent = message;
+        // サーバーの文には、保存のときにエスケープした商品名（P&amp;G など）が入ることがある
+        errorText.textContent = unescapeHtmlText(message);
         errorText.style.display = 'block';
     };
 
@@ -2933,32 +3048,29 @@ async function openTakeoutDialog(productId, quantity) {
         e.preventDefault();
         errorText.style.display = 'none';
 
-        const count = Number(quantityInput.value);
+        const items = chosenItems();
 
-        if (!Number.isInteger(count) || count < 1) {
-            showError('個数は 1 以上の整数で入れてください');
-            return;
-        }
-        if (count > product.current_stock) {
-            showError(`在庫が足りません（現在庫 ${product.current_stock}）`);
-            return;
-        }
         if (!selectedName) {
-            showError('出した人を選んでください');
+            showError('出す人を選んでください');
+            // 商品の一覧を下まで見ていても、① が見えるところまで戻す
+            chips.scrollIntoView?.({ block: 'center' });
+            return;
+        }
+        if (items.length === 0) {
+            showError('出す商品の個数を入れてください');
             return;
         }
 
         submitButton.disabled = true;
 
         try {
-            const response = await fetchWithCsrf('/api/inventory/out', {
+            const response = await fetchWithCsrf('/api/inventory/out-batch', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    productId: productId,
-                    quantity: count,
+                    takenBy: selectedName,
                     date: formatDate(new Date()),
-                    takenBy: selectedName
+                    items: items.map(item => ({ productId: item.product.id, quantity: item.quantity }))
                 })
             });
 
@@ -2969,14 +3081,15 @@ async function openTakeoutDialog(productId, quantity) {
             }
 
             if (!response.ok) {
-                // 名簿から外された人・在庫不足など、理由をそのまま見せる
+                // 名簿から外された人・在庫不足など、理由をそのまま見せる（1 品も登録されていない）
                 const result = await response.json().catch(() => ({}));
                 showError(result.error || '登録に失敗しました');
                 return;
             }
 
+            const total = items.reduce((sum, item) => sum + item.quantity, 0);
             closeModal();
-            showQuickFeedback(`${product.name}（${selectedName}）`, -count);
+            showQuickFeedback(`${selectedName} さん ${items.length}品`, -total);
             await refreshAfterStockChange();
         } catch (error) {
             console.error('出庫エラー:', error);
@@ -2987,6 +3100,13 @@ async function openTakeoutDialog(productId, quantity) {
     });
 
     modal.classList.add('show');
+}
+
+// 保存のときにエスケープしてある文字（&amp; など）を元に戻す。textContent に入れる文字用
+function unescapeHtmlText(text) {
+    const area = document.createElement('textarea');
+    area.innerHTML = String(text);
+    return area.value;
 }
 
 // クイック操作のフィードバック表示

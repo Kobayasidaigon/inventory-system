@@ -9,20 +9,36 @@ const config = {
 let client = null;
 
 /**
- * 通知を送ってよいか。
+ * LINE への通知を、プログラムの中で止めている（店の判断で、いったん送らない）。
+ *
+ * true の間は、NOTIFICATIONS_ENABLED を入れても一切送らない。自動発注のお知らせも、
+ * シフト未確認・未登録の人の通知もで、未確認の見張り自体も動かない。
+ * 設定の入れ間違いで鳴り出すことがないよう、設定ではなくプログラムで止めている。
+ *
+ * 送るように戻すとき: これを false にしてデプロイし、
+ *   flyctl secrets set NOTIFICATIONS_ENABLED=true
+ */
+const LINE_NOTIFICATIONS_STOPPED = true;
+
+/**
+ * NOTIFICATIONS_ENABLED のスイッチが入っているか（プログラムで止めているかは見ない）。
  *
  * 既定は「送らない」。止めるからには理由があって止めているので、
  * 環境変数を明示的に立てたときだけ送る形にしている。設定を消し忘れた
  * だけで鳴り出す、ということが起きない。
  *
- * 送るように戻すとき:
- *   flyctl secrets set NOTIFICATIONS_ENABLED=true
- *
  * 呼ばれるたびに読む。起動時に固めると、テストから切り替えられない。
  */
-function notificationsEnabled() {
+function notificationSwitchOn() {
     const value = String(process.env.NOTIFICATIONS_ENABLED ?? '').trim().toLowerCase();
     return value === 'true' || value === '1' || value === 'on';
+}
+
+/**
+ * 通知を送ってよいか。プログラムで止めている間は、スイッチに関係なく送らない。
+ */
+function notificationsEnabled() {
+    return !LINE_NOTIFICATIONS_STOPPED && notificationSwitchOn();
 }
 
 // クライアントの初期化
@@ -45,7 +61,12 @@ function initLineClient() {
 // 初期化
 initLineClient();
 
-if (!notificationsEnabled()) {
+if (LINE_NOTIFICATIONS_STOPPED) {
+    console.log(
+        'LINE への通知はプログラムで止めてあります（NOTIFICATIONS_ENABLED に関係なく送りません）。' +
+        '送るように戻すには server/services/line-notify.js の LINE_NOTIFICATIONS_STOPPED を false にしてください。'
+    );
+} else if (!notificationSwitchOn()) {
     console.log(
         '通知は止めてあります（NOTIFICATIONS_ENABLED が未設定）。' +
         '送るように戻すには NOTIFICATIONS_ENABLED=true を設定してください。'
@@ -193,6 +214,8 @@ module.exports = {
     sendOrderNotification,
     sendShiftReminder,
     sendShiftMemberReminder,
+    LINE_NOTIFICATIONS_STOPPED,
+    notificationSwitchOn,
     notificationsEnabled,
     isEnabled: () => !!client && notificationsEnabled()
 };

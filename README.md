@@ -561,15 +561,22 @@ CSV では元の文字に戻して出しています。
 
 ### 通知は今、止めてあります
 
-**`NOTIFICATIONS_ENABLED` が未設定の間、通知は一切送りません。**
-自動発注のお知らせも、シフト未確認の督促もです。通知を止めているときは、
-未確認の見張り自体も動かしません。
+**LINE への通知は、いまプログラムの中で止めています。** `NOTIFICATIONS_ENABLED` を
+入れても一切送りません（`server/services/line-notify.js` の `LINE_NOTIFICATIONS_STOPPED = true`）。
+自動発注のお知らせも、シフト未確認・未登録の人の通知もです。通知を止めているときは、
+未確認の見張り自体も動かしません。設定の入れ間違いで鳴り出すことがないよう、設定ではなく
+プログラムで止めています。
 
-送るように戻すとき:
+送るように戻すとき（2 つとも要ります）:
+
+1. `LINE_NOTIFICATIONS_STOPPED` を `false` にしてデプロイする
+2. 通知のスイッチを入れる
 
 ```bash
 flyctl secrets set NOTIFICATIONS_ENABLED=true
 ```
+
+プログラムの止めを外しても、`NOTIFICATIONS_ENABLED` が未設定の間は送りません。
 
 既定を「送らない」にしてあるのは、止めるからには理由があるからです。
 設定を消し忘れただけで鳴り出す、ということが起きないようにしています。
@@ -579,7 +586,7 @@ flyctl secrets set NOTIFICATIONS_ENABLED=true
 
 | 環境変数 | 既定 | 内容 |
 |---|---|---|
-| `NOTIFICATIONS_ENABLED` | （未設定＝送らない） | `true` で通知を送る |
+| `NOTIFICATIONS_ENABLED` | （未設定＝送らない） | `true` で通知を送る（プログラムで止めている間は、`true` でも送らない） |
 | `SHIFT_MONITOR` | on | `off` で未確認の見張りを止める |
 | `SHIFT_CHECK_INTERVAL_MINUTES` | 1 | 未確認を点検する間隔（分） |
 | `SHIFT_GRACE_MINUTES` | 10 | 区切りの時刻から締め切りまでの猶予（分） |
@@ -634,7 +641,7 @@ npm test
 ```
 
 - `test-stock.js` — 在庫計算・グラフ・過去データの整合調整（40 件）
-- `test-shifts.js` — シフトの区切り確認、2 人で入っている区切りの 1 人ずつの確認と未登録の人の通知（56 件）
+- `test-shifts.js` — シフトの区切り確認、2 人で入っている区切りの 1 人ずつの確認と未登録の人の通知、LINE 通知をプログラムで止めていること（57 件）
 - `test-session.js` — 本番のセッション設定と再起動後のログイン保持（13 件）
 - `test-jobcan.js` — シフト表の解析と取り込み API（32 件）
 - `test-orders.js` — 発注依頼の API と CSV 出力、「発注依頼」タブ・在庫カードの表示、現在庫一覧の「発注依頼済み」の絞り込み、在庫が発注点を超えたら受領済、カードに在庫を動かすボタンが無いこと（48 件）。

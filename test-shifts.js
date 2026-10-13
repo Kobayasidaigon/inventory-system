@@ -40,53 +40,69 @@ function todayAt(hours, minutes) {
 // ---------------------------------------------------------------------------
 
 function testNotificationSwitch() {
-    const { notificationsEnabled } = require('./server/services/line-notify');
+    const {
+        LINE_NOTIFICATIONS_STOPPED,
+        notificationSwitchOn,
+        notificationsEnabled
+    } = require('./server/services/line-notify');
     const original = process.env.NOTIFICATIONS_ENABLED;
 
-    const check = value => {
+    const setSwitch = value => {
         if (value === undefined) {
             delete process.env.NOTIFICATIONS_ENABLED;
         } else {
             process.env.NOTIFICATIONS_ENABLED = value;
         }
-        return notificationsEnabled();
+    };
+    // スイッチの読み方（プログラムで止めているかは見ない）
+    const check = value => {
+        setSwitch(value);
+        return notificationSwitchOn();
     };
 
     try {
         addResult(
-            '通知: 未設定なら送らない',
+            'スイッチ: 未設定なら切れている',
             check(undefined) === false,
             '既定は停止'
         );
         addResult(
-            '通知: 空文字なら送らない',
+            'スイッチ: 空文字なら切れている',
             check('') === false,
             '停止'
         );
         addResult(
-            '通知: true を設定すれば送る',
+            'スイッチ: true を設定すれば入る',
             check('true') === true,
             '有効'
         );
         addResult(
-            '通知: 1 / on でも送る',
+            'スイッチ: 1 / on でも入る',
             check('1') === true && check('on') === true,
             '有効'
         );
         addResult(
-            '通知: 大文字や前後の空白は無視する',
+            'スイッチ: 大文字や前後の空白は無視する',
             check('  TRUE  ') === true && check('On') === true,
             '有効'
         );
         addResult(
-            '通知: false / off なら送らない',
+            'スイッチ: false / off なら切れている',
             check('false') === false && check('off') === false,
             '停止'
         );
         addResult(
-            '通知: 意味の分からない値は送らない側に倒す',
+            'スイッチ: 意味の分からない値は切れている側に倒す',
             check('yes') === false && check('enabled') === false,
             '停止'
+        );
+
+        // いまは LINE への通知をプログラムで止めている。スイッチを入れても送らない
+        setSwitch('true');
+        addResult(
+            '通知: プログラムで止めている間は、NOTIFICATIONS_ENABLED=true でも送らない',
+            LINE_NOTIFICATIONS_STOPPED === true && notificationsEnabled() === false,
+            `LINE_NOTIFICATIONS_STOPPED=${LINE_NOTIFICATIONS_STOPPED} / notificationsEnabled()=${notificationsEnabled()}`
         );
     } finally {
         if (original === undefined) {

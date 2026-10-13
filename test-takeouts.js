@@ -817,6 +817,14 @@ async function testScreen() {
                 (await stockOf('paper')) === before,
             `先頭 ${firstRow} / 個数 ${qtyOf('トイレットペーパー')} / 在庫 ${before}`
         );
+        const rows = [...doc.querySelectorAll('#takeout-items .takeout-item')];
+        addResult(
+            '画面: 商品の行には画像の欄がある（画像の無い商品は「画像なし」）',
+            rows.length === (await request('GET', '/api/products')).body.length &&
+                rows.every(row => row.querySelector('.takeout-item-image')) &&
+                rows.every(row => row.querySelector('.takeout-item-image-none').textContent === '画像なし'),
+            `${rows.length} 行`
+        );
         addResult(
             '画面: 出す人が先（①）で、名前は打てず名簿の人のボタンだけ（今日の勤務の人が先頭）',
             doc.querySelector('#takeout-form .takeout-step-title').textContent.startsWith('① 出す人') &&

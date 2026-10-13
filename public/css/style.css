@@ -1945,6 +1945,26 @@ table tbody tr:hover {
     background: #fff5f5;
 }
 
+.takeout-item-image {
+    width: 52px;
+    height: 52px;
+    border-radius: 6px;
+    object-fit: cover;
+    flex-shrink: 0;
+    background: #f7fafc;
+    cursor: zoom-in;
+}
+
+.takeout-item-image-none {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #edf2f7;
+    color: #a0aec0;
+    font-size: 10px;
+    cursor: default;
+}
+
 .takeout-item-name {
     flex: 1;
     min-width: 0;
@@ -2017,6 +2037,27 @@ table tbody tr:hover {
 }
 
 @media (max-width: 480px) {
+    .modal-content:has(#takeout-form) {
+        width: 96%;
+    }
+
+    .takeout-item {
+        gap: 8px;
+    }
+
+    .takeout-item-image {
+        width: 48px;
+        height: 48px;
+    }
+
+    .takeout-stepper button {
+        width: 36px;
+    }
+
+    .takeout-stepper .takeout-qty {
+        width: 40px;
+    }
+
     .takeout-footer {
         bottom: -15px;
         margin: 0 -15px -15px;

@@ -647,7 +647,7 @@ function updateDashboardDisplay() {
 
         // 画像HTML
         const imageHtml = product.image_url
-            ? `<img src="${product.image_url}" class="stock-card-image" onclick="openImagePopup('${product.image_url}')" alt="${product.name}">`
+            ? `<img src="${product.image_url}" class="stock-card-image" onclick="showImagePopup('${product.image_url}')" alt="${product.name}">`
             : `<div class="stock-card-image-placeholder">画像なし</div>`;
 
         // ステータス
@@ -2972,6 +2972,22 @@ async function openTakeoutDialog(productId = null, quantity = 0) {
         row.dataset.productId = product.id;
         // カテゴリも保存のときにエスケープしてある。選択肢の値（元の文字）とそろえる
         row.dataset.category = unescapeHtmlText(product.category || '');
+
+        // 画像があれば出す（名前だけより、どの商品か見分けやすい）。押すと大きく出す
+        if (product.image_url) {
+            const image = document.createElement('img');
+            image.className = 'takeout-item-image';
+            image.src = product.image_url;
+            image.alt = '';
+            image.loading = 'lazy';
+            image.addEventListener('click', () => showImagePopup(product.image_url));
+            row.appendChild(image);
+        } else {
+            const placeholder = document.createElement('div');
+            placeholder.className = 'takeout-item-image takeout-item-image-none';
+            placeholder.textContent = '画像なし';
+            row.appendChild(placeholder);
+        }
 
         const label = document.createElement('div');
         label.className = 'takeout-item-name';
